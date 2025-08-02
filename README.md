@@ -100,7 +100,7 @@ sudo apt install python3-brotli
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/intermux.git
+git clone https://github.com/Rishi-Bhati/intermux.git
 cd intermux
 
 
