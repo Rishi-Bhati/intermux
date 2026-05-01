@@ -7,7 +7,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/license/mit)
 [![Platform](https://img.shields.io/badge/platform-Linux-orange.svg)](https://www.linux.org/)
-[![Root Required](https://img.shields.io/badge/privileges-root%20required-red.svg)](https://en.wikipedia.org/wiki/Superuser)
+[![Privilege Model](https://img.shields.io/badge/privileges-root%20for%20network%20only-yellow.svg)](https://en.wikipedia.org/wiki/Superuser)
 
 <p align="center">
   <strong>Bind applications to specific network interfaces with ease</strong>
@@ -23,9 +23,11 @@
 
 **InterMux** is a powerful Linux utility that enables you to bind applications to specific network interfaces. Whether you need to route your browser through Wi-Fi while keeping your development server on Ethernet, or isolate applications for security testing, InterMux makes it simple.
 
+> **Privacy Note:** InterMux sets up network namespaces as root, but **launches all applications as your regular user** — your bookmarks, cookies, and app settings are always preserved.
+
 ### 🎯 Use Cases
 
-- **Multi-WAN Management**: Route different applications through different internet connections — boost speed, balance load, or bypass network-specific restrictions
+- **Multi-WAN Management**: Route different applications through different internet connections
 - **Network Testing**: Test applications on specific network interfaces
 - **Security Isolation**: Isolate applications in separate network namespaces
 - **Bandwidth Management**: Control which apps use which network connections
@@ -57,6 +59,7 @@ A utility that lets me bind any app to a specific interface with ease — no mes
 - 🔒 **Network namespace isolation**
 - 📊 **Real-time interface monitoring**
 - 🎛️ **Both CLI and GUI interfaces**
+- 👤 **User-preserving** — apps keep your profile & data
 
 </td>
 <td>
@@ -76,18 +79,38 @@ A utility that lets me bind any app to a specific interface with ease — no mes
 
 ### Prerequisites
 
+<details>
+<summary><strong>Ubuntu / Debian / Mint</strong></summary>
+
 ```bash
-# Required system packages
 sudo apt update
-sudo apt install -y python3 python3-pip python3-tk iproute2 iptables
-
-# Python Virtual environment
-python -m venv venv
-source venv/bin/activate
-
-# Python dependencies in the venv
-pip3 install -r requirements.txt
+sudo apt install -y python3 python3-pip iproute2 iptables policykit-1 x11-xserver-utils
 ```
+</details>
+
+<details>
+<summary><strong>Arch / EndeavourOS / Manjaro</strong></summary>
+
+```bash
+sudo pacman -S python python-pip iproute2 iptables polkit xorg-xhost
+```
+</details>
+
+<details>
+<summary><strong>Fedora / RHEL / Rocky</strong></summary>
+
+```bash
+sudo dnf install -y python3 python3-pip iproute iptables polkit xorg-x11-server-utils
+```
+</details>
+
+<details>
+<summary><strong>openSUSE</strong></summary>
+
+```bash
+sudo zypper install python3 python3-pip iproute2 iptables polkit xorg-x11-xhost
+```
+</details>
 
 - Note for Ubuntu 24.04+ users: Some Python modules (like brotli) may require system-level installation.
 
@@ -103,16 +126,18 @@ sudo apt install python3-brotli
 git clone https://github.com/Rishi-Bhati/intermux.git
 cd intermux
 
-
 # Python Virtual environment
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate
 
 # Install Python dependencies
 pip3 install -r requirements.txt
+```
 
-# Make scripts executable (optional)
-chmod +x core/router.py
+### Verify Dependencies
+
+```bash
+python3 cli.py check
 ```
 
 ## 🧩 Packeges Required (If everything above fails)
@@ -134,48 +159,29 @@ tk==0.1.0
 
 ### 🎨 GUI Mode (Recommended)
 
-Launch the modern graphical interface:
-
 ```bash
-# The GUI will request root privileges via pkexec
 python3 gui/app.py
 ```
+
+The GUI requests root via `pkexec` (falls back to `sudo`). Apps always launch as **your regular user** — your profile data is preserved.
 
 <details>
 <summary><strong>GUI Features</strong></summary>
 
-- **Interface Selection**: Dropdown menu with all active interfaces
-- **Application Binding**: Easy path entry and interface assignment
-- **Visual Management**: See all created bindings at a glance
-- **One-Click Actions**: Assign, refresh, and clear operations
+- **Interface Selection**: Dropdown with all active physical interfaces (virtual adapters like veth/docker are auto-hidden)
+- **Application Binding**: Enter app path and assign to an interface
+- **Running App Detection**: Prompts to close & reopen (default profile) or open new instance
+- **Session Awareness**: Auto-detects X11 or Wayland
+- **Dependency Banner**: Warns about missing system tools
 
 </details>
 
 ### 💻 CLI Mode
 
-The CLI provides full functionality for managing network interface bindings from the command line:
-
 #### 1. List Active Interfaces
 
 ```bash
 sudo python3 cli.py list
-```
-
-Output example:
-```
---- Active Network Interfaces ---
-
-Interface: wlan0
-  Status: UP
-  Type: Wi-Fi
-  IP Addresses: 192.168.1.100/24, fe80::1234:5678:9abc:def0/64
-  Gateways: 192.168.1.1
-
-Interface: enp7s0f4u1
-  Status: UP
-  Type: Ethernet
-  IP Addresses: 10.252.21.95/24
-  Gateways: 10.252.21.177
 ```
 
 #### 2. Assign Application to Interface
@@ -184,38 +190,42 @@ Interface: enp7s0f4u1
 sudo python3 cli.py assign --app /usr/lib/firefox/firefox --iface wlan0
 ```
 
-This command:
-1. Creates a network namespace for the interface
-2. Sets up virtual ethernet pairs (veth0/veth1)
-3. Configures routing within the namespace
-4. Launches the application in the isolated environment
+If Firefox is already open, you'll be prompted:
 
-#### 3. Clear All Assigned Paths
+```
+[!] 'firefox' is already running (PID(s): [12345]).
+    Options:
+    1) Close current instance and reopen on the selected network (uses your default profile)
+    2) Open a new instance with a separate profile
+    3) Cancel
+    Enter choice [1/2/3]:
+```
+
+#### 3. Check Dependencies
+
+```bash
+python3 cli.py check
+```
+
+#### 4. Clear All Paths
 
 ```bash
 sudo python3 cli.py clear
 ```
 
-Removes all custom routing tables and clears assigned paths.
-
-#### 4. Reset Everything
+#### 5. Reset Everything
 
 ```bash
 sudo python3 cli.py reset
 ```
 
-Completely resets the system by:
-- Removing all veth interfaces
-- Deleting network namespaces
-- Clearing custom routing tables
-- Restoring system to defaults
+## 🎥 Tutorial Video
 
-#### CLI Help
+<video controls width="100%">
+  <source src="https://res.cloudinary.com/dzsghc33d/video/upload/v1752167379/Screencast_20250710_223520_gfnqkq.webm" type="video/webm">
+  Your browser does not support the video tag.
+</video>
 
-```bash
-python3 cli.py --help
-python3 cli.py <command> --help  # For command-specific help
-```
 
 ## 🎥 Tutorial Video
 
@@ -227,28 +237,41 @@ python3 cli.py <command> --help  # For command-specific help
 ```
 intermux/
 ├── core/                   # Core functionality
-│   ├── interface.py       # Network interface detection
-│   └── router.py          # Routing table management
+│   ├── interface.py        # Network interface detection (cross-distro)
+│   ├── router.py           # Routing table management
+│   └── platform_utils.py   # ★ Distro detection, display/DNS/user helpers
 ├── gui/                    # GUI components
-│   ├── app.py             # Main GUI application
-│   ├── gui.py             # Legacy GUI interface
+│   ├── app.py              # Main GUI application
+│   └── gui.py              # Legacy GUI interface
+├── cli.py                  # CLI entrypoint
 ├── requirements.txt        # Python dependencies
-└── README.md              # This file
+└── README.md               # This file
 ```
 
 ### 🔧 How It Works
 
 1. **Interface Detection**: Scans system for all network interfaces using `ip` commands
 2. **Routing Tables**: Creates custom routing tables in `/etc/iproute2/rt_tables`
-3. **Network Namespaces**: Isolates applications using Linux network namespaces
+3. **Network Namespaces**: Isolates network traffic using Linux network namespaces
 4. **Virtual Interfaces**: Uses veth pairs to connect namespaces to physical interfaces
 5. **IP Forwarding**: Configures NAT/masquerading for namespace connectivity
+6. **Privilege Separation**: Namespace setup runs as root; apps launch as **your user** via `sudo -u`
+7. **DNS Resolution**: Writes real upstream DNS servers to namespace (handles `systemd-resolved` stubs)
+
+### 🔐 Privilege Model
+
+| Operation | Runs As |
+|-----------|---------|
+| Create network namespace | root |
+| Configure veth / routing / NAT | root |
+| Write namespace resolv.conf | root |
+| **Launch your application** | **your regular user** |
 
 ## 🛠️ Advanced Configuration
 
 ### Custom Routing Table IDs
 
-Edit `core/router.py` to modify:
+Edit `core/router.py`:
 ```python
 BASE_TABLE_ID = 100  # Starting table ID
 BASE_PRIORITY = 1000 # Starting priority
@@ -256,28 +279,24 @@ BASE_PRIORITY = 1000 # Starting priority
 
 ## 🐛 Troubleshooting
 
-### Common Issues
-
 <details>
-<summary><strong>GUI doesn't launch</strong></summary>
+<summary><strong>GUI doesn't launch on Wayland</strong></summary>
+
+InterMux auto-detects Wayland. If issues occur, ensure `xwayland` is installed:
 
 ```bash
-# Ensure X11 forwarding is enabled
-xhost +SI:localuser:root
-
-# Check DISPLAY variable
-echo $DISPLAY
+# Arch
+sudo pacman -S xorg-xwayland
+# Ubuntu/Debian
+sudo apt install xwayland
 ```
 </details>
 
 <details>
 <summary><strong>Permission denied errors</strong></summary>
 
-InterMux requires root privileges for network operations. The GUI uses `pkexec` for privilege escalation.
-
 ```bash
-# Manual run with sudo
-sudo python3 gui/app.py
+sudo python3 cli.py assign --app /usr/lib/firefox/firefox --iface wlan0
 ```
 </details>
 
@@ -285,53 +304,56 @@ sudo python3 gui/app.py
 <summary><strong>Interface not detected</strong></summary>
 
 ```bash
-# Check interface status
 ip link show
-
-# Bring interface up
 sudo ip link set <interface> up
+```
+</details>
+
+<details>
+<summary><strong>No internet in namespace / DNS failures</strong></summary>
+
+```bash
+python3 cli.py check
+sudo sysctl -w net.ipv4.ip_forward=1
 ```
 </details>
 
 ### 📝 Logs and Debugging
 
-Enable verbose logging by modifying `core/interface.py`:
-```python
-logging.basicConfig(level=logging.DEBUG, format='%(levelname)s: %(message)s')
+InterMux automatically logs all activity, commands, and errors to a persistent log file:
+```bash
+~/.local/share/intermux/intermux.log
 ```
+This log includes detailed debug information and full stack traces, which is highly recommended to include when reporting issues.
 
 ## ⚠️ Known Limitations
 
 ### Browser Compatibility
 
-- ✅ **Firefox**: Fully supported (`/usr/lib/firefox/firefox`)
-- ❌ **Chromium**: Currently not supported due to sandboxing conflicts
-- ✅ **Other Applications**: Most GUI and CLI applications work correctly
+- ✅ **Firefox**: Fully supported — uses your existing profile, prompts if already running
+- ❌ **Chromium**: Not supported due to sandboxing conflicts with network namespaces
+- ✅ **Most other apps**: GUI and CLI applications work correctly
+
+### Platform Support
+
+- ✅ **Linux (all major distros)**: Arch, Ubuntu, Debian, Fedora, openSUSE, Manjaro, EndeavourOS, etc.
+- ✅ **X11 and Wayland**: Both session types supported
+- 🔜 **Windows**: Planned for a future release
 
 ### System Requirements
 
-- Root privileges required for network namespace operations
-- Linux kernel with network namespace support
-- iproute2 package for network management
+- Root privileges for network namespace operations
+- Linux kernel with `CONFIG_NET_NS`
+- `iproute2` for network management
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-### Development Setup
+Contributions are welcome! Please submit a Pull Request.
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-### Code Style
-
-- Follow PEP 8 guidelines
-- Add docstrings to all functions
-- Include type hints where applicable
-- Write unit tests for new features
+3. Commit your changes
+4. Push and open a Pull Request
 
 ## 📄 License
 
@@ -353,4 +375,3 @@ This project is licensed under the MIT License - see the [LICENSE](license) file
 <div align="center">
   <strong>Made with ❤️ for the Linux community</strong>
 </div>
-</create_file>

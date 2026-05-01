@@ -4,10 +4,17 @@ import os
 import subprocess
 import re
 import ipaddress
+import shutil
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from core.interface import get_active_interfaces
 
-RT_TABLES_PATH = "/etc/iproute2/rt_tables"
+_IP_CMD = shutil.which("ip") or "/usr/sbin/ip"
+
+_RT_TABLES_CANDIDATES = [
+    "/etc/iproute2/rt_tables",
+    "/usr/share/iproute2/rt_tables",
+]
+RT_TABLES_PATH = next((p for p in _RT_TABLES_CANDIDATES if os.path.exists(p)), "/etc/iproute2/rt_tables")
 BASE_TABLE_ID = 100
 BASE_PRIORITY = 1000
 
@@ -60,14 +67,13 @@ def setup_interface_routing(name, ip_with_cidr, gateway, table_id):
 
     ensure_routing_table(table_id, table_name)
 
-    run_cmd(f"ip route flush table {table_id}")
-    run_cmd(f"ip rule del from {ip} table {table_id} priority {BASE_PRIORITY + table_id} 2>/dev/null")
+    run_cmd(f"{_IP_CMD} route flush table {table_id}")
+    run_cmd(f"{_IP_CMD} rule del from {ip} table {table_id} priority {BASE_PRIORITY + table_id} 2>/dev/null")
 
     network = get_network(ip_with_cidr)
-    run_cmd(f"ip route add {network} dev {name} scope link table {table_id}")
-
-    run_cmd(f"ip route add default via {gateway} dev {name} table {table_id}")
-    run_cmd(f"ip rule add from {ip} table {table_id} priority {BASE_PRIORITY + table_id}")
+    run_cmd(f"{_IP_CMD} route add {network} dev {name} scope link table {table_id}")
+    run_cmd(f"{_IP_CMD} route add default via {gateway} dev {name} table {table_id}")
+    run_cmd(f"{_IP_CMD} rule add from {ip} table {table_id} priority {BASE_PRIORITY + table_id}")
 
     print(f"[✓] Routing set for {name} ({ip}/{prefix}) via {gateway} [table {table_id}]")
 
@@ -115,8 +121,8 @@ def clear_custom_routing_tables():
     # Clear associated routes and rules
     for table_id, name in custom_tables:
         try:
-            run_cmd(f"ip route flush table {table_id}")
-            run_cmd(f"ip rule del table {table_id}")
+            run_cmd(f"{_IP_CMD} route flush table {table_id}")
+            run_cmd(f"{_IP_CMD} rule del table {table_id}")
             print(f"[✓] Cleared routing table {table_id} ({name})")
         except Exception as e:
             print(f"[!] Failed to clear table {table_id}: {e}")

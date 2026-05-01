@@ -1,11 +1,15 @@
-# intermux/core/interfaces.py
+# intermux/core/interface.py
 
 import subprocess
 import re
 import logging
+import shutil
 
 # Configure logging for better error reporting and debugging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+
+# Locate the 'ip' binary — path differs across distros (/sbin, /usr/sbin, /bin)
+_IP_CMD = shutil.which("ip") or "/usr/sbin/ip"
 
 def _run_command(command_parts, check_return=True, suppress_errors=False):
     """
@@ -51,12 +55,20 @@ def _run_command(command_parts, check_return=True, suppress_errors=False):
 
 def get_system_dns_servers():
     """
-    Reads the system's DNS servers from /etc/resolv.conf.
-    Note: These are typically system-wide, not per-interface.
+    Returns actual upstream DNS servers.
+    Delegates to platform_utils which handles systemd-resolved stubs correctly
+    across all distros (Arch, Ubuntu, Fedora, etc.).
 
     Returns:
-        list: A list of IP addresses of DNS servers.
+        list: A list of IP address strings.
     """
+    try:
+        from core.platform_utils import get_real_dns_servers
+        return get_real_dns_servers()
+    except ImportError:
+        pass
+
+    # Fallback: read resolv.conf directly
     dns_servers = []
     try:
         with open('/etc/resolv.conf', 'r') as f:
@@ -66,15 +78,15 @@ def get_system_dns_servers():
                     parts = line.split()
                     if len(parts) > 1:
                         ip = parts[1]
-                        # Basic IP address validation (e.g., ensure it's not just a comment)
                         if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip) or \
                            re.match(r'^([0-9a-fA-F]{1,4}:){1,7}[0-9a-fA-F]{1,4}$', ip):
-                            dns_servers.append(ip)
+                            if ip != '127.0.0.53':
+                                dns_servers.append(ip)
     except FileNotFoundError:
-        logging.warning("/etc/resolv.conf not found. Cannot determine DNS servers.")
+        logging.warning("/etc/resolv.conf not found.")
     except Exception as e:
         logging.error(f"Error reading /etc/resolv.conf: {e}")
-    return dns_servers
+    return dns_servers or ['1.1.1.1', '8.8.8.8']
 
 def get_active_interfaces():
     """
@@ -92,9 +104,9 @@ def get_active_interfaces():
     system_dns = get_system_dns_servers() # Get system-wide DNS once
 
     # 1. Get basic link information for all interfaces
-    ip_link_output = _run_command(['ip', '-o', 'link', 'show'])
+    ip_link_output = _run_command([_IP_CMD, '-o', 'link', 'show'])
     if not ip_link_output:
-        logging.error("Failed to get basic interface link information.")
+        logging.error("Failed to get basic interface link information. Is iproute2 installed?")
         return []
 
     link_lines = ip_link_output.strip().split('\n')
@@ -106,8 +118,8 @@ def get_active_interfaces():
 
         name = parts[1].strip().split('@')[0]
         
-        # Skip loopback interface
-        if name == 'lo':
+        # Skip loopback and veth interfaces
+        if name == 'lo' or name.startswith('veth'):
             continue
 
         interface_info = {
@@ -154,7 +166,7 @@ def get_active_interfaces():
         
         # 2. Get IP Addresses (IPv4 and IPv6) with CIDR
         for family in ['inet', 'inet6']:
-            ip_addr_output = _run_command(['ip', '-f', family, 'addr', 'show', name], suppress_errors=True)
+            ip_addr_output = _run_command([_IP_CMD, '-f', family, 'addr', 'show', name], suppress_errors=True)
             if ip_addr_output:
                 for ip_line in ip_addr_output.split('\n'):
                     # Regex to find 'inet X.X.X.X/YY' or 'inet6 XXXX::/YY'
@@ -165,7 +177,7 @@ def get_active_interfaces():
                         interface_info['ip_addresses'].append(ip_match.group(1))
 
         # 3. Get Routes, Metric, and Gateways
-        ip_route_output = _run_command(['ip', 'route', 'show'], suppress_errors=True)
+        ip_route_output = _run_command([_IP_CMD, 'route', 'show'], suppress_errors=True)
         if ip_route_output:
             for route_line in ip_route_output.split('\n'):
                 if f"dev {name}" in route_line:
