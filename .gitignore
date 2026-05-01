@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# PyInstaller build artifacts
+# ⚠ Do NOT commit these — build the .exe via GitHub Actions instead
+build/
+dist/
+*.spec.bak
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,16 @@
+# InterMux for Windows — Python dependencies
+#
+# Install with:  pip install -r requirements.txt
+# (inside a venv is recommended)
+
+# Network interface detection
+psutil>=5.9.0
+
+# SOCKS5 proxy (built with asyncio — no extra dep needed for the engine)
+# PySocks is only needed if you want to use Python as a SOCKS client
+# PySocks==1.7.1   # Optional — only for testing the proxy from Python
+
+# GUI (Tkinter is bundled with standard CPython — no extra dep)
+
+# PyInstaller for .exe packaging (dev dependency, not needed at runtime)
+# pyinstaller>=6.0   # Run: pip install pyinstaller  then  pyinstaller intermux_windows.spec
