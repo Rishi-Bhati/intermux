@@ -1,6 +1,6 @@
 # InterMux Release Notes
 
-## [Latest Release]
+## v1.1.0
 
 ### 🚀 Features & Enhancements
 
