@@ -1,5 +1,15 @@
 # InterMux Release Notes
 
+## v2.0.0 — Windows Proxy & App Launcher Fixes
+
+### 🪟 Windows Platform Enhancements
+
+* **SOCKS5 Proxy Environment**: Fixed an issue where the proxy environment variables were injecting the `http://` scheme instead of `socks5://`, causing applications to fail connection handshakes. All variables now strictly enforce `socks5://`.
+* **Console Applications Support**: Console applications like `cmd.exe` and `powershell.exe` now properly spawn their own interactive windows when launched through the GUI or CLI, fixing failures when InterMux is compiled as a standalone `.exe`.
+* **Fuzzy App Finder**: The advanced fuzzy finder for resolving application names without exact paths has been transferred to **Phase 2**. 
+* **Performance Note**: Network speed over the proxy is currently a little slow. We are actively finding out ways to improve throughput and reduce proxy overhead in upcoming releases.
+
+---
 ## v1.2.0 — Windows Support (Phase 1)
 
 ### 🪟 Windows Platform — Phase 1 (SOCKS5 Proxy Engine)

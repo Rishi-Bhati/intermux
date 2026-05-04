@@ -235,7 +235,8 @@ python windows\cli.py assign --app firefox --iface "Wi-Fi"
 
 - **UDP traffic**: Not supported. Phase 2 will add SOCKS5 UDP relay.
 - **Apps that ignore proxy env vars**: Some apps bypass system/env proxy settings. Phase 2 will add DLL-based socket binding.
-- **~1-2ms proxy overhead**: Present on all TCP connections. Imperceptible for browsing/downloads.
+- **Fuzzy App Finder**: The fuzzy app opener is planned for Phase 2. For now, provide the full absolute path or an exact command available in your system `PATH`.
+- **Proxy Speed / Overhead**: The SOCKS5 proxy introduces a slight overhead, and the network speed may feel a little slow. We are actively finding out ways to improve the proxy throughput.
 
 ---
 
