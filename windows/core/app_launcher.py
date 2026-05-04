@@ -39,17 +39,7 @@ def _resolve_app(app: str) -> Optional[str]:
     Resolve a short command name or path to a full executable path.
     Returns None if not found.
     """
-    if os.path.isabs(app):
-        return app if os.path.exists(app) else None
-    resolved = shutil.which(app)
-    if resolved:
-        return resolved
-    # Try common Windows extension
-    for ext in (".exe", ".cmd", ".bat"):
-        resolved = shutil.which(app + ext)
-        if resolved:
-            return resolved
-    return None
+    return plat.find_app_path_fuzzy(app)
 
 
 # ---------------------------------------------------------------------------
@@ -114,11 +104,11 @@ def launch_app(app_path: str, iface_name: str, bind_ip: str, use_new_profile: bo
     log.info(f"[launcher] Spawning: {' '.join(cmd)}")
     log.info(f"[launcher] Proxy env: ALL_PROXY=socks5://127.0.0.1:{proxy_port}")
 
+    creationflags = subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
     proc = subprocess.Popen(
         cmd,
         env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,
         close_fds=True,
     )
     log.info(f"[launcher] PID {proc.pid} → '{os.path.basename(app_path)}' via {bind_ip}")

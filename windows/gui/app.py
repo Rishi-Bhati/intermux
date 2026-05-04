@@ -17,7 +17,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 # Allow running from the repo root or windows/ dir
-_WIN_DIR = os.path.dirname(os.path.abspath(__file__))
+_GUI_DIR = os.path.dirname(os.path.abspath(__file__))
+_WIN_DIR = os.path.dirname(_GUI_DIR)
 _ROOT    = os.path.dirname(_WIN_DIR)
 sys.path.insert(0, _ROOT)
 

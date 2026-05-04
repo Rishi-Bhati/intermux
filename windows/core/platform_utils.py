@@ -12,6 +12,8 @@ import ctypes
 import subprocess
 import logging
 import socket
+import shutil
+import winreg
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -287,13 +289,58 @@ def build_proxy_env(proxy_port: int) -> Dict[str, str]:
     """
     proxy_url = f"socks5://127.0.0.1:{proxy_port}"
     return {
-        "HTTP_PROXY":   f"http://127.0.0.1:{proxy_port}",   # some apps want HTTP
-        "HTTPS_PROXY":  f"http://127.0.0.1:{proxy_port}",
+        "HTTP_PROXY":   proxy_url,
+        "HTTPS_PROXY":  proxy_url,
         "ALL_PROXY":    proxy_url,
-        "all_proxy":    proxy_url,   # lowercase for apps that check both
-        "http_proxy":   f"http://127.0.0.1:{proxy_port}",
-        "https_proxy":  f"http://127.0.0.1:{proxy_port}",
+        "all_proxy":    proxy_url,
+        "http_proxy":   proxy_url,
+        "https_proxy":  proxy_url,
     }
+
+# ---------------------------------------------------------------------------
+# App Path Fuzzy Finder
+# ---------------------------------------------------------------------------
+
+def find_app_path_fuzzy(app_name: str) -> Optional[str]:
+    """
+    Quickly resolves an application name to its full path.
+    Checks exact matches, PATH (shutil.which), and Windows Registry App Paths.
+    """
+    if os.path.isabs(app_name) and os.path.exists(app_name):
+        return app_name
+
+    # Try shutil.which first
+    resolved = shutil.which(app_name)
+    if resolved:
+        return resolved
+    for ext in (".exe", ".cmd", ".bat"):
+        resolved = shutil.which(app_name + ext)
+        if resolved:
+            return resolved
+
+    # Try Windows Registry App Paths (Fuzzy match)
+    app_name_lower = app_name.lower()
+    if not app_name_lower.endswith(".exe"):
+        app_name_lower += ".exe"
+
+    for hkey in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        try:
+            with winreg.OpenKey(hkey, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths") as key:
+                num_subkeys = winreg.QueryInfoKey(key)[0]
+                for i in range(num_subkeys):
+                    try:
+                        subkey_name = winreg.EnumKey(key, i)
+                        if app_name_lower in subkey_name.lower():
+                            with winreg.OpenKey(key, subkey_name) as subkey:
+                                val, _ = winreg.QueryValueEx(subkey, "")
+                                if val and os.path.exists(val):
+                                    return val
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+            
+    return None
 
 
 if __name__ == "__main__":
