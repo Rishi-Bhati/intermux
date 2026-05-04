@@ -34,6 +34,11 @@
 - **Bandwidth Management**: Control which apps use which network connections
 - **Development**: Test network-dependent applications across different interfaces
 
+## 💻 Supported Platforms
+
+- 🐧 **Linux**: Native support using kernel network namespaces (Ubuntu, Arch, Fedora, openSUSE, etc.).
+- 🪟 **Windows 10 / 11**: Supported via a custom SOCKS5 proxy engine. See the **[Windows Documentation](windows/README.md)** for full installation instructions and to download the standalone `.exe`.
+
 
 ## 💡 Why I Made It
 
@@ -370,21 +375,6 @@ This project is licensed under the MIT License - see the [LICENSE](license) file
 
 - 🐛 [Report bugs](https://github.com/Rishi-Bhati/intermux/issues)
 - 💡 [Request features](https://github.com/Rishi-Bhati/intermux/issues)
-
----
-
-## 🪟 Windows Support
-
-InterMux now supports Windows 10 and 11 via a SOCKS5 proxy engine.
-See **[windows/README.md](windows/README.md)** for full installation and usage instructions.
-
-```
-windows/
-├── gui/app.py          ← GUI (same dark theme)
-├── cli.py              ← CLI (same commands)
-├── core/               ← Windows-specific engine
-└── intermux_windows.spec  ← PyInstaller → .exe
-```
 
 ---
 
