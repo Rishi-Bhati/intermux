@@ -4,63 +4,48 @@ import subprocess
 import re
 import logging
 import shutil
+import platform
+import os
 
-# Configure logging for better error reporting and debugging
+# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
-# Locate the 'ip' binary — path differs across distros (/sbin, /usr/sbin, /bin)
+# --- 1. GLOBAL DEFINITIONS (Fixes NameError and Path Issues) ---
+IS_MAC = platform.system() == "Darwin"
 _IP_CMD = shutil.which("ip") or "/usr/sbin/ip"
 
 def _run_command(command_parts, check_return=True, suppress_errors=False):
     """
     Helper function to run a shell command and capture its output.
-
-    Args:
-        command_parts (list): A list of strings representing the command and its arguments.
-                              E.g., ['ip', '-o', 'link', 'show']
-        check_return (bool): If True, raise an exception if the command returns a non-zero exit code.
-        suppress_errors (bool): If True, log errors but do not raise an exception.
-
-    Returns:
-        str: The standard output of the command.
-
-    Raises:
-        subprocess.CalledProcessError: If the command returns a non-zero exit code and check_return is True.
-        FileNotFoundError: If the command itself is not found.
     """
     try:
         result = subprocess.run(
             command_parts,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,  # Capture stderr to log potential issues
+            stderr=subprocess.PIPE,
             text=True,
             check=check_return,
-            encoding='utf-8' # Ensure consistent encoding
+            encoding='utf-8'
         )
         return result.stdout.strip()
     except FileNotFoundError:
-        logging.error(f"Command not found: '{' '.join(command_parts)}'. Make sure it's in your PATH.")
+        if not IS_MAC: # Only log error if we are on a system that expects these tools
+            logging.error(f"Command not found: '{' '.join(command_parts)}'.")
         if not suppress_errors:
             raise
     except subprocess.CalledProcessError as e:
-        logging.error(f"Command failed: '{' '.join(command_parts)}'")
-        logging.error(f"Stderr: {e.stderr.strip()}")
         if not suppress_errors:
+            logging.error(f"Command failed: '{' '.join(command_parts)}' Stderr: {e.stderr.strip()}")
             raise
     except Exception as e:
-        logging.error(f"An unexpected error occurred while running '{' '.join(command_parts)}': {e}")
         if not suppress_errors:
+            logging.error(f"Unexpected error running '{' '.join(command_parts)}': {e}")
             raise
-    return "" # Return empty string on error if suppressed
+    return ""
 
 def get_system_dns_servers():
     """
     Returns actual upstream DNS servers.
-    Delegates to platform_utils which handles systemd-resolved stubs correctly
-    across all distros (Arch, Ubuntu, Fedora, etc.).
-
-    Returns:
-        list: A list of IP address strings.
     """
     try:
         from core.platform_utils import get_real_dns_servers
@@ -68,148 +53,151 @@ def get_system_dns_servers():
     except ImportError:
         pass
 
-    # Fallback: read resolv.conf directly
     dns_servers = []
-    try:
-        with open('/etc/resolv.conf', 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith('nameserver'):
-                    parts = line.split()
-                    if len(parts) > 1:
-                        ip = parts[1]
-                        if re.match(r'^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$', ip) or \
-                           re.match(r'^([0-9a-fA-F]{1,4}:){1,7}[0-9a-fA-F]{1,4}$', ip):
-                            if ip != '127.0.0.53':
+    # macOS specific DNS check via scutil
+    if IS_MAC:
+        try:
+            out = _run_command(["scutil", "--dns"])
+            for line in out.splitlines():
+                if "nameserver" in line:
+                    ip = line.split(":")[-1].strip()
+                    if ip not in dns_servers and ip != "127.0.0.1":
+                        dns_servers.append(ip)
+        except: pass
+    
+    # Fallback to resolv.conf
+    if not dns_servers:
+        try:
+            with open('/etc/resolv.conf', 'r') as f:
+                for line in f:
+                    if line.startswith('nameserver'):
+                        parts = line.split()
+                        if len(parts) > 1:
+                            ip = parts[1]
+                            if ip != '127.0.0.53': # Skip Linux stub
                                 dns_servers.append(ip)
-    except FileNotFoundError:
-        logging.warning("/etc/resolv.conf not found.")
-    except Exception as e:
-        logging.error(f"Error reading /etc/resolv.conf: {e}")
-    return dns_servers or ['1.1.1.1', '8.8.8.8']
+        except: pass
+        
+    return list(dict.fromkeys(dns_servers)) or ['1.1.1.1', '8.8.8.8']
 
 def get_active_interfaces():
     """
-    Connects to all available internet interfaces (Wi-Fi, LAN, USB, Bluetooth tethering)
-    and retrieves detailed information for each active interface on a Linux system.
-
-    Uses 'ip' command-line utility for information gathering.
-
-    Returns:
-        list: A list of dictionaries, where each dictionary represents an active network
-              interface with its name, status flag, detected type, IP addresses (IPv4 & IPv6),
-              MAC address, metric, and associated gateways.
+    Retrieves detailed information for each active interface.
     """
     interfaces = []
-    system_dns = get_system_dns_servers() # Get system-wide DNS once
+    system_dns = get_system_dns_servers()
 
-    # 1. Get basic link information for all interfaces
-    ip_link_output = _run_command([_IP_CMD, '-o', 'link', 'show'])
-    if not ip_link_output:
-        logging.error("Failed to get basic interface link information. Is iproute2 installed?")
-        return []
+    if IS_MAC:
+        # ---------------------------------------------------------
+        # macOS LOGIC (Darwin)
+        # ---------------------------------------------------------
+        try:
+            iface_list_out = _run_command(["ifconfig", "-l"])
+            if not iface_list_out:
+                return []
+            
+            all_ifaces = iface_list_out.strip().split()
 
-    link_lines = ip_link_output.strip().split('\n')
+            gateways_map = {}
+            netstat_out = _run_command(["netstat", "-nr"])
+            for line in netstat_out.splitlines():
+                if "default" in line:
+                    parts = line.split()
+                    if len(parts) >= 4:
+                        gw, if_name = parts[1], parts[3]
+                        if if_name not in gateways_map:
+                            gateways_map[if_name] = []
+                        gateways_map[if_name].append(gw)
 
-    for line in link_lines:
-        parts = line.split(':')
-        if len(parts) < 2:
-            continue
+            for name in all_ifaces:
+                details = _run_command(["ifconfig", name])
+                if not details or "LOOPBACK" in details:
+                    continue
+                
+                if "status: active" not in details and "UP" not in details:
+                    continue
 
-        name = parts[1].strip().split('@')[0]
+                interface_info = {
+                    'name': name,
+                    'flag': "UP",
+                    'type': 'Wi-Fi' if name.startswith('en') else 'Ethernet',
+                    'ip_addresses': [],
+                    'mac': 'N/A',
+                    'metric': 1,
+                    'gateways': gateways_map.get(name, []),
+                    'system_dns': system_dns
+                }
+
+                mac_match = re.search(r'ether\s+([0-9a-fA-F:]{17})', details)
+                if mac_match:
+                    interface_info['mac'] = mac_match.group(1).upper()
+
+                ipv4s = re.findall(r'inet\s+(\d+\.\d+\.\d+\.\d+)', details)
+                for ip in ipv4s:
+                    interface_info['ip_addresses'].append(f"{ip}/24")
+
+                interfaces.append(interface_info)
+        except Exception as e:
+            logging.error(f"macOS Interface detection failed: {e}")
         
-        # Skip loopback and veth interfaces
-        if name == 'lo' or name.startswith('veth'):
-            continue
+        return interfaces
 
-        interface_info = {
-            'name': name,
-            'flag': 'DOWN',  # Default to DOWN, update if UP found
-            'type': 'Unknown',
-            'ip_addresses': [],
-            'mac': 'N/A',
-            'metric': 'N/A',
-            'gateways': [],
-            'system_dns': system_dns # Add system-wide DNS to each interface's info
-        }
+    else:
+        # ---------------------------------------------------------
+        # LINUX LOGIC (iproute2)
+        # ---------------------------------------------------------
+        try:
+            ip_link_output = _run_command([_IP_CMD, '-o', 'link', 'show'])
+            if not ip_link_output:
+                return []
 
-        # Extract flags (e.g., <UP,BROADCAST,RUNNING,MULTICAST>)
-        flags_match = re.search(r'<([^>]+)>', line)
-        if flags_match:
-            flags_str = flags_match.group(1)
-            if "UP" in flags_str:
-                interface_info['flag'] = "UP"
-        
-        # Only process active interfaces for detailed information
-        if interface_info['flag'] == "DOWN":
-            interfaces.append(interface_info)
-            continue # Skip detailed info for down interfaces
+            for line in ip_link_output.splitlines():
+                parts = line.split(':')
+                if len(parts) < 2: continue
+                name = parts[1].strip().split('@')[0]
+                if name == 'lo' or name.startswith('veth'): continue
 
-        # Get MAC Address (usually the last part of the 'ip link show' output for 'link/ether')
-        mac_match = re.search(r'link/ether\s+([0-9a-fA-F:]{17})', line)
-        if mac_match:
-            interface_info['mac'] = mac_match.group(1).upper()
-        
-        # Determine interface type
-        if name.startswith("wl"):
-            interface_info['type'] = "Wi-Fi"
-        elif name.startswith("en") or name.startswith("eth"):
-            interface_info['type'] = "Ethernet"
-        elif name.startswith("usb"):
-            interface_info['type'] = "USB"
-        elif name.startswith("bnep") or name.startswith("bt"):
-            interface_info['type'] = "Bluetooth Tethering"
-        elif name.startswith("veth") or name.startswith("br") or \
-             name.startswith("docker") or name.startswith("tun") or \
-             name.startswith("tap"):
-            interface_info['type'] = "Virtual/Bridge/VPN"
-        
-        # 2. Get IP Addresses (IPv4 and IPv6) with CIDR
-        for family in ['inet', 'inet6']:
-            ip_addr_output = _run_command([_IP_CMD, '-f', family, 'addr', 'show', name], suppress_errors=True)
-            if ip_addr_output:
-                for ip_line in ip_addr_output.split('\n'):
-                    # Regex to find 'inet X.X.X.X/YY' or 'inet6 XXXX::/YY'
-                    ip_match = re.search(r'inet(?:6)?\s+([0-9a-fA-F.:/]+)\s+brd', ip_line)
-                    if not ip_match:
-                         ip_match = re.search(r'inet(?:6)?\s+([0-9a-fA-F.:/]+)\s+scope', ip_line)
-                    if ip_match:
-                        interface_info['ip_addresses'].append(ip_match.group(1))
+                interface_info = {
+                    'name': name,
+                    'flag': 'UP' if 'UP' in line else 'DOWN',
+                    'type': 'Unknown',
+                    'ip_addresses': [],
+                    'mac': 'N/A',
+                    'metric': 'N/A',
+                    'gateways': [],
+                    'system_dns': system_dns
+                }
 
-        # 3. Get Routes, Metric, and Gateways
-        ip_route_output = _run_command([_IP_CMD, 'route', 'show'], suppress_errors=True)
-        if ip_route_output:
-            for route_line in ip_route_output.split('\n'):
-                if f"dev {name}" in route_line:
-                    # Extract metric
-                    metric_match = re.search(r'metric\s+(\d+)', route_line)
-                    if metric_match:
-                        interface_info['metric'] = int(metric_match.group(1))
-                    
-                    # Extract gateway (via) for routes specific to this interface
-                    gateway_match = re.search(r'via\s+([0-9a-fA-F.:]+)', route_line)
-                    if gateway_match and gateway_match.group(1) not in interface_info['gateways']:
-                        interface_info['gateways'].append(gateway_match.group(1))
+                mac_match = re.search(r'link/ether\s+([0-9a-fA-F:]{17})', line)
+                if mac_match: interface_info['mac'] = mac_match.group(1).upper()
 
-        interfaces.append(interface_info)
-        # print(f"Detected interface: {interfaces}")
+                # Get IPs
+                ip_addr_output = _run_command([_IP_CMD, 'addr', 'show', name], suppress_errors=True)
+                for ip_line in ip_addr_output.splitlines():
+                    ip_match = re.search(r'inet\s+([0-9\./]+)', ip_line)
+                    if ip_match: interface_info['ip_addresses'].append(ip_match.group(1))
 
-    return interfaces
+                # Get Gateway/Metric
+                ip_route_output = _run_command([_IP_CMD, 'route', 'show'], suppress_errors=True)
+                for route_line in ip_route_output.splitlines():
+                    if f"dev {name}" in route_line:
+                        gw_match = re.search(r'via\s+([0-9\.]+)', route_line)
+                        if gw_match: interface_info['gateways'].append(gw_match.group(1))
+
+                interfaces.append(interface_info)
+        except Exception as e:
+            logging.error(f"Linux Interface detection failed: {e}")
+
+        return interfaces
 
 if __name__ == "__main__":
     print("--- Detected Network Interfaces ---")
     active_interfaces = get_active_interfaces()
     if not active_interfaces:
-        print("No active network interfaces found or an error occurred.")
+        print("No active network interfaces found.")
     else:
         for iface in active_interfaces:
             print(f"\nInterface: {iface['name']}")
-            print(f"  Status: {iface['flag']}")
-            print(f"  Type: {iface['type']}")
-            print(f"  MAC Address: {iface['mac']}")
-            print(f"  IP Addresses: {', '.join(iface['ip_addresses']) if iface['ip_addresses'] else 'N/A'}")
-            print(f"  Metric: {iface['metric']}")
-            print(f"  Gateways (associated with device routes): {', '.join(iface['gateways']) if iface['gateways'] else 'N/A'}")
-            print(f"  System DNS Servers: {', '.join(iface['system_dns']) if iface['system_dns'] else 'N/A'}")
-
-    print("\n--- End of Report ---")
+            print(f"  Status: {iface['flag']} | Type: {iface['type']}")
+            print(f"  IP Addresses: {', '.join(iface['ip_addresses'])}")
+            print(f"  Gateways: {', '.join(iface['gateways'])}")

@@ -1,5 +1,5 @@
 Brotli==1.1.0
-click==8.2.1
+click==8.1.7
 markdown2==2.5.3
 MarkupSafe==3.0.2
 minijinja==2.11.0
