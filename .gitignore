@@ -12,14 +12,18 @@ venv/
 .venv/
 env/
 
-# PyInstaller build artifacts
-# ⚠ Do NOT commit these — build the .exe via GitHub Actions instead
+# Virtual environment used by install.sh to build the binary
+.build_venv/
+
+# PyInstaller build artifacts (build outputs are never committed)
 build/
 dist/
+dist/intermux/
 *.spec.bak
 
-# Logs
+# Logs and state backups
 *.log
+*.corrupt-*
 
 # OS
 .DS_Store

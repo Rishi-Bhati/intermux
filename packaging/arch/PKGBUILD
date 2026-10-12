@@ -1,0 +1,46 @@
+# Maintainer: TODO <name and email>
+# Starting point, untested. The source URL below is a placeholder for the
+# release tarball; set it (and the checksum) before building.
+pkgname=intermux
+pkgver=2.0.0
+pkgrel=1
+pkgdesc="Bind individual applications to specific network interfaces"
+arch=('x86_64' 'aarch64')
+url="https://github.com/Rishi-Bhati/intermux"
+license=('MIT')
+depends=('iproute2' 'iptables' 'polkit' 'util-linux' 'procps-ng' 'xdg-utils')
+# tk: PyInstaller needs the Tcl/Tk libraries (tkinter) at build time to bundle the GUI
+makedepends=('python-pyinstaller' 'tk')
+# !strip: stripping breaks the PyInstaller bundle
+options=('!strip')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+    cd "$srcdir/$pkgname-$pkgver"
+    pyinstaller intermux_linux.spec --noconfirm \
+        --distpath "$srcdir/dist" --workpath "$srcdir/build"
+}
+
+package() {
+    local src="$srcdir/$pkgname-$pkgver"
+
+    # Onedir bundle; the polkit policy annotates /usr/lib/intermux/intermux
+    install -dm755 "$pkgdir/usr/lib/intermux"
+    cp -a "$srcdir/dist/intermux/." "$pkgdir/usr/lib/intermux/"
+    chmod -R a+rX "$pkgdir/usr/lib/intermux"
+    chmod 755 "$pkgdir/usr/lib/intermux/intermux"
+
+    install -dm755 "$pkgdir/usr/bin"
+    ln -s /usr/lib/intermux/intermux "$pkgdir/usr/bin/intermux"
+
+    install -Dm644 "$src/packaging/linux/org.intermux.policy" \
+        "$pkgdir/usr/share/polkit-1/actions/org.intermux.policy"
+    install -Dm644 "$src/packaging/linux/intermux.desktop" \
+        "$pkgdir/usr/share/applications/intermux.desktop"
+    install -Dm644 "$src/packaging/linux/intermux.svg" \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/intermux.svg"
+    install -Dm644 "$src/packaging/linux/intermux.metainfo.xml" \
+        "$pkgdir/usr/share/metainfo/org.intermux.InterMux.metainfo.xml"
+    install -Dm644 "$src/license" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

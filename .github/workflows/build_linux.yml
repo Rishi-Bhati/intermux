@@ -1,0 +1,89 @@
+name: Build InterMux Linux Binary
+
+# Triggers:
+#   - Every push to main that touches Linux code (not windows/ or docs)
+#   - Every release published
+#   - Manual run from the Actions tab
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "windows/**"
+      - "mac/**"
+      - "*.md"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build on Ubuntu 22.04
+    runs-on: ubuntu-22.04
+    env:
+      TARBALL: intermux-linux-x86_64.tar.gz
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4  # TODO: pin to a commit SHA
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5  # TODO: pin to a commit SHA
+        with:
+          python-version: "3.11"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-tk
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -t . -v
+
+      - name: Install PyInstaller
+        run: python -m pip install --upgrade pip "pyinstaller==6.11.1"
+
+      - name: Build onedir bundle
+        run: pyinstaller intermux_linux.spec --noconfirm
+
+      - name: Package and checksum
+        run: |
+          test -x dist/intermux/intermux
+          tar -C dist -czf "$TARBALL" intermux
+          sha256sum "$TARBALL" > "$TARBALL.sha256"
+          ls -la "$TARBALL" "$TARBALL.sha256"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4  # TODO: pin to a commit SHA
+        with:
+          name: InterMux-Linux-Bin
+          path: |
+            intermux-linux-x86_64.tar.gz
+            intermux-linux-x86_64.tar.gz.sha256
+          retention-days: 30
+          if-no-files-found: error
+
+  release:
+    name: Attach to GitHub Release
+    needs: build
+    if: github.event_name == 'release'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4  # TODO: pin to a commit SHA
+        with:
+          name: InterMux-Linux-Bin
+
+      - name: Attach tarball and checksum to release
+        uses: softprops/action-gh-release@v2  # TODO: pin to a commit SHA
+        with:
+          files: |
+            intermux-linux-x86_64.tar.gz
+            intermux-linux-x86_64.tar.gz.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+# TODO: pin every action to a full commit SHA instead of a major version tag.

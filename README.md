@@ -1,91 +1,116 @@
 <div align="center">
 
-# 🌐 InterMux
+# InterMux
 
 ### Advanced Network Interface Management for Linux
 
-[![Python Version](https://img.shields.io/badge/python-3.6%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python Version](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/license/mit)
 [![Platform Linux](https://img.shields.io/badge/platform-Linux-orange.svg)](https://www.linux.org/)
 [![Platform Windows](https://img.shields.io/badge/platform-Windows%2010%2F11-blue.svg)](windows/README.md)
-[![Privilege Model](https://img.shields.io/badge/privileges-root%20for%20network%20only-yellow.svg)](https://en.wikipedia.org/wiki/Superuser)
+[![Privilege Model](https://img.shields.io/badge/privileges-polkit%20helper-yellow.svg)](SECURITY.md)
 
 <p align="center">
   <strong>Bind applications to specific network interfaces with ease</strong>
 </p>
 
-[Features](#-features) • [Installation](#-installation) • [Usage](#-usage) • [Architecture](#-architecture) • [Contributing](#-contributing)
+[Features](#features) • [Installation](#installation) • [Usage](#usage) • [Architecture](#architecture) • [Security](SECURITY.md) • [Contributing](#contributing)
 
 </div>
 
 ---
 
-## 📋 Overview
+## Overview
 
-**InterMux** is a powerful Linux utility that enables you to bind applications to specific network interfaces. Whether you need to route your browser through Wi-Fi while keeping your development server on Ethernet, or isolate applications for security testing, InterMux makes it simple.
+**InterMux** is a Linux utility that binds applications to specific network interfaces. Whether you want your browser on Wi-Fi while your development server stays on Ethernet, or you want to isolate an application for security testing, InterMux makes it simple.
 
-> **Privacy Note:** InterMux sets up network namespaces as root, but **launches all applications as your regular user** — your bookmarks, cookies, and app settings are always preserved.
+> **Privacy Note:** InterMux sets up network plumbing as root through a small helper, but **launches all applications as your regular user**. Your bookmarks, cookies, and app settings are always preserved.
 
-### 🎯 Use Cases
+### Use Cases
 
 - **Multi-WAN Management**: Route different applications through different internet connections
 - **Network Testing**: Test applications on specific network interfaces
-- **Security Isolation**: Isolate applications in separate network namespaces
+- **Security Isolation**: Isolate applications in their own network namespaces
 - **Bandwidth Management**: Control which apps use which network connections
 - **Development**: Test network-dependent applications across different interfaces
 
-
-## 💡 Why I Made It
+## Why I Made It
 
 I was downloading a large file via torrent, and while waiting, I opened YouTube to pass the time.
-But the videos were stuck on low quality, buffering like crazy — even though my connection showed 300 Mbps.
+But the videos were stuck on low quality, buffering like crazy, even though my connection showed 300 Mbps.
 
 Turns out, the torrent was consuming all the bandwidth, and YouTube was left starving.
-That’s when I had the idea: “What if I could assign different apps to different networks?”
+That's when I had the idea: "What if I could assign different apps to different networks?"
 
-After some research, I found that while Linux supports advanced networking, there wasn’t a simple tool to do what I needed — especially one that was GUI-friendly and straightforward.
+After some research, I found that while Linux supports advanced networking, there wasn't a simple tool to do what I needed, especially one that was GUI-friendly and straightforward.
 
-So I built InterMux:
-A utility that lets me bind any app to a specific interface with ease — no messy configs, no guesswork, just full control.
+So I built InterMux: a utility that lets me bind any app to a specific interface with ease. No messy configs, no guesswork, just full control.
 
-## ✨ Features
+## Features
 
 <table>
 <tr>
 <td>
 
-### 🖥️ Core Features
-- 🔍 **Auto-detection** of all network interfaces
-- 🛣️ **Custom routing tables** per interface
-- 🔒 **Network namespace isolation**
-- 📊 **Real-time interface monitoring**
-- 🎛️ **Both CLI and GUI interfaces**
-- 👤 **User-preserving** — apps keep your profile & data
+### Core Features
+- **Auto-detection** of all network interfaces
+- **Per-interface routing tables** and policy rules
+- **Network namespace isolation** for each bound app
+- **Live interface list** that refreshes automatically
+- **Both CLI and GUI** interfaces
+- **User-preserving**: apps keep your profile and data
+- **Public IP check** for each binding
+- **Desktop app picker** built from installed applications
 
 </td>
 <td>
 
-### 🌟 Interface Support
-- 📶 **Wi-Fi** (wlan*, wl*)
-- 🔌 **Ethernet** (eth*, en*)
-- 📱 **USB Tethering**
-- 🔵 **Bluetooth Tethering**
-- 🌐 **Virtual Interfaces**
+### Interface Support
+- **Wi-Fi** (wlan*, wl*)
+- **Ethernet** (eth*, en*)
+- **USB tethering**
+- **Bluetooth tethering**
+- **Mobile broadband** (wwan*)
+
+Virtual bridges (Docker, veth, libvirt, VMware, VirtualBox) and tun/tap devices are hidden from the picker. Other tunnels, such as WireGuard and Tailscale, can appear in it.
 
 </td>
 </tr>
 </table>
 
-## 🚀 Installation
+## Installation
 
-### Prerequisites
+There are two ways to run InterMux. Option A installs a standalone program system-wide. Option B runs the Python source directly.
+
+### Option A — Install as a System App (Easiest) ⭐
+
+This builds a standalone Linux binary and installs it system-wide. The program goes to `/usr/lib/intermux/`, `/usr/bin/intermux` links to it, and a polkit policy, a `.desktop` entry, an icon and AppStream metadata are installed so InterMux appears in your application launcher.
+
+```bash
+# Clone the repository
+git clone https://github.com/Rishi-Bhati/intermux.git
+cd intermux
+
+# Run the installer as root
+sudo ./install.sh
+```
+
+> **What it does:** `install.sh` builds the binary as your user (not as root) in a temporary virtual environment with a pinned PyInstaller, then copies it into place. Nothing is built inside the repository. It checks for `ip`, `iptables`, `runuser` and `pkexec` (and `pgrep`, which is optional), and prints install hints for anything missing.
+>
+> If you already have a build, you can skip the build step. Download the tarball from the **Build InterMux on Linux** workflow in the GitHub Actions tab, extract it so that `dist/intermux/` exists, and then run `sudo ./install.sh`.
+
+To remove InterMux, run `sudo ./uninstall.sh`. It first runs `intermux reset --kill-apps --yes`, so every binding is torn down and the state is deleted.
+
+### Option B — Run as Python Project (No Build Needed)
+
+**Prerequisites:** Python 3.9+, Git, and the networking tools below. InterMux has no third-party Python dependencies, so there is no `pip install` step and no virtual environment is required. The GUI needs Tk, which is `python3-tk` on most distributions.
 
 <details>
 <summary><strong>Ubuntu / Debian / Mint</strong></summary>
 
 ```bash
 sudo apt update
-sudo apt install -y python3 python3-pip iproute2 iptables policykit-1 x11-xserver-utils
+sudo apt install -y python3 python3-tk iproute2 iptables policykit-1 procps util-linux curl
 ```
 </details>
 
@@ -93,7 +118,7 @@ sudo apt install -y python3 python3-pip iproute2 iptables policykit-1 x11-xserve
 <summary><strong>Arch / EndeavourOS / Manjaro</strong></summary>
 
 ```bash
-sudo pacman -S python python-pip iproute2 iptables polkit xorg-xhost
+sudo pacman -S python tk iproute2 iptables polkit procps-ng util-linux curl
 ```
 </details>
 
@@ -101,7 +126,7 @@ sudo pacman -S python python-pip iproute2 iptables polkit xorg-xhost
 <summary><strong>Fedora / RHEL / Rocky</strong></summary>
 
 ```bash
-sudo dnf install -y python3 python3-pip iproute iptables polkit xorg-x11-server-utils
+sudo dnf install -y python3 python3-tkinter iproute iptables polkit procps-ng util-linux curl
 ```
 </details>
 
@@ -109,181 +134,181 @@ sudo dnf install -y python3 python3-pip iproute iptables polkit xorg-x11-server-
 <summary><strong>openSUSE</strong></summary>
 
 ```bash
-sudo zypper install python3 python3-pip iproute2 iptables polkit xorg-x11-xhost
+sudo zypper install python3 python3-tk iproute2 iptables polkit procps util-linux curl
 ```
 </details>
 
-- Note for Ubuntu 24.04+ users: Some Python modules (like brotli) may require system-level installation.
+- Ubuntu 20.04 ships Python 3.8, which is too old. Install a newer Python 3 first.
+- `curl` is optional, but `intermux verify` needs it.
 
-```bash
-# If pip fails
-sudo apt install python3-brotli
-```
-
-### Clone and Setup
+#### Clone and Run
 
 ```bash
 # Clone the repository
 git clone https://github.com/Rishi-Bhati/intermux.git
 cd intermux
 
-# Python Virtual environment
-python3 -m venv venv
-source venv/bin/activate
+# Check dependencies (no root needed)
+python3 -m intermux check
 
-# Install Python dependencies
-pip3 install -r requirements.txt
+# Start the GUI
+python3 -m intermux
 ```
 
-### Verify Dependencies
+When you run from source, the polkit policy is attached to the installed binary, so the authorization prompt will be generic and refer to the Python interpreter. Option A gives the InterMux-specific prompt.
+
+## Usage
+
+### GUI Mode (Recommended)
 
 ```bash
-python3 cli.py check
+intermux              # installed (Option A)
+python3 -m intermux   # from source (Option B)
 ```
 
-## 🧩 Packeges Required (If everything above fails)
-
-- You can explicitly install these packeges, if all the above given installation steps fails. 
-```
-Brotli==1.1.0
-click==8.2.1
-markdown2==2.5.3
-MarkupSafe==3.0.2
-minijinja==2.11.0
-page==0.3
-PyYAML==6.0.2
-tk==0.1.0
-```
-
-
-## 📖 Usage
-
-### 🎨 GUI Mode (Recommended)
-
-```bash
-python3 gui/app.py
-```
-
-The GUI requests root via `pkexec` (falls back to `sudo`). Apps always launch as **your regular user** — your profile data is preserved.
+The GUI runs as you. When a change is needed, it asks for authorization through polkit. Apps always launch as **your regular user**, so your profile data is preserved.
 
 <details>
 <summary><strong>GUI Features</strong></summary>
 
-- **Interface Selection**: Dropdown with all active physical interfaces (virtual adapters like veth/docker are auto-hidden)
-- **Application Binding**: Enter app path and assign to an interface
-- **Running App Detection**: Prompts to close & reopen (default profile) or open new instance
-- **Session Awareness**: Auto-detects X11 or Wayland
-- **Dependency Banner**: Warns about missing system tools
+- **Interface dropdown**: Only interfaces that can be bound (up, IPv4 address, default route, not virtual). Refreshes every few seconds.
+- **Application field**: Type a name (found on your `PATH`) or a path. **Browse...** picks a file; **Pick...** opens a searchable list of installed desktop applications. Entries that cannot be bound are greyed out with the reason.
+- **Open separate profile if already running**: Checkbox that decides what happens when the app is already open.
+- **Bindings table**: Shows app, interface, status, and public IP. Select a row to **Verify** (show the public IP), **Stop**, or **Open log**.
+- **Bottom buttons**: **Teardown idle** removes plumbing for bindings with no running app. **Reset everything** removes all InterMux setup and can also stop the apps. **Force-quit app** kills every instance of an app.
+- **Report issue**: Opens a small dialog with two actions. **Save bug report** writes a zip with the app logs and system details to `~/intermux-reports/`, with personal data scrubbed on a best-effort basis. **Open reporting portal** opens the web page where you upload the zip and describe the problem.
+- **Keyboard**: Enter binds, Delete stops the selected binding, F5 refreshes.
+- Errors appear in dialogs and in the status bar. A dark theme is used by default, and a light theme is used when GNOME reports a light colour scheme.
 
 </details>
 
-### 💻 CLI Mode
+### CLI Mode
 
-#### 1. List Active Interfaces
+Run the CLI as your normal user. It asks for authorization only when a change is needed.
 
-```bash
-sudo python3 cli.py list
-```
+| Command | What it does | Root needed |
+|---------|--------------|-------------|
+| `intermux interfaces [--all]` | List bindable interfaces (`--all` shows every interface) | No |
+| `intermux apps [--search TEXT]` | List installed desktop applications | No |
+| `intermux bind --app APP --iface IF [--separate-profile \| --close-existing] [--allow-unsupported]` | Bind an application to an interface | Yes (polkit prompt) |
+| `intermux status` | List each binding with its namespace and NAT state | No |
+| `intermux stop --app APP --iface IF` | Stop the application bound to an interface | Yes |
+| `intermux kill --app APP [--force]` | Stop every instance of an application on the host | Yes |
+| `intermux verify --iface IF` | Show the public IP seen from an interface | Yes |
+| `intermux teardown-idle` | Remove plumbing for bindings with no running app | Yes |
+| `intermux reset [--kill-apps] [--yes]` | Remove everything InterMux created | Yes |
+| `intermux check` | Dependency report | No |
+| `intermux report [--web] [--out DIR]` | Save a bug report zip (default `~/intermux-reports/`, or `DIR`); `--web` opens the reporting portal instead | No |
 
-#### 2. Assign Application to Interface
-
-```bash
-sudo python3 cli.py assign --app /usr/lib/firefox/firefox --iface wlan0
-```
-
-If Firefox is already open, you'll be prompted:
-
-```
-[!] 'firefox' is already running (PID(s): [12345]).
-    Options:
-    1) Close current instance and reopen on the selected network (uses your default profile)
-    2) Open a new instance with a separate profile
-    3) Cancel
-    Enter choice [1/2/3]:
-```
-
-#### 3. Check Dependencies
+`APP` can be a command name (`firefox`), an absolute path, or a path starting with `~`.
 
 ```bash
-python3 cli.py check
+intermux interfaces
+intermux bind --app firefox --iface wlan0
+intermux verify --iface wlan0
+intermux status
+intermux stop --app firefox --iface wlan0
+intermux reset --kill-apps --yes
 ```
 
-#### 4. Clear All Paths
+If the application is already running, `bind` asks what to do:
 
-```bash
-sudo python3 cli.py clear
+```
+[!] 'firefox' is already running.
+    [1] close & reopen  (uses your default profile)
+    [2] separate profile
+    [3] cancel
 ```
 
-#### 5. Reset Everything
+`reset` without `--yes` asks you to type `yes` to continue.
 
-```bash
-sudo python3 cli.py reset
-```
+From source, replace `intermux` with `python3 -m intermux`.
 
-## 🎥 Tutorial Video
+### Tutorial Video
 
 <video controls width="100%">
   <source src="https://res.cloudinary.com/dzsghc33d/video/upload/v1752167379/Screencast_20250710_223520_gfnqkq.webm" type="video/webm">
   Your browser does not support the video tag.
 </video>
 
-
-## 🎥 Tutorial Video
-
 ![Screencast_20250710_223520_gfnqkq](https://github.com/user-attachments/assets/c018bddd-7f32-4471-a3f1-da75d4463c3c)
 
-
-## 🏗️ Architecture
+## Architecture
 
 ```
-intermux/
-├── core/                   # Core functionality
-│   ├── interface.py        # Network interface detection (cross-distro)
-│   ├── router.py           # Routing table management
-│   └── platform_utils.py   # ★ Distro detection, display/DNS/user helpers
-├── gui/                    # GUI components
-│   ├── app.py              # Main GUI application
-│   └── gui.py              # Legacy GUI interface
-├── cli.py                  # CLI entrypoint
-├── requirements.txt        # Python dependencies
-└── README.md               # This file
+intermux/                        Python package (standard library only)
+├── __main__.py                  entry point: GUI, helper, or CLI
+├── cli.py                       command-line interface
+├── config.py                    paths, subnet pool, environment allowlist
+├── errors.py                    exception types with stable error codes
+├── report.py                    reporting portal address and browser launch
+├── bugreport.py                 bug report zip: system details and scrubbed logs
+├── subnets.py                   10.200.N.0/24 pool allocation
+├── state.py                     state file (/var/lib/intermux/state.json) and lock
+├── engine.py                    bind, stop, verify and teardown orchestration
+├── system/                      wrappers around ip, iptables, /proc and sysfs
+│   ├── commands.py              safe command runner (argument lists only)
+│   ├── procs.py                 process discovery and termination
+│   ├── session.py               user and display/session detection
+│   ├── deps.py                  distro detection and dependency checks
+│   ├── netinfo.py               interface discovery and classification
+│   ├── netns.py                 namespaces and veth pairs
+│   ├── dns.py                   upstream DNS servers
+│   ├── routing.py               policy rules and routing tables
+│   └── firewall.py              NAT rules and IP forwarding
+├── apps/                        application handling
+│   ├── __init__.py              path resolution and per-app handler selection
+│   ├── firefox.py               Firefox profile handling
+│   └── desktop_entries.py       .desktop application discovery
+├── helper/                      privileged side and unprivileged client
+│   ├── protocol.py              request validation (pure)
+│   ├── server.py                root helper, started through pkexec
+│   ├── client.py                unprivileged caller
+│   └── __main__.py              python3 -m intermux.helper
+└── ui/                          Tk GUI
+    ├── app.py                   main window
+    ├── worker.py                background calls so the window never blocks
+    ├── picker.py                desktop application picker
+    ├── report_dialog.py         Report issue dialog
+    └── theme.py                 dark and light palettes
+packaging/                       polkit policy, desktop file, icon, metainfo, distro packaging
+tests/                           unit tests and opt-in namespace integration test
+windows/                         Windows 10/11 edition (separate codebase)
+install.sh                       build and install system-wide
+uninstall.sh                     remove the installed files
+intermux_linux.spec              PyInstaller spec (onedir build)
+pyproject.toml                   package metadata and the intermux command
 ```
 
-### 🔧 How It Works
+### How It Works
 
-1. **Interface Detection**: Scans system for all network interfaces using `ip` commands
-2. **Routing Tables**: Creates custom routing tables in `/etc/iproute2/rt_tables`
-3. **Network Namespaces**: Isolates network traffic using Linux network namespaces
-4. **Virtual Interfaces**: Uses veth pairs to connect namespaces to physical interfaces
-5. **IP Forwarding**: Configures NAT/masquerading for namespace connectivity
-6. **Privilege Separation**: Namespace setup runs as root; apps launch as **your user** via `sudo -u`
-7. **DNS Resolution**: Writes real upstream DNS servers to namespace (handles `systemd-resolved` stubs)
+1. **Interface discovery**: Interface state comes from `ip -j` JSON output. The interface kind (Wi-Fi, Ethernet, USB, Bluetooth, mobile) comes from `/sys/class/net`.
+2. **One namespace per interface**: Each bound interface gets its own network namespace, connected to the host by a veth pair. The host side uses `10.200.N.1/24` and the namespace side uses `10.200.N.2/24`, where N is a free index from 1 to 254.
+3. **Policy routing**: Traffic from each subnet uses its own routing table (`1000 + N`), whose default route goes out through the chosen interface's gateway. Traffic from a namespace always leaves through its assigned interface.
+4. **NAT and forwarding**: iptables MASQUERADE rules are added for the subnet, with matching FORWARD rules. IPv4 forwarding is turned on through `/proc`, and the previous value is restored when the last binding is removed.
+5. **DNS**: The real upstream resolvers are written to `/etc/netns/<namespace>/resolv.conf`. Local stub resolvers such as `systemd-resolved` at `127.0.0.53` are skipped.
+6. **Launch**: The application starts inside its namespace, then drops to your user with `runuser` and a minimal environment. Only display, audio, D-Bus, and locale variables are passed through.
+7. **State**: Bindings are recorded in `/var/lib/intermux/state.json` under a lock, so the GUI, the CLI and the helper always agree.
 
-### 🔐 Privilege Model
+### Privilege Model
 
 | Operation | Runs As |
 |-----------|---------|
-| Create network namespace | root |
-| Configure veth / routing / NAT | root |
-| Write namespace resolv.conf | root |
-| **Launch your application** | **your regular user** |
+| List interfaces, list apps, status, check | **you** (no root) |
+| Create namespaces, veth pairs, routes, NAT, forwarding | **root helper** (started via `pkexec`, polkit action `org.intermux.run`) |
+| Stop or kill applications | **root helper** (signals the processes) |
+| Launch your application | **your regular user** (via `runuser` inside the namespace) |
 
-## 🛠️ Advanced Configuration
+The GUI and CLI never run root commands themselves. Every change goes through the helper, which checks each request against a strict schema before acting on it. See [SECURITY.md](SECURITY.md) for details.
 
-### Custom Routing Table IDs
-
-Edit `core/router.py`:
-```python
-BASE_TABLE_ID = 100  # Starting table ID
-BASE_PRIORITY = 1000 # Starting priority
-```
-
-## 🐛 Troubleshooting
+## Troubleshooting
 
 <details>
-<summary><strong>GUI doesn't launch on Wayland</strong></summary>
+<summary><strong>GUI does not start, or says there is no display</strong></summary>
 
-InterMux auto-detects Wayland. If issues occur, ensure `xwayland` is installed:
+The GUI needs a graphical session. Run it from your desktop, not from a plain text console. Check that `DISPLAY` or `WAYLAND_DISPLAY` is set, and that Tk is installed (`python3 -c "import tkinter"`).
+
+On Wayland, Tk runs through XWayland. If it fails, make sure XWayland is installed:
 
 ```bash
 # Arch
@@ -294,96 +319,124 @@ sudo apt install xwayland
 </details>
 
 <details>
-<summary><strong>Permission denied errors</strong></summary>
+<summary><strong>"authorization was cancelled or denied"</strong></summary>
+
+The polkit prompt was dismissed or timed out. Run the command again and approve it. If no prompt appears, make sure a polkit authentication agent is running in your session, and that `pkexec` is installed.
+
+For Option A, check that the policy is installed:
 
 ```bash
-sudo python3 cli.py assign --app /usr/lib/firefox/firefox --iface wlan0
+ls /usr/share/polkit-1/actions/org.intermux.policy
 ```
 </details>
 
 <details>
-<summary><strong>Interface not detected</strong></summary>
+<summary><strong>Interface is missing from the list</strong></summary>
+
+Only interfaces that are up, have an IPv4 address, have a default route, and are not virtual can be bound. Virtual bridges (Docker, veth, libvirt, VMware, VirtualBox) and `tun`/`tap` devices are hidden. Other tunnels, such as WireGuard and Tailscale, can appear in the list.
 
 ```bash
-ip link show
-sudo ip link set <interface> up
+intermux interfaces --all
+ip -br addr show
+ip route show default
 ```
 </details>
 
 <details>
-<summary><strong>No internet in namespace / DNS failures</strong></summary>
+<summary><strong>No internet in the namespace, or DNS failures</strong></summary>
 
 ```bash
-python3 cli.py check
-sudo sysctl -w net.ipv4.ip_forward=1
+intermux check
+intermux verify --iface wlan0
+cat /proc/sys/net/ipv4/ip_forward   # should print 1 while bindings exist
 ```
+
+If `iptables` is missing, `check` reports it. If you see leftover rules after a crash, run `intermux teardown-idle`, or `intermux reset --kill-apps --yes` to clean up everything.
 </details>
 
-### 📝 Logs and Debugging
+<details>
+<summary><strong>Stale or unreadable state</strong></summary>
 
-InterMux automatically logs all activity, commands, and errors to a persistent log file:
+If the state file cannot be read, InterMux moves it aside as `/var/lib/intermux/state.json.corrupt-<timestamp>` and starts with an empty state. Existing namespaces and rules can then be removed with `intermux reset --yes`. The corrupt file is kept, so you can inspect it.
+</details>
+
+### Logs
+
+Each bound application writes its output to its own log file:
+
 ```bash
-~/.local/share/intermux/intermux.log
+~/.local/state/intermux/logs/<app>-<iface>.log
 ```
-This log includes detailed debug information and full stack traces, which is highly recommended to include when reporting issues.
 
-## ⚠️ Known Limitations
+The **Open log** button in the GUI opens this file. Include the relevant log when reporting issues.
+
+## Known Limitations
 
 ### Browser Compatibility
 
-- ✅ **Firefox**: Fully supported — uses your existing profile, prompts if already running
-- ❌ **Chromium**: Not supported due to sandboxing conflicts with network namespaces
-- ✅ **Most other apps**: GUI and CLI applications work correctly
+- **Firefox**: Supported. Uses your existing profile, or a separate profile per interface if you choose that. The separate profile is always created under `~/.mozilla/firefox/intermux-<iface>`. Finding your default profile covers native, Snap and Flatpak installs, but a Snap or Flatpak Firefox may not be able to read the separate profile because of its sandbox.
+- **Chromium-based browsers** (Chromium, Chrome, Brave, Vivaldi, Edge, Opera): Blocked by default, because their sandbox conflicts with network namespaces. Use `--allow-unsupported` to try anyway.
+- **Flatpak apps**: Cannot be bound. They are reported as not bindable, because they run in their own sandbox.
+- **Other apps**: Command-line and GUI applications generally work.
+
+### Networking
+
+- **IPv4 only**. Interfaces need an IPv4 address and a default route.
+- **Up to 254 bound interfaces**, one `10.200.N.0/24` subnet each.
+- **All protocols follow the interface**: Routing works at the network layer, so TCP and UDP traffic from a bound app both use the chosen interface.
+- **Virtual bridges and `tun`/`tap` devices** are not offered for binding. Other tunnels, such as WireGuard and Tailscale, can appear and can be bound if they meet the requirements above.
 
 ### Platform Support
 
-- ✅ **Linux (all major distros)**: Arch, Ubuntu, Debian, Fedora, openSUSE, Manjaro, EndeavourOS, etc.
-- ✅ **X11 and Wayland**: Both session types supported
-- ✅ **Windows 10 / 11**: Phase 1 supported via SOCKS5 proxy binding — see [windows/README.md](windows/README.md)
+- **Linux**: Requires a Linux kernel with `CONFIG_NET_NS` (network namespaces), Python 3.9+, and polkit.
+- **X11 and Wayland**: Both session types are supported for the GUI.
+- **Windows 10 / 11**: Supported through a SOCKS5 proxy binding. It is a separate codebase. See [windows/README.md](windows/README.md).
 
 ### System Requirements
 
-- Root privileges for network namespace operations
-- Linux kernel with `CONFIG_NET_NS`
-- `iproute2` for network management
+- Root privileges for network operations, granted through polkit
+- `iproute2`, `iptables` (or `iptables-nft`/`iptables-legacy`), `util-linux` (`runuser`), and `polkit` (`pkexec`)
+- Optional: `procps` (`pgrep`), and `xdg-utils` (`xdg-open`) to open folders and links
 
-## 🤝 Contributing
+## Contributing
 
-Contributions are welcome! Please submit a Pull Request.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, test commands and code rules.
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
 3. Commit your changes
 4. Push and open a Pull Request
 
-## 📄 License
+To report a security issue, follow [SECURITY.md](SECURITY.md) and do not open a public issue.
 
-This project is licensed under the MIT License - see the [LICENSE](license) file for details.
+## License
 
-## 🙏 Acknowledgments
+This project is licensed under the MIT License. See the [LICENSE](license) file for details.
+
+## Acknowledgments
 
 - Built with Python and Tkinter
-- Uses Linux networking stack (iproute2)
+- Uses the Linux networking stack (iproute2, netlink, network namespaces)
 - Inspired by the need for better network interface management
 
-## 📞 Support
+## Support
 
-- 🐛 [Report bugs](https://github.com/Rishi-Bhati/intermux/issues)
-- 💡 [Request features](https://github.com/Rishi-Bhati/intermux/issues)
+- [Report bugs](https://github.com/Rishi-Bhati/intermux/issues)
+- [Request features](https://github.com/Rishi-Bhati/intermux/issues)
 
 ---
 
-## 🪟 Windows Support
+## Windows Support
 
-InterMux now supports Windows 10 and 11 via a SOCKS5 proxy engine.
-See **[windows/README.md](windows/README.md)** for full installation and usage instructions.
+InterMux supports Windows 10 and 11 through a SOCKS5 proxy engine.
+See **[windows/README.md](windows/README.md)** for installation and usage instructions.
 
 ```
 windows/
-├── gui/app.py          ← GUI (same dark theme)
-├── cli.py              ← CLI (same commands)
-├── core/               ← Windows-specific engine
-└── intermux_windows.spec  ← PyInstaller → .exe
+├── gui/app.py              GUI (same dark theme)
+├── cli.py                  CLI (same commands)
+├── core/                   Windows-specific engine
+└── intermux_windows.spec   PyInstaller build to .exe
 ```
 
 ---
