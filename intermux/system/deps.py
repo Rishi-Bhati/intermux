@@ -36,6 +36,7 @@ _TOOL_SPECS: Tuple[Tuple[str, bool, str, str, Dict[str, str]], ...] = (
     ("pkexec", True, "graphical privilege prompt", "policykit-1",
      {"pacman": "polkit", "dnf": "polkit", "zypper": "polkit", "apk": "polkit"}),
     ("curl", False, "public IP verification", "curl", {}),
+    ("nft", False, "route an already running app (shift current session)", "nftables", {}),
     ("xdg-open", False, "open links and folders", "xdg-utils", {}),
 )
 

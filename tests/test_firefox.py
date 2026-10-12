@@ -179,6 +179,9 @@ class FirefoxHandlerTests(TempHomeTestCase):
         self.assertEqual(FirefoxHandler().comm_names("/usr/bin/firefox"),
                          ["firefox", "firefox-bin"])
 
+    def test_comm_names_include_the_binary_name(self):
+        self.assertIn("firefox-esr", FirefoxHandler().comm_names("/usr/lib/firefox-esr/firefox-esr"))
+
     def test_extra_args_default(self):
         self.assertEqual(FirefoxHandler().extra_args(self.ctx("default")), ["--no-remote"])
 
@@ -232,12 +235,64 @@ class GetHandlerTests(unittest.TestCase):
         self.assertEqual(handler.name, "firefox")
         self.assertTrue(handler.supported)
 
-    def test_chromium_unsupported(self):
+    def test_chromium_supported_and_recognises_running_instances(self):
         handler = get_handler("/opt/brave.com/brave/brave-browser")
         self.assertIsInstance(handler, ChromiumHandler)
         self.assertEqual(handler.name, "chromium")
-        self.assertFalse(handler.supported)
-        self.assertIn("--allow-unsupported", handler.unsupported_reason)
+        self.assertTrue(handler.supported)
+        names = handler.comm_names("/usr/bin/brave-origin")
+        self.assertIn("brave", names)
+        self.assertIn("brave-origin", names)
+
+    def test_chromium_separate_profile_uses_its_own_data_dir(self):
+        from intermux.apps import LaunchContext
+        from intermux.system.session import UserInfo
+
+        user = UserInfo(uid=1000, gid=1000, username="tester", home="/home/tester")
+        handler = ChromiumHandler()
+        default = LaunchContext(user=user, iface="wlan0", profile_mode="default")
+        separate = LaunchContext(user=user, iface="wlan0", profile_mode="separate")
+        self.assertEqual(handler.extra_args(default), [])
+        args = handler.extra_args(separate)
+        self.assertEqual(len(args), 1)
+        self.assertTrue(args[0].startswith("--user-data-dir=/home/tester/.local/state/intermux/profiles/"))
+        self.assertIn("wlan0", args[0])
+
+    def test_chromium_family_names_do_not_cover_other_browsers(self):
+        brave = get_handler("/opt/brave.com/brave/brave-browser").comm_names("/opt/brave.com/brave/brave-browser")
+        self.assertIn("brave", brave)
+        self.assertNotIn("chrome", brave)
+        self.assertNotIn("chromium", brave)
+        chrome = get_handler("/usr/bin/google-chrome-stable")
+        self.assertIsInstance(chrome, ChromiumHandler)
+        self.assertIn("chrome", chrome.comm_names("/usr/bin/google-chrome-stable"))
+        self.assertNotIn("brave", chrome.comm_names("/usr/bin/google-chrome-stable"))
+        self.assertIsInstance(get_handler("/usr/bin/microsoft-edge-stable"), ChromiumHandler)
+
+    def test_separate_profiles_are_per_browser(self):
+        from intermux.apps import LaunchContext
+        from intermux.system.session import UserInfo
+
+        user = UserInfo(uid=1000, gid=1000, username="tester", home="/home/tester")
+        ctx = LaunchContext(user=user, iface="wlan0", profile_mode="separate")
+        brave = get_handler("/usr/bin/brave").profile_dir(ctx)
+        chrome = get_handler("/usr/bin/google-chrome-stable").profile_dir(ctx)
+        self.assertNotEqual(brave, chrome)
+        self.assertEqual(brave.name, "brave-wlan0")
+        self.assertEqual(chrome.name, "chrome-wlan0")
+
+    def test_chromium_profile_dir_error_is_reported(self):
+        from intermux.apps import LaunchContext
+        from intermux.errors import ConflictError
+        from intermux.system import safefs
+        from intermux.system.session import UserInfo
+
+        user = UserInfo(uid=1000, gid=1000, username="tester", home="/home/tester")
+        ctx = LaunchContext(user=user, iface="wlan0", profile_mode="separate")
+        with mock.patch.object(safefs, "ensure_user_dir", side_effect=PermissionError(13, "Permission denied")):
+            with self.assertRaises(ConflictError) as caught:
+                get_handler("/usr/bin/brave").prepare(ctx, "/usr/bin/brave")
+        self.assertEqual(caught.exception.code, "profile_unwritable")
 
 
 if __name__ == "__main__":

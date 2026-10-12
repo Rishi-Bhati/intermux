@@ -182,3 +182,20 @@ class UniqueZipTests(unittest.TestCase):
             self.assertNotEqual(first, second)
             self.assertTrue(second.name.endswith("-2.zip"))
             self.assertEqual(stat.S_IMODE(os.stat(second).st_mode), 0o600)
+
+
+class LogFileListingTests(unittest.TestCase):
+    def test_vanished_log_does_not_break_the_listing(self):
+        import os
+        import tempfile
+        from pathlib import Path
+
+        from intermux import bugreport
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "good.log").write_text("x")
+            os.symlink(os.path.join(tmp, "gone"), os.path.join(tmp, "dangling.log"))  # stat() fails
+            names = sorted(p.name for p in bugreport._log_files(Path(tmp)))
+        self.assertEqual(names, ["dangling.log", "good.log"])
+        self.assertEqual(bugreport._log_files(Path("/nonexistent/intermux-logs")), [])
+

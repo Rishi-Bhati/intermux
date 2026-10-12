@@ -29,6 +29,9 @@ override_dh_auto_install:
 		debian/intermux/usr/share/icons/hicolor/scalable/apps/intermux.svg
 	install -Dm644 packaging/linux/intermux.metainfo.xml \
 		debian/intermux/usr/share/metainfo/org.intermux.InterMux.metainfo.xml
+	# Watcher that resets routing when routed apps exit; dh_installsystemd enables it.
+	install -Dm644 packaging/linux/intermux-watch.service \
+		debian/intermux/usr/lib/systemd/system/intermux-watch.service
 
 # Stripping or rewriting dependencies breaks the PyInstaller bundle
 override_dh_strip:

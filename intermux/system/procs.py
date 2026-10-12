@@ -37,20 +37,25 @@ def _read_bytes(path: str) -> Optional[bytes]:
 
 
 def _status_ids(pid: int) -> Optional[tuple]:
-    """Return (ppid, real uid) from /proc/<pid>/status, or None."""
+    """Return (ppid, real uid) from /proc/<pid>/status, or None (missing, unreadable, or exited)."""
     raw = _read_bytes(f"/proc/{pid}/status")
     if raw is None:
         return None
     ppid = uid = None
+    state = ""
     try:
         for line in raw.decode("utf-8", errors="replace").splitlines():
             if line.startswith("PPid:"):
                 ppid = int(line.split()[1])
             elif line.startswith("Uid:"):
                 uid = int(line.split()[1])
+            elif line.startswith("State:"):
+                state = line.split()[1] if len(line.split()) > 1 else ""
     except (ValueError, IndexError):
         return None
     if ppid is None or uid is None:
+        return None
+    if state[:1] in ("Z", "X"):  # zombie or dead: already exited, not a running application
         return None
     return ppid, uid
 

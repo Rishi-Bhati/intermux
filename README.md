@@ -286,9 +286,10 @@ pyproject.toml                   package metadata and the intermux command
 2. **One namespace per interface**: Each bound interface gets its own network namespace, connected to the host by a veth pair. The host side uses `10.200.N.1/24` and the namespace side uses `10.200.N.2/24`, where N is a free index from 1 to 254.
 3. **Policy routing**: Traffic from each subnet uses its own routing table (`1000 + N`), whose default route goes out through the chosen interface's gateway. Traffic from a namespace always leaves through its assigned interface.
 4. **NAT and forwarding**: iptables MASQUERADE rules are added for the subnet, with matching FORWARD rules. IPv4 forwarding is turned on through `/proc`, and the previous value is restored when the last binding is removed.
-5. **DNS**: The real upstream resolvers are written to `/etc/netns/<namespace>/resolv.conf`. Local stub resolvers such as `systemd-resolved` at `127.0.0.53` are skipped.
+5. **DNS**: Each namespace gets its own `/etc/netns/<namespace>/resolv.conf`: the bound interface's gateway first (the router or phone on that link), then the public resolvers `1.1.1.1` (Cloudflare) and `9.9.9.9` (Quad9). The host's resolvers are not used, because some of them (such as `systemd-resolved` at `127.0.0.53` or Tailscale's `100.100.100.100`) are not reachable through the bound interface. Lookups that fall back to the public resolvers are seen by those providers.
 6. **Launch**: The application starts inside its namespace, then drops to your user with `runuser` and a minimal environment. Only display, audio, D-Bus, and locale variables are passed through.
 7. **State**: Bindings are recorded in `/var/lib/intermux/state.json` under a lock, so the GUI, the CLI and the helper always agree.
+8. **Automatic cleanup**: The `intermux-watch` systemd service (installed and started by `install.sh`) checks every 3 seconds. When the last app in a namespace exits, it removes that binding and, once no other app uses the interface, its namespace, routes and NAT rules. It also re-adds a policy route that the kernel dropped after the interface went down and came back. It never signals applications. Without systemd, run `intermux teardown-idle` yourself.
 
 ### Privilege Model
 
@@ -375,7 +376,7 @@ The **Open log** button in the GUI opens this file. Include the relevant log whe
 ### Browser Compatibility
 
 - **Firefox**: Supported. Uses your existing profile, or a separate profile per interface if you choose that. The separate profile is always created under `~/.mozilla/firefox/intermux-<iface>`. Finding your default profile covers native, Snap and Flatpak installs, but a Snap or Flatpak Firefox may not be able to read the separate profile because of its sandbox.
-- **Chromium-based browsers** (Chromium, Chrome, Brave, Vivaldi, Edge, Opera): Blocked by default, because their sandbox conflicts with network namespaces. Use `--allow-unsupported` to try anyway.
+- **Chromium-based browsers** (Chromium, Chrome, Brave, Vivaldi, Edge, Opera): Supported. They are single-instance, so if the browser is already running you are asked to close it or open a separate profile. A separate profile uses its own data folder per browser and interface, under `~/.local/state/intermux/profiles/<browser>-<iface>`.
 - **Flatpak apps**: Cannot be bound. They are reported as not bindable, because they run in their own sandbox.
 - **Other apps**: Command-line and GUI applications generally work.
 

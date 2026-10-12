@@ -20,7 +20,7 @@ from intermux.apps import firefox
 from intermux.errors import (ConflictError, InterMuxError, NotFoundError, PermissionDeniedError,
                              ValidationError)
 from intermux.system import adopt as adopt_sys
-from intermux.system import commands, dns, firewall, netinfo, netns, procs, routing
+from intermux.system import commands, firewall, netinfo, netns, procs, routing
 from intermux.system.session import UserInfo
 
 log = logging.getLogger("intermux.engine")
@@ -30,6 +30,46 @@ RUNUSER = commands.which("runuser") or "/usr/sbin/runuser"
 CURL = commands.which("curl") or "/usr/bin/curl"
 
 GRACE = 5.0
+PUBLIC_DNS = ("1.1.1.1", "9.9.9.9")
+TAILSCALE_TABLE = "52"
+
+
+def namespace_dns_servers(interface: netinfo.Interface) -> List[str]:
+    """DNS servers for a namespace: the bound interface's own gateway first (its router or phone answers
+    DNS on that link), then public resolvers. Host resolvers such as Tailscale's 100.100.100.100 are only
+    routed through their own interface, so a namespace bound to another interface cannot reach them."""
+    gateways = [g for g in interface.gateways if ":" not in g]
+    return list(dict.fromkeys(gateways + list(PUBLIC_DNS)))
+
+
+def order_dns_servers(servers: Sequence[str], answering: Sequence[str]) -> List[str]:
+    """Servers that answered the probe first (keeping their order), then the rest; unchanged if none answered."""
+    return [s for s in servers if s in answering] + [s for s in servers if s not in answering]
+
+
+def configure_namespace_dns(ns: str, ns_veth: str, ns_addr: str, servers: List[str]) -> List[str]:
+    """Write the namespace resolv.conf (working resolvers first) and redirect stray DNS to the best one.
+
+    Needs the veth, NAT and policy route in place: the probe is sent from inside the namespace, so it only
+    counts resolvers reachable through the bound interface. Returns user-facing warnings."""
+    warnings: List[str] = []
+    try:
+        answering = netns.probe_dns(ns, servers)
+    except InterMuxError as exc:
+        log.warning("DNS probe in %s failed: %s", ns, exc)
+        answering = []
+    if not answering:
+        warnings.append("no DNS server answered through this interface yet; name lookups may fail")
+    servers = order_dns_servers(servers, answering)
+    netns.write_resolv_conf(ns, servers)
+    try:
+        netns.ensure_dns_redirect(ns, servers, ns_veth, ns_addr, firewall.iptables_cmd())
+    except InterMuxError as exc:
+        log.warning("DNS redirect in %s failed: %s", ns, exc)
+        warnings.append("DNS may stop working if the host rewrites /etc/resolv.conf")
+    return warnings
+
+
 _RUNNING_POLICIES = ("ask", "close", "separate")
 
 
@@ -68,6 +108,9 @@ def bind(app_path: str, iface: str, *, user: UserInfo, env: Dict[str, str],
     if running_policy not in _RUNNING_POLICIES:
         raise ValidationError(f"unknown running policy: {running_policy}", code="invalid_request")
     _reap_launched()
+    if not os.path.isabs(user.home) or user.home == "/" or not os.path.isdir(user.home):
+        raise ValidationError(f"the home directory {user.home} of user {user.username} does not exist; "
+                              "InterMux needs it to write the application log", code="no_home")
 
     interface = _find_interface(iface)
     if not interface.bindable:
@@ -106,18 +149,20 @@ def bind(app_path: str, iface: str, *, user: UserInfo, env: Dict[str, str],
     netns.ensure_namespace(ns)
     netns.ensure_veth(ns, host_v, ns_v, f"{host_addr}/{subnet.prefixlen}",
                       f"{subnets.ns_ip(subnet)}/{subnet.prefixlen}", str(host_addr))
-    netns.write_resolv_conf(ns, dns.upstream_dns_servers())
+    # Forwarding is switched on at every bind (it may have been reset since the last one, e.g. by a reboot).
+    # Only the first value seen is recorded; it is never written back (Docker, libvirt or Tailscale may rely on it).
+    previous = firewall.enable_forwarding()
     if st.ip_forward_prev is None:
-        st.ip_forward_prev = firewall.enable_forwarding()
+        st.ip_forward_prev = previous
     firewall.ensure_nat(subnet, iface)
     index = subnets.index_of(subnet)
     table = config.TABLE_BASE + index
     priority = config.PRIORITY_BASE + index
-    routing.ensure_policy(subnet, iface, table, priority, gateway)
+    routing.ensure_policy(subnet, iface, table, priority, gateway, host_v)
+    warnings = configure_namespace_dns(ns, ns_v, str(subnets.ns_ip(subnet)), namespace_dns_servers(interface))
     # Persist the subnet and forwarding state now so a later failure can still be torn down.
     state.save_state(st, config.STATE_FILE)
 
-    warnings: List[str] = []
     if handler.name == "firefox" and profile_mode == "default" and firefox.default_profile_dir(user.home) is None:
         warnings.append("Firefox profile: default profile not found; a new profile will be used")
 
@@ -127,7 +172,11 @@ def bind(app_path: str, iface: str, *, user: UserInfo, env: Dict[str, str],
 
     app_name = os.path.basename(app_path)
     _ensure_tmpdir(user, ns)
-    log_fd, log_path = _open_log(user, f"{app_name}-{iface}.log")
+    try:
+        log_fd, log_path = _open_log(user, f"{app_name}-{iface}.log")
+    except OSError as exc:
+        raise ConflictError(f"cannot write the application log under {user.home}: {exc.strerror or exc}",
+                            code="log_unwritable") from exc
     try:
         proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=log_fd, stderr=subprocess.STDOUT,
                                 start_new_session=True, close_fds=True)
@@ -184,7 +233,7 @@ def verify(iface: str) -> Dict[str, Any]:
     ns = netns.namespace_name(iface)
     if not netns.namespace_exists(ns):
         raise NotFoundError(f"namespace for {iface} is not up")
-    res = commands.run([IP, "netns", "exec", ns, CURL, "-s", "--max-time", "8", config.PUBLIC_IP_URL])
+    res = commands.run([IP, "netns", "exec", ns, CURL, "-4", "-s", "--max-time", "8", config.PUBLIC_IP_URL])
     if not res.ok:
         error = res.stderr.strip() or f"curl exited with status {res.returncode}"
         return {"iface": iface, "public_ip": None, "error": error}
@@ -244,11 +293,37 @@ def teardown_idle() -> Dict[str, Any]:
         st.subnets.pop(iface, None)
         torn.append(iface)
 
-    if not st.bindings and st.ip_forward_prev is not None:
-        firewall.set_ip_forward(st.ip_forward_prev)
-        st.ip_forward_prev = None
+    if not st.bindings:
+        st.ip_forward_prev = None       # forwarding itself is left on: other services may depend on it
     state.save_state(st, config.STATE_FILE)
     return {"removed": removed, "torn_down_ifaces": torn}
+
+
+def refresh_routes() -> Dict[str, Any]:
+    """Re-add the policy route of every bound interface whose route the kernel dropped (link flap, roam,
+    tether re-plug) or whose gateway changed. Interfaces that are down are left on their unreachable fallback."""
+    st = state.load_state(config.STATE_FILE)
+    try:
+        current = {i.name: i for i in netinfo.list_interfaces()}
+    except (InterMuxError, OSError) as exc:
+        log.warning("cannot list interfaces: %s", exc)
+        return {"refreshed": []}
+    refreshed: List[str] = []
+    for iface, cidr in sorted(st.subnets.items()):
+        interface = current.get(iface)
+        if interface is None or not interface.bindable:
+            continue
+        net = ipaddress.IPv4Network(cidr)
+        index = subnets.index_of(net)
+        gateway = interface.gateways[0] if interface.gateways else None
+        host_v = netns.veth_names(iface)[0]
+        if routing.policy_route_present(config.TABLE_BASE + index, net, iface, gateway, host_v):
+            continue
+        if _safe(routing.ensure_policy, net, iface, config.TABLE_BASE + index, config.PRIORITY_BASE + index,
+                 gateway, host_v):
+            refreshed.append(iface)
+            log.info("re-added the policy route for %s via %s", iface, gateway)
+    return {"refreshed": refreshed}
 
 
 def reset(kill_apps: bool = False, uid: Optional[int] = None) -> Dict[str, Any]:
@@ -273,6 +348,14 @@ def reset(kill_apps: bool = False, uid: Optional[int] = None) -> Dict[str, Any]:
         if pids:
             still_running = procs.terminate(procs.descendants(_unique(pids), uid=uid), grace=GRACE)
 
+    # A namespace that still holds processes is kept: removing it would strand those apps with no
+    # network, and a later reset could not find them. Their bindings, veth, policy and NAT rules stay.
+    busy = [ns for ns in namespaces if procs.pids_in_netns(ns)]
+    kept_bindings = [b for b in st.bindings if b.namespace in busy]
+    dropped_bindings = [b for b in st.bindings if b.namespace not in busy]
+    kept_subnets = {b.subnet for b in kept_bindings}
+    kept_veths = {netns.veth_names(b.iface)[0] for b in kept_bindings}
+
     for a in st.adoptions:
         _safe(_release_plumbing, a, [])
     for table_name in _safe_list(adopt_sys.list_nft_tables):
@@ -280,28 +363,39 @@ def reset(kill_apps: bool = False, uid: Optional[int] = None) -> Dict[str, Any]:
         if slot_text.isdigit():
             _safe(adopt_sys.delete_nft, int(slot_text))
 
-    for b in st.bindings:
+    for b in dropped_bindings:
         _safe(_teardown_binding_plumbing, b)
 
     for ns in namespaces:
-        _safe(netns.delete_namespace, ns)
+        if ns not in busy:
+            _safe(netns.delete_namespace, ns)
     for veth in veths:
-        _safe(netns.delete_veth, veth)
+        if veth not in kept_veths:
+            _safe(netns.delete_veth, veth)
 
-    rules = routing.intermux_rules()
+    rules = [r for r in routing.intermux_rules()
+             if str(routing.rule_src_network(r)) not in kept_subnets]
     for rule in rules:
         _safe(_remove_rule, rule)
 
-    nat_lines = firewall.list_intermux_rules()
+    nat_lines = [line for line in firewall.list_intermux_rules()
+                 if not any(subnet in line.split() for subnet in kept_subnets)]
     for line in nat_lines:
         _safe(firewall.delete_rule_line, line)
 
-    if st.ip_forward_prev is not None:
-        _safe(firewall.set_ip_forward, st.ip_forward_prev)
+    # ip_forward is deliberately not restored (main never did): writing 0 here can cut off Docker,
+    # libvirt or a Tailscale exit node that also need forwarding.
     _safe(adopt_sys.sweep_leftovers)
-    state.save_state(state.State(), config.STATE_FILE)
-    return {"namespaces": namespaces, "veths": veths, "rules": len(rules),
-            "nat_rules": len(nat_lines), "still_running": still_running}
+
+    kept_state = state.State(
+        bindings=kept_bindings,
+        subnets={b.iface: b.subnet for b in kept_bindings},
+        ip_forward_prev=st.ip_forward_prev if kept_bindings else None,
+    )
+    state.save_state(kept_state, config.STATE_FILE)
+    return {"namespaces": [ns for ns in namespaces if ns not in busy], "veths": veths,
+            "rules": len(rules), "nat_rules": len(nat_lines), "still_running": still_running,
+            "kept_namespaces": busy, "kept_apps": [b.app_name for b in kept_bindings]}
 
 
 def filter_host_netns(table: Sequence[procs.Proc], pids: Sequence[int], host_netns: Optional[int]) -> List[int]:
@@ -457,10 +551,14 @@ def _used_networks(st: state.State) -> List[ipaddress.IPv4Network]:
     cidrs: List[str] = list(st.subnets.values())
     for interface in netinfo.list_interfaces():
         cidrs.extend(interface.ipv4_cidrs)
-    for route in commands.json_cmd([IP, "-j", "route", "show", "table", "main"]):
-        dst = route.get("dst") if isinstance(route, dict) else None
-        if dst and dst != "default":
-            cidrs.append(dst)
+    # Table 52 is Tailscale's: its rule (priority 5270) is consulted before main, so a subnet route there that
+    # covers a namespace subnet would steal the namespace's reply traffic.
+    for table in ("main", TAILSCALE_TABLE):
+        for route in commands.json_cmd([IP, "-j", "route", "show", "table", table],
+                                       tolerate=("FIB table does not exist",)):
+            dst = route.get("dst") if isinstance(route, dict) else None
+            if dst and dst != "default":
+                cidrs.append(dst)
     return subnets.used_networks(cidrs)
 
 

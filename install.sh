@@ -12,6 +12,7 @@ readonly INSTALL_LIB="/usr/lib/intermux"
 readonly INSTALL_BIN="/usr/bin/intermux"
 readonly LEGACY_BIN="/usr/local/bin/intermux"
 readonly POLKIT_DIR="/usr/share/polkit-1/actions"
+readonly WATCH_UNIT="/usr/lib/systemd/system/intermux-watch.service"
 readonly APPS_DIR="/usr/share/applications"
 readonly ICON_DIR="/usr/share/icons/hicolor/scalable/apps"
 readonly META_DIR="/usr/share/metainfo"
@@ -69,6 +70,7 @@ require_sources() {
     for f in \
         packaging/linux/org.intermux.policy \
         packaging/linux/intermux.desktop \
+        packaging/linux/intermux-watch.service \
         packaging/linux/intermux.svg \
         packaging/linux/intermux.metainfo.xml \
         intermux_linux.spec \
@@ -112,9 +114,9 @@ build_onedir() {
 
 # Privilege note: the polkit action org.intermux.run authorises running the
 # installed binary ($INSTALL_LIB/intermux) through pkexec, not only its
-# `helper` subcommand. InterMux calls it as `intermux helper`. The binary
-# refusing every command other than `helper` when run as root is PLANNED
-# (intermux/__main__.py) and is not implemented yet.
+# `helper` subcommand. InterMux calls it as `intermux helper`. As root the
+# binary refuses every command except `helper` and `watch`, and refuses
+# `watch` when started through pkexec (intermux/__main__.py).
 #
 # The root-executed binary must be owned by root and not writable by others.
 verify_install_lib() {
@@ -132,6 +134,11 @@ verify_install_lib() {
 
 install_files() {
     local src="$1"
+
+    # A running watcher executes from $INSTALL_LIB; stop it before the bundle is replaced.
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop intermux-watch.service >/dev/null 2>&1 || true
+    fi
 
     info "Installing bundle to $INSTALL_LIB"
     rm -rf -- "$INSTALL_LIB"
@@ -164,6 +171,17 @@ install_files() {
     install -Dm644 "$SCRIPT_DIR/packaging/linux/intermux.metainfo.xml" \
         "$META_DIR/org.intermux.InterMux.metainfo.xml"
     ok "Installed polkit policy, desktop entry, icon and metainfo"
+
+    # Routing is reset automatically when a routed app exits: the watcher runs `intermux watch` as root.
+    install -Dm644 "$SCRIPT_DIR/packaging/linux/intermux-watch.service" "$WATCH_UNIT"
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload || warn "systemctl daemon-reload failed"
+        systemctl enable intermux-watch.service || warn "could not enable intermux-watch.service"
+        systemctl restart intermux-watch.service || warn "could not start intermux-watch.service"
+        ok "Installed and started the routing watcher (intermux-watch.service)"
+    else
+        warn "systemd not found: routing will not reset automatically; run 'intermux watch' as root instead"
+    fi
 
     if command -v update-desktop-database >/dev/null 2>&1; then
         update-desktop-database -q "$APPS_DIR" || warn "update-desktop-database failed"

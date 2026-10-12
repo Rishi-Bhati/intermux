@@ -190,3 +190,28 @@ class AlreadyRunningChoicesTests(unittest.TestCase):
         values = [v for _, v in already_running_choices()]
         self.assertEqual(values, ["close", "separate", "shift", None])
         self.assertIn(("Shift current session", "shift"), already_running_choices())
+
+
+class SnapshotRowsTests(unittest.TestCase):
+    def test_rows_use_one_process_table(self):
+        from intermux import state
+        from intermux.system.procs import Proc
+        from intermux.ui.app import snapshot_rows
+
+        st = state.State(bindings=[
+            state.Binding(iface="wlan0", app="/usr/bin/a", app_name="a", namespace="ns_a",
+                          subnet="10.200.1.0/24", table=1001, priority=1001),
+            state.Binding(iface="usb0", app="/usr/bin/b", app_name="b", namespace="ns_b",
+                          subnet="10.200.2.0/24", table=1002, priority=1002),
+        ], adoptions=[
+            state.Adoption(id="ab12cd34", iface="wlan0", app="/usr/bin/c", app_name="c", slot=1,
+                           group="intermux/adopt-ab12cd34", mark=0x101, table=2001, priority=2001, uid=1000,
+                           pids=[999]),
+        ])
+        table = [Proc(pid=10, ppid=1, comm="a", uid=1000, exe=None, netns=111)]
+        rows, adopted = snapshot_rows(st, table, {"ns_a": 111, "ns_b": 222}.get, lambda g: [55])
+        self.assertEqual([r["running"] for r in rows], [True, False])
+        self.assertTrue(adopted[0]["alive"])  # the recorded pid is gone, but the cgroup has members
+        _, adopted = snapshot_rows(st, table, {}.get, lambda g: [])
+        self.assertFalse(adopted[0]["alive"])
+

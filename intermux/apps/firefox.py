@@ -23,7 +23,8 @@ class FirefoxHandler(AppHandler):
     name = "firefox"
 
     def comm_names(self, app_path: str) -> List[str]:
-        return ["firefox", "firefox-bin"]
+        # The binary's own name covers builds such as firefox-esr (Debian), whose process is not "firefox".
+        return sorted({"firefox", "firefox-bin", os.path.basename(app_path)[:15]})
 
     def prepare(self, ctx: LaunchContext, app_path: str) -> None:
         home = ctx.user.home

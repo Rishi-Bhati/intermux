@@ -5,7 +5,9 @@ from __future__ import annotations
 import contextlib
 import io
 import unittest
+from unittest import mock
 
+from intermux import cli
 from intermux.cli import build_parser
 
 
@@ -155,3 +157,26 @@ class RunningChoiceTests(unittest.TestCase):
         from intermux.cli import running_choice_action
         for bad in ("", "0", "5", "x", "11"):
             self.assertIsNone(running_choice_action(bad))
+
+
+class ResetReportTests(unittest.TestCase):
+    def _run(self, data):
+        import io
+
+        out = io.StringIO()
+        with mock.patch("intermux.helper.client.call", return_value=data), mock.patch("sys.stdout", out):
+            rc = cli.main(["reset", "--yes"])
+        return rc, out.getvalue()
+
+    def test_clean_reset_succeeds(self):
+        rc, out = self._run({"namespaces": ["ns_a"], "veths": [], "rules": 1, "nat_rules": 3,
+                             "still_running": [], "kept_apps": []})
+        self.assertEqual(rc, 0)
+        self.assertNotIn("kept", out)
+
+    def test_kept_apps_are_reported(self):
+        rc, out = self._run({"namespaces": [], "veths": [], "rules": 0, "nat_rules": 0,
+                             "still_running": [], "kept_apps": ["firefox"], "kept_namespaces": ["ns_a"]})
+        self.assertEqual(rc, 1)
+        self.assertIn("firefox", out)
+

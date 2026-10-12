@@ -1,0 +1,17 @@
+[Unit]
+Description=InterMux watcher: reset routing when routed applications exit
+Documentation=https://github.com/Rishi-Bhati/intermux
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/intermux/intermux watch
+Restart=on-failure
+RestartSec=5
+# The watcher only tears down routing it created; it never signals applications.
+NoNewPrivileges=yes
+# No PrivateTmp/ProtectSystem/ProtectHome: they give the service its own mount namespace, and then
+# `ip netns del` would unmount /run/netns/<ns> only there, leaving the namespace alive on the host.
+
+[Install]
+WantedBy=multi-user.target

@@ -42,5 +42,8 @@ package() {
         "$pkgdir/usr/share/icons/hicolor/scalable/apps/intermux.svg"
     install -Dm644 "$src/packaging/linux/intermux.metainfo.xml" \
         "$pkgdir/usr/share/metainfo/org.intermux.InterMux.metainfo.xml"
+    # Watcher that resets routing when routed apps exit (enable: systemctl enable --now intermux-watch)
+    install -Dm644 "$src/packaging/linux/intermux-watch.service" \
+        "$pkgdir/usr/lib/systemd/system/intermux-watch.service"
     install -Dm644 "$src/license" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

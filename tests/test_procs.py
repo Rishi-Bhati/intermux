@@ -195,3 +195,22 @@ class ProcEnvironTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ZombieTests(unittest.TestCase):
+    def test_zombie_and_dead_processes_are_skipped(self) -> None:
+        from intermux.system import procs as procs_mod
+        import tempfile, os as _os
+        with tempfile.TemporaryDirectory() as tmp:
+            for state, expect_none in [("Z (zombie)", True), ("X (dead)", True), ("S (sleeping)", False)]:
+                pid_dir = _os.path.join(tmp, "p")
+                _os.makedirs(pid_dir, exist_ok=True)
+                with open(_os.path.join(pid_dir, "status"), "w") as f:
+                    f.write(f"Name:\tx\nState:\t{state}\nPPid:\t1\nUid:\t1000\t1000\t1000\t1000\n")
+                orig = procs_mod._read_bytes
+                procs_mod._read_bytes = lambda path, _d=pid_dir: open(_os.path.join(_d, "status"), "rb").read() if path.endswith("/status") else None
+                try:
+                    result = procs_mod._status_ids(4242)
+                finally:
+                    procs_mod._read_bytes = orig
+                self.assertEqual(result is None, expect_none, (state, result))

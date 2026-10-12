@@ -13,6 +13,7 @@ Source0:        %{name}-%{version}.tar.gz
 
 BuildRequires:  python3-pyinstaller
 BuildRequires:  python3-tkinter
+BuildRequires:  systemd-rpm-macros
 Requires:       iproute
 Requires:       iptables
 Requires:       polkit
@@ -50,12 +51,19 @@ install -Dm644 packaging/linux/intermux.svg \
     %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/intermux.svg
 install -Dm644 packaging/linux/intermux.metainfo.xml \
     %{buildroot}%{_datadir}/metainfo/org.intermux.InterMux.metainfo.xml
+install -Dm644 packaging/linux/intermux-watch.service \
+    %{buildroot}%{_unitdir}/intermux-watch.service
 
 %post
+%systemd_post intermux-watch.service
 /usr/bin/update-desktop-database -q %{_datadir}/applications &>/dev/null || :
 /usr/bin/gtk-update-icon-cache -q -t -f %{_datadir}/icons/hicolor &>/dev/null || :
 
+%preun
+%systemd_preun intermux-watch.service
+
 %postun
+%systemd_postun_with_restart intermux-watch.service
 /usr/bin/update-desktop-database -q %{_datadir}/applications &>/dev/null || :
 /usr/bin/gtk-update-icon-cache -q -t -f %{_datadir}/icons/hicolor &>/dev/null || :
 
@@ -67,6 +75,7 @@ install -Dm644 packaging/linux/intermux.metainfo.xml \
 %{_datadir}/applications/intermux.desktop
 %{_datadir}/icons/hicolor/scalable/apps/intermux.svg
 %{_datadir}/metainfo/org.intermux.InterMux.metainfo.xml
+%{_unitdir}/intermux-watch.service
 
 %changelog
 * Tue Oct 13 2026 TODO Maintainer <maintainer@example.com> - 2.0.0-1

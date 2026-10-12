@@ -221,5 +221,99 @@ class FilterHostNetnsTests(unittest.TestCase):
         self.assertEqual(engine.filter_host_netns(table, [1, 2], None), [1, 2])
 
 
+
+class NamespaceDnsTests(unittest.TestCase):
+    def test_gateway_first_then_public_resolvers(self) -> None:
+        from intermux.system.netinfo import Interface
+
+        iface = Interface(name="wlan0", kind="wifi", up=True, operstate="UP", flags=["UP"], mac=None, mtu=None,
+                          addresses=[], default_route=True, gateways=["10.64.128.159"])
+        self.assertEqual(engine.namespace_dns_servers(iface), ["10.64.128.159", "1.1.1.1", "9.9.9.9"])
+
+    def test_host_only_resolvers_are_not_used_and_ipv6_gateway_is_skipped(self) -> None:
+        from intermux.system.netinfo import Interface
+
+        iface = Interface(name="usb0", kind="usb", up=True, operstate="UP", flags=["UP"], mac=None, mtu=None,
+                          addresses=[], default_route=True, gateways=["fe80::1", "10.231.212.182"])
+        servers = engine.namespace_dns_servers(iface)
+        self.assertEqual(servers[0], "10.231.212.182")
+        self.assertNotIn("100.100.100.100", servers)
+        self.assertNotIn("fe80::1", servers)
+
+
+class DnsRedirectTests(unittest.TestCase):
+    """The namespace nat table that keeps DNS working after the host replaces /etc/resolv.conf."""
+
+    def test_restore_body_exempts_own_servers_and_redirects_the_rest(self) -> None:
+        from intermux.system import netns
+
+        body = netns.dns_redirect_restore(["10.64.128.159", "1.1.1.1", "fe80::1"], "veth1_0a0b0c0d", "10.200.1.2")
+        lines = body.splitlines()
+        self.assertEqual(lines[0], "*nat")
+        self.assertEqual(lines[-1], "COMMIT")
+        for proto in ("udp", "tcp"):
+            for addr in ("10.64.128.159", "1.1.1.1"):
+                rule = f"-A OUTPUT -d {addr}/32 -p {proto} -m {proto} --dport 53 -j RETURN"
+                self.assertIn(rule, lines)
+            dnat = f"-A OUTPUT -p {proto} -m {proto} --dport 53 -j DNAT --to-destination 10.64.128.159"
+            self.assertIn(dnat, lines)
+            # exemptions come before the catch-all DNAT
+            self.assertLess(lines.index(f"-A OUTPUT -d 1.1.1.1/32 -p {proto} -m {proto} --dport 53 -j RETURN"),
+                            lines.index(dnat))
+        self.assertIn("-A POSTROUTING -s 127.0.0.0/8 -o veth1_0a0b0c0d -j SNAT --to-source 10.200.1.2", lines)
+        self.assertNotIn("fe80::1", body)
+
+    def test_restore_body_rejects_bad_input(self) -> None:
+        from intermux.errors import ValidationError
+        from intermux.system import netns
+
+        with self.assertRaises(ValidationError):
+            netns.dns_redirect_restore(["fe80::1"], "veth1_0a0b0c0d", "10.200.1.2")
+        with self.assertRaises(ValidationError):
+            netns.dns_redirect_restore(["1.1.1.1"], "eth0; rm -rf /", "10.200.1.2")
+        with self.assertRaises(ValidationError):
+            netns.dns_redirect_restore(["1.1.1.1 -j ACCEPT"], "veth1_0a0b0c0d", "10.200.1.2")
+
+    def test_resolv_conf_has_short_timeouts(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from intermux.system import netns
+
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(netns.config, "ETC_NETNS_DIR", Path(tmp)):
+            netns.write_resolv_conf("ns_0a0b0c0d", ["10.64.128.159", "1.1.1.1"])
+            body = (Path(tmp) / "ns_0a0b0c0d" / "resolv.conf").read_text()
+        self.assertEqual(body.splitlines()[1:], ["nameserver 10.64.128.159", "nameserver 1.1.1.1",
+                                                 "options timeout:1 attempts:2"])
+
+
+class DnsProbeTests(unittest.TestCase):
+    def test_probe_reply_parsing(self) -> None:
+        import struct
+
+        from intermux.system import netns
+
+        query = netns.dns_probe_query()
+        self.assertEqual(len(query), 17)
+        qid = struct.unpack("!H", query[:2])[0]
+        ok = struct.pack("!HHHHHH", qid, 0x8180, 1, 1, 0, 0)
+        nxdomain = struct.pack("!HHHHHH", qid, 0x8183, 1, 0, 0, 0)
+        refused = struct.pack("!HHHHHH", qid, 0x8185, 1, 0, 0, 0)
+        other_id = struct.pack("!HHHHHH", qid ^ 1, 0x8180, 1, 1, 0, 0)
+        self.assertTrue(netns.dns_probe_ok(ok))
+        self.assertTrue(netns.dns_probe_ok(nxdomain))
+        self.assertFalse(netns.dns_probe_ok(refused))
+        self.assertFalse(netns.dns_probe_ok(other_id))
+        self.assertFalse(netns.dns_probe_ok(query))       # a query, not a reply
+        self.assertFalse(netns.dns_probe_ok(b"\x00"))
+
+    def test_answering_servers_move_first(self) -> None:
+        servers = ["172.17.0.1", "1.1.1.1", "9.9.9.9"]
+        self.assertEqual(engine.order_dns_servers(servers, ["9.9.9.9", "1.1.1.1"]),
+                         ["1.1.1.1", "9.9.9.9", "172.17.0.1"])
+        self.assertEqual(engine.order_dns_servers(servers, []), servers)
+
+
 if __name__ == "__main__":
     unittest.main()

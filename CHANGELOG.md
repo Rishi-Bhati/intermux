@@ -7,6 +7,16 @@ Earlier releases are described in [release_notes.md](release_notes.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Uninstall.** `uninstall.sh` sends its reset straight to the helper. Before, it ran `intermux reset` as root, which the root guard refuses, so uninstalling failed unless `--force` was given.
+- **Running-app detection for browsers.** "Close and reopen" and "Force-quit" for one Chromium-based browser no longer match the processes of another (for example Brave no longer matches Chrome). Chrome and Edge launchers (`google-chrome-stable`, `microsoft-edge-stable`) are recognised.
+- **Reset.** The CLI and GUI now say when reset kept the routing of apps that are still running.
+
+### Changed
+
+- **DNS in namespaces.** Each namespace uses its interface's gateway first, then `1.1.1.1` and `9.9.9.9`, instead of the host's resolvers.
+
 ### Security
 
 - **Privilege boundary.** The root helper accepts only validated requests from the calling user.
@@ -19,6 +29,8 @@ Earlier releases are described in [release_notes.md](release_notes.md).
 
 ### Added
 
+- **Automatic cleanup.** The `intermux-watch` systemd service removes a binding's namespace, routes and NAT rules when its last app exits. It does a cheap check each pass and only takes the state lock when something is idle. `install.sh` and the distro packages install it.
+- **Chromium-based browsers.** Chromium, Chrome, Brave, Vivaldi, Edge and Opera can be bound. A separate profile gets its own data folder per browser and interface.
 - **Report issue.** A GUI button and the `intermux report` command save a bug report zip (app logs and system details, with personal data scrubbed on a best-effort basis) to `~/intermux-reports/`, or open the reporting portal (`--web`, `--out DIR`).
 
 ## [2.0.0] (Linux)

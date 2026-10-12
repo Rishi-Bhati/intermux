@@ -30,19 +30,29 @@ main() {
 
     [ "$(id -u)" -eq 0 ] || die "Please run as root (sudo ./uninstall.sh)"
 
-    if [ -x "$INSTALL_BIN" ]; then
+    # Stop the watcher first so it does not tear down routing while reset runs.
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl disable --now intermux-watch.service >/dev/null 2>&1 || true
+    fi
+
+    if [ -x "$INSTALL_LIB/intermux" ]; then
         info "Removing InterMux bindings, namespaces and running apps"
-        if ! "$INSTALL_BIN" reset --kill-apps --yes; then
+        # The CLI refuses to run as root, so the reset request goes straight to the helper. Under sudo the
+        # helper takes the invoking user from SUDO_UID and stops only that user's apps.
+        if ! printf '%s\n' '{"v": 1, "action": "reset", "params": {"kill_apps": true}}' \
+                | "$INSTALL_LIB/intermux" helper >/dev/null; then
             if [ "$force" -ne 1 ]; then
                 die "'intermux reset' failed; files were not removed. Fix the reported problem and re-run, or re-run with --force to remove files anyway (this can orphan namespaces, NAT rules and ip_forward state)."
             fi
             warn "'intermux reset' reported errors; continuing because --force was given"
         fi
     else
-        warn "$INSTALL_BIN not found; skipping 'intermux reset'"
+        warn "$INSTALL_LIB/intermux not found; skipping 'intermux reset'"
     fi
 
     info "Removing installed files"
+    rm -f -- /usr/lib/systemd/system/intermux-watch.service
+    command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload >/dev/null 2>&1 || true
     rm -rf -- "$INSTALL_LIB"
     rm -f -- "$INSTALL_BIN" "$LEGACY_BIN"
     rm -f -- "$POLKIT_POLICY" "$DESKTOP_FILE" "$ICON_FILE" "$METAINFO_FILE"

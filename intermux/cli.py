@@ -348,8 +348,6 @@ def _print_adoptions(adoptions: Sequence[Any]) -> None:
 
 
 def _cmd_adopt(args: argparse.Namespace) -> int:
-    from intermux.helper import client as helper_client
-
     app_path = _resolve_app(args.app)
     return _adopt_and_report(args.iface, app_path)
 
@@ -444,8 +442,12 @@ def _cmd_reset(args: argparse.Namespace) -> int:
     still = data.get("still_running") or []
     if still:
         _warn(f"still running: {_join(still)}")
-        return 1
-    return 0
+    kept = data.get("kept_apps") or []
+    if kept:
+        # reset keeps a namespace that still has processes, with its routing, so those apps stay online.
+        _warn(f"kept the routing of apps that are still running: {_join(kept)}; close them and run "
+              "'intermux teardown-idle', or use 'intermux reset --kill-apps'")
+    return 1 if still or kept else 0
 
 
 def _cmd_check(args: argparse.Namespace) -> int:

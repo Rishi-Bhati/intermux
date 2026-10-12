@@ -104,12 +104,24 @@ def _tools() -> List[Dict[str, Any]]:
         return [{"error": exc.__class__.__name__}]
 
 
-def _recent_logs(home: str) -> List[Dict[str, Any]]:
-    log_dir = Path(home) / LOG_DIR_REL
+def _mtime(path: Path) -> float:
+    """Modification time, or 0 for a file that vanished or cannot be read (an app may rotate its log)."""
     try:
-        files = sorted(log_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True)
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _log_files(log_dir: Path) -> List[Path]:
+    """Log files newest first; [] when the folder is missing or unreadable."""
+    try:
+        return sorted(log_dir.glob("*.log"), key=_mtime, reverse=True)
     except OSError:
         return []
+
+
+def _recent_logs(home: str) -> List[Dict[str, Any]]:
+    files = _log_files(Path(home) / LOG_DIR_REL)
     excerpts = []
     for path in files[:LOG_FILES_TO_INCLUDE]:
         try:
@@ -279,9 +291,7 @@ def write_bug_zip(directory: Optional[Path] = None, home: Optional[str] = None) 
     target_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
 
-    log_dir = Path(home) / LOG_DIR_REL
-    log_files = sorted(log_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True) \
-        if log_dir.is_dir() else []
+    log_files = _log_files(Path(home) / LOG_DIR_REL)
 
     # Written with owner-only permissions: the archive contains log lines.
     fd, path = _create_unique(target_dir, f"intermux-bug-report-{stamp}", ".zip")

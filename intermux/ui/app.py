@@ -38,29 +38,42 @@ OPEN_LOG_TIMEOUT = 10.0
 # Background tasks (run in Worker threads, never on the Tk thread)
 # ---------------------------------------------------------------------------
 
-def _snapshot_task() -> Dict[str, Any]:
-    """Read interfaces and bindings (read-only, unprivileged)."""
-    interfaces = netinfo.list_interfaces()
+def snapshot_rows(st: Any, table: Sequence[Any], ns_inode: Any, group_pids: Any) -> Tuple[List[Dict[str, Any]],
+                                                                                     List[Dict[str, Any]]]:
+    """Binding and adoption rows from one state read and one process table. Pure apart from the lookups."""
+    live_netns = {proc.netns for proc in table if proc.netns is not None}
+    live_pids = {proc.pid for proc in table}
     rows: List[Dict[str, Any]] = []
-    for binding in state.load_state().bindings:
-        pids = procs.pids_in_netns(binding.namespace)
+    for binding in st.bindings:
+        ino = ns_inode(binding.namespace)
         rows.append({
             "iface": binding.iface,
             "app": binding.app,
             "app_name": binding.app_name,
             "log_path": binding.log_path,
-            "running": bool(pids),
+            "running": ino is not None and ino in live_netns,
         })
-    live = {proc.pid for proc in procs.list_procs()}
     adopted: List[Dict[str, Any]] = []
-    for adoption in getattr(state.load_state(), "adoptions", []):
+    for adoption in st.adoptions:
+        # The cgroup is the truth: the app may have replaced the pids recorded when it was adopted.
+        members = list(group_pids(adoption.group))
         adopted.append({
             "id": adoption.id,
             "iface": adoption.iface,
             "app": adoption.app,
             "app_name": adoption.app_name,
-            "alive": any(pid in live for pid in adoption.pids),
+            "alive": bool(members) or any(pid in live_pids for pid in adoption.pids),
         })
+    return rows, adopted
+
+
+def _snapshot_task() -> Dict[str, Any]:
+    """Read interfaces and bindings (read-only, unprivileged). Scans /proc once per refresh."""
+    from intermux.system import adopt as adopt_sys
+
+    interfaces = netinfo.list_interfaces()
+    rows, adopted = snapshot_rows(state.load_state(), procs.list_procs(), procs.netns_inode,
+                                  adopt_sys.read_group_pids)
     return {"interfaces": interfaces, "bindings": rows, "adoptions": adopted}
 
 
@@ -1106,7 +1119,12 @@ class InterMuxApp:
             self._fail("Reset failed", error)
             return
         still = result.get("still_running", []) if isinstance(result, dict) else []
-        if still:
+        kept = result.get("kept_apps", []) if isinstance(result, dict) else []
+        if kept:
+            self._set_status("Reset done, but routing was kept for apps that are still running: "
+                             + ", ".join(str(k) for k in kept) + ". Close them, then press Teardown idle.",
+                             "warning")
+        elif still:
             self._set_status("Reset complete, but some applications are still running.")
         else:
             self._set_status("Reset complete.")

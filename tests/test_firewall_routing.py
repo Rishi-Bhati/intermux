@@ -187,9 +187,12 @@ class EnsurePolicyTests(unittest.TestCase):
 
     def test_interface_route_and_unreachable_fallback(self):
         with mock.patch.object(routing, "run_checked") as run_checked, \
+                mock.patch.object(routing, "json_cmd", return_value=[]), \
                 mock.patch.object(routing, "list_rules", return_value=[]):
-            routing.ensure_policy(self.subnet, "wlan0", 1007, 1007, "192.168.1.1")
+            routing.ensure_policy(self.subnet, "wlan0", 1007, 1007, "192.168.1.1", "veth0_0a0b0c0d")
         self.assertEqual([c.args[0] for c in run_checked.call_args_list], [
+            [routing.IP, "route", "replace", "10.200.7.0/24", "dev", "veth0_0a0b0c0d", "scope", "link",
+             "src", "10.200.7.1", "table", "1007"],
             [routing.IP, "route", "replace", "default", "via", "192.168.1.1",
              "dev", "wlan0", "table", "1007", "metric", "100"],
             [routing.IP, "route", "replace", "unreachable", "default",
@@ -201,6 +204,7 @@ class EnsurePolicyTests(unittest.TestCase):
     def test_existing_rule_is_not_added_again(self):
         existing = [{"src": "10.200.7.0/24", "priority": 1007, "table": 1007}]
         with mock.patch.object(routing, "run_checked") as run_checked, \
+                mock.patch.object(routing, "json_cmd", return_value=[]), \
                 mock.patch.object(routing, "list_rules", return_value=existing):
             routing.ensure_policy(self.subnet, "wlan0", 1007, 1007, None)
         commands = [c.args[0] for c in run_checked.call_args_list]
@@ -211,3 +215,57 @@ class EnsurePolicyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PolicyTableTests(unittest.TestCase):
+    """policy_table_ok / stray_routes read `ip -j route show table T` output."""
+
+    subnet = IPv4Network("10.200.1.0/24")
+    good = [{"dst": "default", "gateway": "10.64.128.159", "dev": "wlan0", "metric": 100, "flags": []},
+            {"type": "unreachable", "dst": "default", "metric": 1000, "flags": []},
+            {"dst": "10.200.1.0/24", "dev": "veth0_0a0b0c0d", "scope": "link", "prefsrc": "10.200.1.1", "flags": []}]
+
+    def ok(self, routes, gw="10.64.128.159", iface="wlan0"):
+        return routing.policy_table_ok(routes, self.subnet, iface, gw, "veth0_0a0b0c0d")
+
+    def test_complete_table(self):
+        self.assertTrue(self.ok(self.good))
+        self.assertEqual(routing.stray_routes(self.good, self.subnet, "wlan0", "10.64.128.159", "veth0_0a0b0c0d"), [])
+
+    def test_only_the_unreachable_fallback_left_after_a_flap(self):
+        self.assertFalse(self.ok(self.good[1:]))
+
+    def test_subnet_route_missing(self):
+        self.assertFalse(self.ok(self.good[:2]))
+
+    def test_gateway_changed_or_other_device(self):
+        self.assertFalse(self.ok(self.good, gw="10.64.128.1"))
+        self.assertFalse(self.ok(self.good, iface="usb0"))
+
+    def test_stale_lower_metric_default_is_stray(self):
+        stale = {"dst": "default", "gateway": "10.231.212.182", "dev": "enp7s0f4u1", "flags": []}
+        routes = [stale] + self.good
+        self.assertFalse(self.ok(routes))
+        strays = routing.stray_routes(routes, self.subnet, "wlan0", "10.64.128.159", "veth0_0a0b0c0d")
+        self.assertEqual(strays, [stale])
+        self.assertEqual(routing.route_del_args(stale, 1001),
+                         [routing.IP, "route", "del", "default", "via", "10.231.212.182", "dev", "enp7s0f4u1",
+                          "table", "1001"])
+        self.assertEqual(routing.route_del_args({"type": "unreachable", "dst": "default", "metric": 5}, 1001),
+                         [routing.IP, "route", "del", "unreachable", "default", "metric", "5", "table", "1001"])
+
+    def test_device_route_without_gateway(self):
+        routes = [{"dst": "default", "dev": "ppp0", "metric": 100}, self.good[1], self.good[2]]
+        self.assertTrue(self.ok(routes, gw=None, iface="ppp0"))
+
+    def test_ensure_policy_deletes_strays_after_adding(self):
+        stale = {"dst": "default", "gateway": "10.231.212.182", "dev": "enp7s0f4u1", "flags": []}
+        order = []
+        with mock.patch.object(routing, "run_checked", side_effect=lambda a, **k: order.append(("add", a))), \
+                mock.patch.object(routing, "run", side_effect=lambda a, **k: order.append(("del", a))), \
+                mock.patch.object(routing, "json_cmd", return_value=[stale] + self.good), \
+                mock.patch.object(routing, "list_rules", return_value=[]):
+            routing.ensure_policy(self.subnet, "wlan0", 1001, 1001, "10.64.128.159", "veth0_0a0b0c0d")
+        kinds = [k for k, _ in order]
+        self.assertEqual(kinds, ["add", "add", "add", "del", "add"])
+        self.assertEqual(order[3][1][:4], [routing.IP, "route", "del", "default"])
