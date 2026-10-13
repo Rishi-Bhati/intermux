@@ -6,7 +6,7 @@
 Source: intermux
 Section: net
 Priority: optional
-Maintainer: TODO Maintainer <maintainer@example.com>
+Maintainer: Rishi-Bhati <bhatirishi5@gmail.com>
 Build-Depends: debhelper-compat (= 13),
                python3,
                binutils,

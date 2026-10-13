@@ -106,6 +106,6 @@ appstream-util validate-relax --nonet \
 %{_presetdir}/90-intermux.preset
 
 %changelog
-* Tue Oct 13 2026 TODO Maintainer <maintainer@example.com> - 2.0.1-1
+* Tue Oct 13 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.0.1-1
 - 2.0.1: keep scanning Firefox profile roots past a symlinked one; security reports go to the Reportary portal
 - 2.0.0: initial packaging (starting point, untested)
