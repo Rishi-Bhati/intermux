@@ -191,13 +191,13 @@ class EnsurePolicyTests(unittest.TestCase):
                 mock.patch.object(routing, "list_rules", return_value=[]):
             routing.ensure_policy(self.subnet, "wlan0", 1007, 1007, "192.168.1.1", "veth0_0a0b0c0d")
         self.assertEqual([c.args[0] for c in run_checked.call_args_list], [
-            [routing.IP, "route", "replace", "10.200.7.0/24", "dev", "veth0_0a0b0c0d", "scope", "link",
+            [routing.ip_bin(), "route", "replace", "10.200.7.0/24", "dev", "veth0_0a0b0c0d", "scope", "link",
              "src", "10.200.7.1", "table", "1007"],
-            [routing.IP, "route", "replace", "default", "via", "192.168.1.1",
+            [routing.ip_bin(), "route", "replace", "default", "via", "192.168.1.1",
              "dev", "wlan0", "table", "1007", "metric", "100"],
-            [routing.IP, "route", "replace", "unreachable", "default",
+            [routing.ip_bin(), "route", "replace", "unreachable", "default",
              "metric", "1000", "table", "1007"],
-            [routing.IP, "rule", "add", "from", "10.200.7.0/24",
+            [routing.ip_bin(), "rule", "add", "from", "10.200.7.0/24",
              "lookup", "1007", "priority", "1007"],
         ])
 
@@ -210,7 +210,7 @@ class EnsurePolicyTests(unittest.TestCase):
         commands = [c.args[0] for c in run_checked.call_args_list]
         self.assertEqual(len(commands), 2)
         self.assertNotIn("rule", commands[0])
-        self.assertEqual(commands[1][:3], [routing.IP, "route", "replace"])
+        self.assertEqual(commands[1][:3], [routing.ip_bin(), "route", "replace"])
 
 
 if __name__ == "__main__":
@@ -249,10 +249,10 @@ class PolicyTableTests(unittest.TestCase):
         strays = routing.stray_routes(routes, self.subnet, "wlan0", "10.64.128.159", "veth0_0a0b0c0d")
         self.assertEqual(strays, [stale])
         self.assertEqual(routing.route_del_args(stale, 1001),
-                         [routing.IP, "route", "del", "default", "via", "10.231.212.182", "dev", "enp7s0f4u1",
+                         [routing.ip_bin(), "route", "del", "default", "via", "10.231.212.182", "dev", "enp7s0f4u1",
                           "table", "1001"])
         self.assertEqual(routing.route_del_args({"type": "unreachable", "dst": "default", "metric": 5}, 1001),
-                         [routing.IP, "route", "del", "unreachable", "default", "metric", "5", "table", "1001"])
+                         [routing.ip_bin(), "route", "del", "unreachable", "default", "metric", "5", "table", "1001"])
 
     def test_device_route_without_gateway(self):
         routes = [{"dst": "default", "dev": "ppp0", "metric": 100}, self.good[1], self.good[2]]
@@ -268,4 +268,4 @@ class PolicyTableTests(unittest.TestCase):
             routing.ensure_policy(self.subnet, "wlan0", 1001, 1001, "10.64.128.159", "veth0_0a0b0c0d")
         kinds = [k for k, _ in order]
         self.assertEqual(kinds, ["add", "add", "add", "del", "add"])
-        self.assertEqual(order[3][1][:4], [routing.IP, "route", "del", "default"])
+        self.assertEqual(order[3][1][:4], [routing.ip_bin(), "route", "del", "default"])

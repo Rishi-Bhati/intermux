@@ -39,7 +39,6 @@ class ValidRequestTests(unittest.TestCase):
                 "iface": "eth0",
                 "app": "/usr/bin/firefox",
                 "running_policy": "ask",
-                "allow_unsupported": False,
                 "env": {},
             },
         )
@@ -53,7 +52,6 @@ class ValidRequestTests(unittest.TestCase):
                     "iface": "wlp2s0",
                     "app": "/opt/app/bin/app",
                     "running_policy": "separate",
-                    "allow_unsupported": True,
                     "env": env,
                 },
             )
@@ -61,7 +59,6 @@ class ValidRequestTests(unittest.TestCase):
         self.assertEqual(params["iface"], "wlp2s0")
         self.assertEqual(params["app"], "/opt/app/bin/app")
         self.assertEqual(params["running_policy"], "separate")
-        self.assertIs(params["allow_unsupported"], True)
         self.assertEqual(params["env"], env)
 
     def test_bind_running_policies(self):
@@ -192,9 +189,6 @@ class RejectedRequestTests(unittest.TestCase):
     def test_rejects_non_bool_flags(self):
         for value in (1, 0, "yes", None, []):
             with self.subTest(value=value):
-                self.assertRejected(
-                    req("bind", {"iface": "eth0", "app": "/usr/bin/x", "allow_unsupported": value})
-                )
                 self.assertRejected(req("kill_app", {"app": "/usr/bin/x", "force": value}))
                 self.assertRejected(req("reset", {"kill_apps": value}))
 
@@ -396,6 +390,27 @@ class AdoptActionTests(unittest.TestCase):
     def test_actions_listed(self):
         self.assertIn("adopt", ACTIONS)
         self.assertIn("release_adoption", ACTIONS)
+
+
+class RunBatchTests(unittest.TestCase):
+    def test_unexpected_error_in_one_op_keeps_other_results(self):
+        from unittest import mock
+        from intermux.errors import ConflictError
+        from intermux.helper import server
+
+        user = mock.Mock(uid=1000)
+        ops = [{"op": "bind", "iface": f"eth{i}", "app": "/usr/bin/x", "env": {},
+                "running_policy": "ask"} for i in range(3)]
+        effects = [{"pid": 1}, PermissionError("ip_forward"), ConflictError("busy", code="already_running")]
+        with mock.patch.object(server.engine, "bind", side_effect=effects):
+            results = server._run_batch(ops, user)
+        self.assertEqual(len(results), 3)
+        self.assertTrue(results[0]["ok"])
+        self.assertEqual(results[0]["data"], {"pid": 1})
+        self.assertFalse(results[1]["ok"])
+        self.assertEqual(results[1]["error"]["code"], "internal")
+        self.assertNotIn("ip_forward", results[1]["error"]["message"])
+        self.assertEqual(results[2]["error"]["code"], "already_running")
 
 
 if __name__ == "__main__":

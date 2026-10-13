@@ -37,6 +37,14 @@ def filter_tiles(entries: Sequence[AppEntry], query: str) -> List[AppEntry]:
     return desktop_entries.search_entries(entries, query)
 
 
+def _safe_focus(widget: Any) -> Any:
+    """focus_get() that returns None instead of raising (Tk raises KeyError for combobox popdowns)."""
+    try:
+        return widget.focus_get()
+    except (KeyError, tk.TclError):
+        return None
+
+
 def ellipsize(text: str, max_width: int, measure: Callable[[str], int]) -> str:
     """Shorten text with an ellipsis so that measure(result) <= max_width."""
     if measure(text) <= max_width:
@@ -213,12 +221,12 @@ class AppPicker(tk.Toplevel):
         self.bind("<Return>", self._on_return)
         self.bind("<Down>", lambda _e: self._move(self._columns or 1))
         self.bind("<Up>", lambda _e: self._move(-(self._columns or 1)))
-        self.bind("<Left>", lambda _e: self._move(-1) if self.focus_get() is not self._search else None)
-        self.bind("<Right>", lambda _e: self._move(1) if self.focus_get() is not self._search else None)
+        self.bind("<Left>", lambda _e: self._move(-1) if _safe_focus(self) is not self._search else None)
+        self.bind("<Right>", lambda _e: self._move(1) if _safe_focus(self) is not self._search else None)
         self.bind("<Prior>", lambda _e: self._scroll.scroll_pages(-1))
         self.bind("<Next>", lambda _e: self._scroll.scroll_pages(1))
-        self.bind("<Home>", lambda _e: self._scroll.scroll_to(0.0) if self.focus_get() is not self._search else None)
-        self.bind("<End>", lambda _e: self._scroll.scroll_to(1.0) if self.focus_get() is not self._search else None)
+        self.bind("<Home>", lambda _e: self._scroll.scroll_to(0.0) if _safe_focus(self) is not self._search else None)
+        self.bind("<End>", lambda _e: self._scroll.scroll_to(1.0) if _safe_focus(self) is not self._search else None)
         self._scroll.attach_wheel(self)
         self.protocol("WM_DELETE_WINDOW", self._close)
 
@@ -372,7 +380,7 @@ class AppPicker(tk.Toplevel):
         else:
             target = min(max(self._selected + delta, 0), len(self._tiles) - 1)
         self.select(target)
-        if self.focus_get() is self._search and delta in (self._columns, -self._columns):
+        if _safe_focus(self) is self._search and delta in (self._columns, -self._columns):
             self.focus_set()
 
     def _selected_entry(self) -> Optional[AppEntry]:
@@ -401,7 +409,7 @@ class AppPicker(tk.Toplevel):
             self._hint_var.set(self._describe(entry))
 
     def _on_return(self, _event: Any) -> None:
-        if isinstance(self.focus_get(), ttk.Button):
+        if isinstance(_safe_focus(self), ttk.Button):
             return  # Enter on a focused button activates that button instead
         self._use_selected()
 

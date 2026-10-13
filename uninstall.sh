@@ -31,7 +31,7 @@ main() {
     [ "$(id -u)" -eq 0 ] || die "Please run as root (sudo ./uninstall.sh)"
 
     # Stop the watcher first so it does not tear down routing while reset runs.
-    if command -v systemctl >/dev/null 2>&1; then
+    if [ -d /run/systemd/system ]; then
         systemctl disable --now intermux-watch.service >/dev/null 2>&1 || true
     fi
 
@@ -52,7 +52,7 @@ main() {
 
     info "Removing installed files"
     rm -f -- /usr/lib/systemd/system/intermux-watch.service
-    command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload >/dev/null 2>&1 || true
+    [ -d /run/systemd/system ] && systemctl daemon-reload >/dev/null 2>&1 || true
     rm -rf -- "$INSTALL_LIB"
     rm -f -- "$INSTALL_BIN" "$LEGACY_BIN"
     rm -f -- "$POLKIT_POLICY" "$DESKTOP_FILE" "$ICON_FILE" "$METAINFO_FILE"

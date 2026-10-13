@@ -82,7 +82,6 @@ def bind(
     app: str,
     *,
     running_policy: str = "ask",
-    allow_unsupported: bool = False,
     env: Optional[Dict[str, str]] = None,
 ) -> Any:
     """Bind an application to an interface through the helper."""
@@ -92,7 +91,6 @@ def bind(
             "iface": iface,
             "app": app,
             "running_policy": running_policy,
-            "allow_unsupported": allow_unsupported,
             "env": dict(env or {}),
         },
     )

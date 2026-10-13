@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
 from functools import partial
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -32,6 +33,11 @@ log = logging.getLogger("intermux.ui")
 
 AUTO_REFRESH_MS = 4000
 OPEN_LOG_TIMEOUT = 10.0
+PUBLIC_IP_TTL = 300.0  # a verified public IP is shown for five minutes, then cleared
+
+# Widgets that take typed text: shortcut keys such as Delete must not act while one has focus.
+TEXT_INPUT_CLASSES = frozenset({"Entry", "TEntry", "TCombobox", "Combobox", "Text", "Spinbox", "TSpinbox",
+                                "Listbox", "TListbox"})
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +115,47 @@ def _iid(iface: str, app: str) -> str:
     return f"{iface}|{app}"
 
 
+def safe_focus(root: Any) -> Any:
+    """focus_get() that returns None instead of raising (Tk raises KeyError for combobox popdowns)."""
+    try:
+        return root.focus_get()
+    except (KeyError, tk.TclError):
+        return None
+
+
+def widget_class_name(widget: Any) -> Optional[str]:
+    if widget is None:
+        return None
+    try:
+        return str(widget.winfo_class())
+    except Exception:  # destroyed widget
+        return None
+
+
+def delete_key_allowed(focus_class: Optional[str]) -> bool:
+    """Delete may stop the selected binding only when no text-input widget has focus. Pure."""
+    return focus_class not in TEXT_INPUT_CLASSES
+
+
+def row_button_states(running: bool, idle: bool) -> Dict[str, bool]:
+    """Which buttons of a binding row are enabled. Stopped rows keep only Log. Pure."""
+    return {"verify": idle and running, "stop": idle and running,
+            "log": idle, "force": idle and running}
+
+
+def still_running_message(name: str, action: str, pids: Sequence[Any]) -> str:
+    """Warning shown when the helper reports processes that survived a stop, kill or release. Pure."""
+    return f"Warning: {name}: processes still running after {action} (pids {', '.join(str(p) for p in pids)})."
+
+
+def fresh_public_ip(stored: Optional[Tuple[str, float]], now: float, ttl: float = PUBLIC_IP_TTL) -> str:
+    """The stored verified IP, or "" when it is older than ttl. Pure."""
+    if not stored:
+        return ""
+    ip, stamp = stored
+    return ip if now - stamp < ttl else ""
+
+
 def _set_enabled(widget: Any, enabled: bool) -> None:
     widget.state(["!disabled"] if enabled else ["disabled"])
 
@@ -126,6 +173,8 @@ BINDINGS_MIN_HEIGHT = 260  # the Bindings card never shrinks below this
 def status_kind(text: str) -> str:
     """Classify a status line as "info", "success" or "error" for the coloured dot. Pure."""
     low = text.lower()
+    if low.startswith("warning"):
+        return "warning"
     if low.startswith(("error", "could not", "verify failed")) or "did not exit" in low or "still running" in low:
         return "error"
     if low.startswith(("bound ", "stopped ", "removed ", "reset complete", "force-quit ")) or "public ip:" in low:
@@ -359,9 +408,10 @@ class _BindingRow:
         self.frame.configure(highlightbackground=p["accent"] if selected else p["border"],
                              highlightthickness=2 if selected else 1)
 
-    def set_enabled(self, enabled: bool) -> None:
-        for button in self.buttons:
-            _set_enabled(button, enabled)
+    def set_enabled(self, enabled: bool, running: bool = True) -> None:
+        states = row_button_states(running, enabled)
+        for button, key in zip(self.buttons, ("verify", "stop", "log", "force")):
+            _set_enabled(button, states[key])
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +430,7 @@ class InterMuxApp:
         self._iface_map: Dict[str, str] = {}
         self._rows: Dict[str, Dict[str, Any]] = {}
         self._row_widgets: Dict[str, _BindingRow] = {}
-        self._public_ips: Dict[str, str] = {}
+        self._public_ips: Dict[str, Tuple[str, float]] = {}
         self._selected_iid: Optional[str] = None
         self._pending: List[Dict[str, Any]] = []
         self._pending_widgets: List[_PendingRow] = []
@@ -591,8 +641,9 @@ class InterMuxApp:
             _set_enabled(adopt_row.release, idle)
         _set_enabled(self.teardown_btn, idle)
         _set_enabled(self.reset_btn, idle)
-        for row in self._row_widgets.values():
-            row.set_enabled(idle)
+        for iid, row in self._row_widgets.items():
+            data = self._rows.get(iid)
+            row.set_enabled(idle, bool(data and data.get("running")))
 
     # -- app tile ---------------------------------------------------------
 
@@ -768,9 +819,11 @@ class InterMuxApp:
                 widget = _BindingRow(self, self.rows_host, iid)
                 self._row_widgets[iid] = widget
                 self._set_row_icon(widget, row)
-            widget.update(row, self._public_ips.get(row["iface"], ""))
+            widget.update(row, fresh_public_ip(self._public_ips.get(row["iface"]), time.monotonic()))
             widget.frame.grid(row=index, column=0, sticky="ew", pady=(0, 8))
-        self._public_ips = {k: v for k, v in self._public_ips.items() if any(r["iface"] == k for r in rows)}
+        now = time.monotonic()
+        self._public_ips = {k: v for k, v in self._public_ips.items()
+                            if any(r["iface"] == k for r in rows) and fresh_public_ip(v, now)}
         if self._selected_iid not in self._rows:
             self._selected_iid = None
         for iid, widget in self._row_widgets.items():
@@ -814,7 +867,11 @@ class InterMuxApp:
         if error is not None:
             self._fail("Release failed", error)
             return
-        self._set_status(f"Stopped routing {name}; it uses the default route again.")
+        still = result.get("still_running", []) if isinstance(result, dict) else []
+        if still:
+            self._set_status(still_running_message(name, "release", still), "warning")
+        else:
+            self._set_status(f"Stopped routing {name}; it uses the default route again.")
 
     def select_binding(self, iid: str) -> None:
         self._selected_iid = iid if iid in self._rows else None
@@ -827,13 +884,16 @@ class InterMuxApp:
         return self._rows.get(self._selected_iid)
 
     def _on_return_key(self, _event: Any) -> None:
-        if isinstance(self.root.focus_get(), ttk.Button):
+        if isinstance(safe_focus(self.root), ttk.Button):
             return  # Enter on a focused button activates that button
         if not self.add_btn.instate(["disabled"]):
             self._on_add()
 
     def _on_delete_key(self) -> None:
-        if self._busy == 0 and self._selected_row() is not None:
+        if not delete_key_allowed(widget_class_name(safe_focus(self.root))):
+            return
+        row = self._selected_row()
+        if self._busy == 0 and row is not None and row.get("running"):
             self._on_stop()
 
     # -- mutations ------------------------------------------------------
@@ -949,7 +1009,7 @@ class InterMuxApp:
                 op = {"op": "adopt", "iface": item["iface"], "app": item["app"]}
             else:
                 op = {"op": "bind", "iface": item["iface"], "app": item["app"],
-                      "running_policy": policy, "allow_unsupported": False}
+                      "running_policy": policy}
             plan.append((item, op))
         if not plan:
             self._assigning = False
@@ -1010,7 +1070,7 @@ class InterMuxApp:
             return
         still = result.get("still_running", []) if isinstance(result, dict) else []
         if still:
-            self._set_status(f"{name}: some processes did not exit ({', '.join(str(p) for p in still)}).")
+            self._set_status(still_running_message(name, "stop", still), "warning")
         else:
             self._set_status(f"Stopped {name}.")
 
@@ -1033,7 +1093,7 @@ class InterMuxApp:
         iface = result.get("iface", "")
         ip = result.get("public_ip")
         if ip:
-            self._public_ips[iface] = ip
+            self._public_ips[iface] = (ip, time.monotonic())
             self._set_status(f"{iface} public IP: {ip}")
         else:
             self._public_ips.pop(iface, None)
@@ -1084,7 +1144,7 @@ class InterMuxApp:
             return
         still = result.get("still_running", []) if isinstance(result, dict) else []
         if still:
-            self._set_status(f"{name}: processes still running after force-quit.")
+            self._set_status(still_running_message(name, "force-quit", still), "warning")
         else:
             self._set_status(f"Force-quit {name}.")
 

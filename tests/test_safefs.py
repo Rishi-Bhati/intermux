@@ -9,6 +9,7 @@ from pathlib import Path
 
 from intermux.apps.firefox import remove_stale_locks
 from intermux.errors import ValidationError
+from intermux.system import safefs
 from intermux.system.safefs import ensure_user_dir
 
 IS_ROOT = os.geteuid() == 0
@@ -117,3 +118,35 @@ class RemoveStaleLocksSafetyTests(_TempTreeCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoFollowHelperTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.base = os.path.realpath(self._tmp.name)
+
+    def test_open_dir_walks_plain_directories(self):
+        os.makedirs(os.path.join(self.base, "a", "b"))
+        fd = safefs.open_dir_nofollow(os.path.join(self.base, "a", "b"), self.base)
+        os.close(fd)
+
+    def test_open_dir_refuses_symlink_and_outside(self):
+        os.makedirs(os.path.join(self.base, "real"))
+        os.symlink("real", os.path.join(self.base, "ln"))
+        with self.assertRaises(ValidationError):
+            safefs.open_dir_nofollow(os.path.join(self.base, "ln"), self.base)
+        with self.assertRaises(ValidationError):
+            safefs.open_dir_nofollow("/tmp", self.base)
+
+    def test_read_file_cap_and_symlink(self):
+        p = os.path.join(self.base, "f")
+        with open(p, "wb") as fh:
+            fh.write(b"abc")
+        self.assertEqual(safefs.read_file_nofollow(p, self.base, 10), b"abc")
+        with self.assertRaises(ValidationError):
+            safefs.read_file_nofollow(p, self.base, 2)
+        os.symlink(p, os.path.join(self.base, "l"))
+        with self.assertRaises(ValidationError):
+            safefs.read_file_nofollow(os.path.join(self.base, "l"), self.base, 10)

@@ -35,12 +35,10 @@ still launch as you, with your profile and data.
 * The old `core/`, `gui/` and root `cli.py` files are replaced by the `intermux` package.
 * Logs moved from `~/.local/share/intermux/intermux.log` to per-binding files under
   `~/.local/state/intermux/logs/`.
-* Forwarding is set through `/proc`, so the `sysctl` binary is no longer needed.
+* IPv4 forwarding is set through `/proc`. The `sysctl` tool (procps) is still used inside each namespace for the DNS redirect.
 
 ### Known limitations
 
-* Chromium-based browsers are blocked by default, because their sandbox conflicts with network
-  namespaces. `--allow-unsupported` tries anyway.
 * Flatpak apps cannot be bound yet.
 * IPv4 only. Virtual and VPN interfaces are not offered for binding.
 

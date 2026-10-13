@@ -315,5 +315,145 @@ class DnsProbeTests(unittest.TestCase):
         self.assertEqual(engine.order_dns_servers(servers, []), servers)
 
 
+def _binding(iface="wlan0", app="/usr/bin/x", ns="ns_a", pid=None):
+    return engine.state.Binding(iface=iface, app=app, app_name=os.path.basename(app), namespace=ns,
+                                subnet="10.200.7.0/24", table=1007, priority=1007, pid=pid)
+
+
+def _p(pid, ppid=1, uid=1000, netns=50, comm="python3", exe="/usr/bin/python3"):
+    return engine.procs.Proc(pid=pid, ppid=ppid, comm=comm, uid=uid, exe=exe, netns=netns)
+
+
+class LaunchHandoffTests(unittest.TestCase):
+    def test_rule(self):
+        self.assertTrue(engine.launch_handed_off(0, True))
+        self.assertFalse(engine.launch_handed_off(0, False))
+        self.assertFalse(engine.launch_handed_off(1, True))
+        self.assertFalse(engine.launch_handed_off(-9, True))
+
+
+class BindRollbackTests(unittest.TestCase):
+    def test_rollback_tears_down_unrecorded_plumbing(self):
+        st = engine.state.State(subnets={"wlan0": "10.200.7.0/24"})
+        net = engine.ipaddress.IPv4Network("10.200.7.0/24")
+        with mock.patch.object(engine.procs, "pids_in_netns", return_value=[]), \
+                mock.patch.object(engine, "_teardown_iface") as td, \
+                mock.patch.object(engine.state, "save_state") as save:
+            engine._rollback_bind(st, "wlan0", net, "ns_a")
+        td.assert_called_once_with("wlan0", "10.200.7.0/24")
+        self.assertEqual(st.subnets, {})
+        save.assert_called_once()
+
+    def test_rollback_keeps_plumbing_used_by_other_binding(self):
+        st = engine.state.State(subnets={"wlan0": "10.200.7.0/24"}, bindings=[_binding()])
+        net = engine.ipaddress.IPv4Network("10.200.7.0/24")
+        with mock.patch.object(engine, "_teardown_iface") as td, \
+                mock.patch.object(engine.state, "save_state"):
+            engine._rollback_bind(st, "wlan0", net, "ns_a")
+        td.assert_not_called()
+        self.assertIn("wlan0", st.subnets)
+
+    def test_rollback_keeps_busy_namespace(self):
+        st = engine.state.State(subnets={"wlan0": "10.200.7.0/24"})
+        net = engine.ipaddress.IPv4Network("10.200.7.0/24")
+        with mock.patch.object(engine.procs, "pids_in_netns", return_value=[9]), \
+                mock.patch.object(engine, "_teardown_iface") as td:
+            engine._rollback_bind(st, "wlan0", net, "ns_a")
+        td.assert_not_called()
+
+    def test_bind_records_subnet_first_and_rolls_back_on_failure(self):
+        st = engine.state.State()
+        iface = mock.Mock(bindable=True, gateways=["192.168.1.1"], ipv4_cidrs=[])
+        iface.name = "wlan0"
+        user = UserInfo(uid=1000, gid=1000, username="u", home="/tmp")
+        saved = []
+        with mock.patch.object(engine.os.path, "isdir", return_value=True), \
+                mock.patch.object(engine, "_find_interface", return_value=iface), \
+                mock.patch.object(engine.apps, "get_handler",
+                                  return_value=mock.Mock(supported=True, comm_names=lambda a: [])), \
+                mock.patch.object(engine.procs, "find_app_procs", return_value=[]), \
+                mock.patch.object(engine.state, "load_state", return_value=st), \
+                mock.patch.object(engine.state, "save_state",
+                                  side_effect=lambda s, p: saved.append(dict(s.subnets))), \
+                mock.patch.object(engine, "_used_networks", return_value=[]), \
+                mock.patch.object(engine.netns, "ensure_namespace", side_effect=OSError("boom")), \
+                mock.patch.object(engine.procs, "pids_in_netns", return_value=[]), \
+                mock.patch.object(engine, "_teardown_iface") as td:
+            with self.assertRaises(OSError):
+                engine.bind("/usr/bin/x", "wlan0", user=user, env={})
+        self.assertEqual(saved[0], {"wlan0": "10.200.1.0/24"})   # recorded before any plumbing
+        td.assert_called_once_with("wlan0", "10.200.1.0/24")
+        self.assertEqual(st.subnets, {})
+        self.assertEqual(saved[-1], {})
+
+
+class BindingPidsTests(unittest.TestCase):
+    def _run(self, st, b, table, uid=None, matched=()):
+        handler = mock.Mock(comm_names=lambda a: [])
+        with mock.patch.object(engine.procs, "netns_inode", return_value=50), \
+                mock.patch.object(engine.procs, "list_procs", return_value=table), \
+                mock.patch.object(engine.apps, "get_handler", return_value=handler), \
+                mock.patch.object(engine.procs, "find_app_procs", return_value=list(matched)):
+            return engine._binding_pids(st, b, uid)
+
+    def test_script_with_different_name_found_via_namespace(self):
+        b = _binding()
+        st = engine.state.State(bindings=[b])
+        self.assertEqual(self._run(st, b, [_p(10), _p(11, ppid=10), _p(99, netns=1)], uid=1000), [10, 11])
+
+    def test_uid_filter(self):
+        b = _binding()
+        st = engine.state.State(bindings=[b])
+        self.assertEqual(self._run(st, b, [_p(10, uid=0)], uid=1000), [])
+
+    def test_sibling_app_not_included_when_namespace_shared(self):
+        a, c = _binding(app="/usr/bin/a", pid=10), _binding(app="/usr/bin/c", pid=20)
+        st = engine.state.State(bindings=[a, c])
+        table = [_p(10), _p(11, ppid=10), _p(20)]
+        self.assertEqual(self._run(st, a, table, uid=1000), [10, 11])
+        self.assertEqual(self._run(st, c, table, uid=1000), [20])
+
+    def test_shared_namespace_no_match_returns_nothing(self):
+        a, c = _binding(app="/usr/bin/a", pid=10), _binding(app="/usr/bin/c", pid=20)
+        st = engine.state.State(bindings=[a, c])
+        self.assertEqual(self._run(st, a, [_p(20)], uid=1000), [])
+
+
+class BindingLiveTests(unittest.TestCase):
+    def _live(self, st, b, table):
+        with mock.patch.object(engine.procs, "netns_inode", return_value=50), \
+                mock.patch.object(engine.procs, "list_procs", return_value=table), \
+                mock.patch.object(engine.procs, "pids_in_netns",
+                                  return_value=[p.pid for p in table if p.netns == 50]):
+            return engine._binding_live(st, b)
+
+    def test_unknown_pid_falls_back_to_namespace(self):
+        b = _binding()
+        st = engine.state.State(bindings=[b])
+        self.assertTrue(self._live(st, b, [_p(5)]))
+        self.assertFalse(self._live(st, b, []))
+
+    def test_stale_binding_with_busy_sibling_is_idle(self):
+        a, c = _binding(app="/usr/bin/a", pid=10), _binding(app="/usr/bin/c", pid=20)
+        st = engine.state.State(bindings=[a, c])
+        table = [_p(20), _p(21, ppid=20)]
+        self.assertFalse(self._live(st, a, table))
+        self.assertTrue(self._live(st, c, table))
+
+    def test_tree_alive_is_live(self):
+        a, c = _binding(app="/usr/bin/a", pid=10), _binding(app="/usr/bin/c", pid=20)
+        st = engine.state.State(bindings=[a, c])
+        self.assertTrue(self._live(st, a, [_p(11, ppid=10)]))
+
+    def test_forked_wrapper_alone_in_namespace_stays_live(self):
+        b = _binding(pid=10)
+        st = engine.state.State(bindings=[b])
+        self.assertTrue(self._live(st, b, [_p(77)]))
+
+    def test_empty_namespace_is_idle(self):
+        b = _binding(pid=10)
+        self.assertFalse(self._live(engine.state.State(bindings=[b]), b, []))
+
+
 if __name__ == "__main__":
     unittest.main()

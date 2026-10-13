@@ -7,5 +7,5 @@ Exec=intermux
 Icon=intermux
 Terminal=false
 StartupNotify=true
-Categories=Network;System;Utility;
+Categories=Network;
 Keywords=network;proxy;interface;bind;namespace;vpn;

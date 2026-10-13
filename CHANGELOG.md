@@ -44,7 +44,7 @@ The Linux edition was rewritten as a Python package. The GUI runs without root, 
 - **Per-interface namespaces.** Each bound interface gets a network namespace connected to the host by a veth pair.
 - **Policy routing.** Each namespace has its own routing table and rule, so its traffic leaves through the assigned interface.
 - **NAT and forwarding.** iptables MASQUERADE and FORWARD rules are added for each subnet. IPv4 forwarding is enabled through `/proc`, and the previous value is restored when the last binding is removed.
-- **DNS.** Real upstream resolvers are written to each namespace, and local stub resolvers are skipped.
+- **DNS.** Each namespace gets its own resolv.conf: the interface gateway first, then public resolvers. Host resolvers are not used.
 - **Application discovery.** Installed desktop applications are listed from `.desktop` files and can be searched. Entries that cannot be bound show the reason.
 - **Firefox profiles.** Firefox can reuse your default profile or use a separate profile per interface. Stale profile locks are removed when Firefox is not running.
 - **Running instances.** When an app is already running, InterMux can ask whether to close and reopen it, open a separate profile, or cancel.
@@ -63,7 +63,7 @@ The Linux edition was rewritten as a Python package. The GUI runs without root, 
 - **Unprivileged by default.** Only the helper runs as root. Applications launch as your user.
 - **Application logs** are written per binding to `~/.local/state/intermux/logs/` (was `~/.local/share/intermux/intermux.log`).
 - **Subnets** come from the `10.200.N.0/24` pool, and routing tables use IDs from `1000 + N`.
-- **Forwarding** is set through `/proc/sys/net/ipv4/ip_forward`. The `sysctl` binary is no longer used.
+- **Forwarding** is set through `/proc/sys/net/ipv4/ip_forward`. The `sysctl` tool is still used inside each namespace for the DNS redirect.
 - **Privilege elevation** works from the PyInstaller binary, which re-runs itself instead of calling `python3`.
 
 ### Removed

@@ -25,11 +25,11 @@ from intermux.system.session import UserInfo
 
 log = logging.getLogger("intermux.engine")
 
-IP = commands.which("ip") or "/usr/sbin/ip"
 RUNUSER = commands.which("runuser") or "/usr/sbin/runuser"
 CURL = commands.which("curl") or "/usr/bin/curl"
 
 GRACE = 5.0
+LAUNCH_WAIT = 1.5
 PUBLIC_DNS = ("1.1.1.1", "9.9.9.9")
 TAILSCALE_TABLE = "52"
 
@@ -103,7 +103,7 @@ def build_launch_argv(namespace: str, user: UserInfo, env: Dict[str, str], app_p
 
 
 def bind(app_path: str, iface: str, *, user: UserInfo, env: Dict[str, str],
-         running_policy: str = "ask", allow_unsupported: bool = False) -> Dict[str, Any]:
+         running_policy: str = "ask") -> Dict[str, Any]:
     """Set up the namespace plumbing for iface and launch app_path inside it; records the binding in state."""
     if running_policy not in _RUNNING_POLICIES:
         raise ValidationError(f"unknown running policy: {running_policy}", code="invalid_request")
@@ -118,13 +118,15 @@ def bind(app_path: str, iface: str, *, user: UserInfo, env: Dict[str, str],
                             code="not_bindable")
 
     handler = apps.get_handler(app_path)
-    if not handler.supported and not allow_unsupported:
-        raise ValidationError(handler.unsupported_reason, code="unsupported_app")
-
+    st = state.load_state(config.STATE_FILE)
     profile_mode = "default"
     running = procs.find_app_procs(app_path, handler.comm_names(app_path), uid=user.uid)
-    if running:
-        pids = [p.pid for p in running]
+    # Anything alive inside the namespace of an existing binding of this app counts as running too:
+    # scripts and wrappers often have a process name that differs from the app path.
+    known = {p.pid for p in running}
+    extra = [pid for pid in _bound_app_pids(st, app_path, user.uid) if pid not in known]
+    pids = [p.pid for p in running] + extra
+    if pids:
         if running_policy == "ask":
             raise ConflictError("application is already running", code="already_running", data={"pids": pids})
         if running_policy == "close":
@@ -135,14 +137,40 @@ def bind(app_path: str, iface: str, *, user: UserInfo, env: Dict[str, str],
         else:
             profile_mode = "separate"
 
-    st = state.load_state(config.STATE_FILE)
     if iface in st.subnets:
         subnet = ipaddress.IPv4Network(st.subnets[iface])
     else:
         subnet = subnets.pick_subnet(_used_networks(st), preferred=None)
+    # Record the subnet before building anything so a failure can always be found and torn down.
     st.subnets[iface] = str(subnet)
+    state.save_state(st, config.STATE_FILE)
 
     ns = netns.namespace_name(iface)
+    try:
+        return _bind_plumbed(st, app_path, iface, interface, handler, subnet, ns, profile_mode,
+                             user=user, env=env)
+    except BaseException:
+        _rollback_bind(st, iface, subnet, ns)
+        raise
+
+
+def _rollback_bind(st: state.State, iface: str, subnet: ipaddress.IPv4Network, ns: str) -> None:
+    """Undo the plumbing of a failed bind unless a binding or a live process still uses it."""
+    try:
+        if st.bindings_for_iface(iface) or procs.pids_in_netns(ns):
+            return
+        _safe(_teardown_iface, iface, str(subnet))
+        st.subnets.pop(iface, None)
+        if not st.bindings:
+            st.ip_forward_prev = None
+        state.save_state(st, config.STATE_FILE)
+    except Exception as exc:  # never mask the original failure
+        log.warning("rollback of the failed bind on %s failed: %s", iface, exc)
+
+
+def _bind_plumbed(st: state.State, app_path: str, iface: str, interface: netinfo.Interface, handler: Any,
+                  subnet: ipaddress.IPv4Network, ns: str, profile_mode: str, *, user: UserInfo,
+                  env: Dict[str, str]) -> Dict[str, Any]:
     host_v, ns_v = netns.veth_names(iface)
     gateway = interface.gateways[0] if interface.gateways else None
     host_addr = subnets.host_ip(subnet)
@@ -160,7 +188,6 @@ def bind(app_path: str, iface: str, *, user: UserInfo, env: Dict[str, str],
     priority = config.PRIORITY_BASE + index
     routing.ensure_policy(subnet, iface, table, priority, gateway, host_v)
     warnings = configure_namespace_dns(ns, ns_v, str(subnets.ns_ip(subnet)), namespace_dns_servers(interface))
-    # Persist the subnet and forwarding state now so a later failure can still be torn down.
     state.save_state(st, config.STATE_FILE)
 
     if handler.name == "firefox" and profile_mode == "default" and firefox.default_profile_dir(user.home) is None:
@@ -168,7 +195,7 @@ def bind(app_path: str, iface: str, *, user: UserInfo, env: Dict[str, str],
 
     ctx = apps.LaunchContext(user=user, iface=iface, profile_mode=profile_mode)
     handler.prepare(ctx, app_path)
-    argv = build_launch_argv(ns, user, env, app_path, handler.extra_args(ctx), ip_bin=IP, runuser_bin=RUNUSER)
+    argv = build_launch_argv(ns, user, env, app_path, handler.extra_args(ctx), ip_bin=commands.ip_bin(), runuser_bin=RUNUSER)
 
     app_name = os.path.basename(app_path)
     _ensure_tmpdir(user, ns)
@@ -183,21 +210,31 @@ def bind(app_path: str, iface: str, *, user: UserInfo, env: Dict[str, str],
     finally:
         os.close(log_fd)
     _launched[proc.pid] = proc
-    time.sleep(1.5)
-    if proc.poll() is not None:
+    time.sleep(LAUNCH_WAIT)
+    exited = proc.poll()
+    if exited is not None:
         _launched.pop(proc.pid, None)
-        raise ConflictError("application exited immediately; see log", code="launch_failed",
-                            data={"log_path": log_path})
+        if not launch_handed_off(exited, bool(procs.pids_in_netns(ns))):
+            raise ConflictError("application exited immediately; see log", code="launch_failed",
+                                data={"log_path": log_path})
+        warnings.append("the launched process exited normally while the application keeps running in "
+                        "its namespace")
 
     binding = state.Binding(
         iface=iface, app=app_path, app_name=app_name, namespace=ns, subnet=str(subnet),
         table=table, priority=priority, profile_mode=profile_mode, log_path=log_path,
-        created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"), pid=proc.pid,
     )
     st.bindings = [b for b in st.bindings if not (b.iface == iface and b.app == app_path)]
     st.bindings.append(binding)
     state.save_state(st, config.STATE_FILE)
     return {"binding": asdict(binding), "pid": proc.pid, "log_path": log_path, "warnings": warnings}
+
+
+def launch_handed_off(returncode: int, namespace_busy: bool) -> bool:
+    """True when a launched process that already exited counts as a success: it exited with status 0
+    (a wrapper that forked the real app) and processes remain in the namespace."""
+    return returncode == 0 and namespace_busy
 
 
 def stop_app(iface: str, app: str, *, uid: Optional[int] = None) -> Dict[str, Any]:
@@ -208,7 +245,7 @@ def stop_app(iface: str, app: str, *, uid: Optional[int] = None) -> Dict[str, An
     binding = st.find_binding(iface, app)
     if binding is None:
         raise NotFoundError(f"no binding for {app} on {iface}")
-    pids = _app_pids_in_namespace(binding.namespace, binding.app, uid)
+    pids = _binding_pids(st, binding, uid)
     if not pids:
         return {"stopped": [], "still_running": []}
     targets = procs.descendants(pids, uid=uid)
@@ -233,7 +270,7 @@ def verify(iface: str) -> Dict[str, Any]:
     ns = netns.namespace_name(iface)
     if not netns.namespace_exists(ns):
         raise NotFoundError(f"namespace for {iface} is not up")
-    res = commands.run([IP, "netns", "exec", ns, CURL, "-4", "-s", "--max-time", "8", config.PUBLIC_IP_URL])
+    res = commands.run([commands.ip_bin(), "netns", "exec", ns, CURL, "-4", "-s", "--max-time", "8", config.PUBLIC_IP_URL])
     if not res.ok:
         error = res.stderr.strip() or f"curl exited with status {res.returncode}"
         return {"iface": iface, "public_ip": None, "error": error}
@@ -259,7 +296,7 @@ def status() -> List[Dict[str, Any]]:
             "subnet": b.subnet,
             "profile_mode": b.profile_mode,
             "log_path": b.log_path,
-            "running_pids": _app_pids_in_namespace(b.namespace, b.app),
+            "running_pids": _binding_pids(st, b),
             "namespace_up": netns.namespace_exists(b.namespace),
             "nat_present": any(b.subnet in line.split() for line in nat_lines),
         })
@@ -267,7 +304,7 @@ def status() -> List[Dict[str, Any]]:
 
 
 def teardown_idle() -> Dict[str, Any]:
-    """Drop bindings whose namespace has no processes and tear down interfaces left without bindings."""
+    """Drop bindings whose application is gone (own pid tree, or an empty namespace) and tear down interfaces left without bindings."""
     st = state.load_state(config.STATE_FILE)
     removed: List[str] = []
     for a in list(st.adoptions):
@@ -278,7 +315,7 @@ def teardown_idle() -> Dict[str, Any]:
         removed.append(f"{a.app_name}/{a.iface} (adopted)")
     cidr_for: Dict[str, str] = dict(st.subnets)
     for b in list(st.bindings):
-        if procs.pids_in_netns(b.namespace):
+        if _binding_live(st, b):
             continue
         st.bindings.remove(b)
         cidr_for.setdefault(b.iface, b.subnet)
@@ -521,17 +558,6 @@ def release_adoption(adopt_id: str, *, user: Optional[UserInfo] = None) -> Dict[
     return {"released": released, "still_running": []}
 
 
-def adoption_status() -> List[Dict[str, Any]]:
-    """Describe every adoption with the pids currently in its cgroup."""
-    st = state.load_state(config.STATE_FILE)
-    result: List[Dict[str, Any]] = []
-    for a in st.adoptions:
-        pids = adopt_sys.read_group_pids(a.group)
-        result.append({"id": a.id, "iface": a.iface, "app_name": a.app_name, "group_pids": pids,
-                       "alive": bool(pids), "created_at": a.created_at})
-    return result
-
-
 def _safe_list(fn: Callable[[], List[str]]) -> List[str]:
     try:
         return list(fn())
@@ -554,7 +580,7 @@ def _used_networks(st: state.State) -> List[ipaddress.IPv4Network]:
     # Table 52 is Tailscale's: its rule (priority 5270) is consulted before main, so a subnet route there that
     # covers a namespace subnet would steal the namespace's reply traffic.
     for table in ("main", TAILSCALE_TABLE):
-        for route in commands.json_cmd([IP, "-j", "route", "show", "table", table],
+        for route in commands.json_cmd([commands.ip_bin(), "-j", "route", "show", "table", table],
                                        tolerate=("FIB table does not exist",)):
             dst = route.get("dst") if isinstance(route, dict) else None
             if dst and dst != "default":
@@ -562,12 +588,54 @@ def _used_networks(st: state.State) -> List[ipaddress.IPv4Network]:
     return subnets.used_networks(cidrs)
 
 
-def _app_pids_in_namespace(namespace: str, app: str, uid: Optional[int] = None) -> List[int]:
-    in_ns = set(procs.pids_in_netns(namespace))
+def _binding_pids(st: state.State, b: state.Binding, uid: Optional[int] = None) -> List[int]:
+    """Pids that belong to binding b: processes in its namespace (owned by uid when given) that match the app by
+    name or path, or descend from the recorded launch pid. If nothing matches and no other binding shares the
+    namespace, every process of uid in the namespace counts (scripts whose process name differs from the path)."""
+    ino = procs.netns_inode(b.namespace)
+    if ino is None:
+        return []
+    table = procs.list_procs()
+    in_ns = {p.pid for p in table if p.netns == ino and (uid is None or p.uid == uid)}
     if not in_ns:
         return []
-    comm = apps.get_handler(app).comm_names(app)
-    return [p.pid for p in procs.find_app_procs(app, comm, uid=uid) if p.pid in in_ns]
+    comm = apps.get_handler(b.app).comm_names(b.app)
+    found = {p.pid for p in procs.find_app_procs(b.app, comm, uid=uid) if p.pid in in_ns}
+    if b.pid:
+        found |= set(procs.descendants([b.pid], table, uid=uid)) & in_ns
+    if not found and not _shares_namespace(st, b):
+        found = set(in_ns)
+    return sorted(found)
+
+
+def _shares_namespace(st: state.State, b: state.Binding) -> bool:
+    return any(o is not b and o.namespace == b.namespace for o in st.bindings)
+
+
+def _binding_live(st: state.State, b: state.Binding) -> bool:
+    """Whether b's application still runs. With a recorded pid only that pid's tree counts (a sibling app in the
+    same namespace does not keep b alive); without one (old state) any process in the namespace does."""
+    if not b.pid:
+        return bool(procs.pids_in_netns(b.namespace))
+    ino = procs.netns_inode(b.namespace)
+    if ino is None:
+        return False
+    table = procs.list_procs()
+    in_ns = {p.pid for p in table if p.netns == ino}
+    if not in_ns:
+        return False
+    if set(procs.descendants([b.pid], table)) & in_ns:
+        return True
+    return not _shares_namespace(st, b)
+
+
+def _bound_app_pids(st: state.State, app_path: str, uid: int) -> List[int]:
+    """Live pids of uid inside the namespaces of existing bindings of app_path."""
+    found: List[int] = []
+    for b in st.bindings:
+        if b.app == app_path:
+            found.extend(_binding_pids(st, b, uid))
+    return found
 
 
 def _teardown_iface(iface: str, cidr: str) -> None:

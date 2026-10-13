@@ -7,7 +7,8 @@ from types import SimpleNamespace
 
 from intermux.apps.desktop_entries import AppEntry
 from intermux.ui import icons, theme
-from intermux.ui.app import interface_label, queue_add, session_label, status_kind
+from intermux.ui.app import (delete_key_allowed, fresh_public_ip, interface_label, row_button_states,
+                             still_running_message, queue_add, session_label, status_kind)
 from intermux.ui.picker import column_count, ellipsize, filter_tiles, visible_indices
 
 
@@ -279,3 +280,39 @@ class WheelRoutingTests(unittest.TestCase):
         labels[0].event_generate("<MouseWheel>", delta=-120)
         self.root.update()
         self.assertEqual(frame.canvas.yview()[0], 0.0)
+
+
+class RowStateTests(unittest.TestCase):
+    def test_running_row_all_enabled_when_idle(self):
+        self.assertTrue(all(row_button_states(True, True).values()))
+
+    def test_stopped_row_keeps_only_log(self):
+        self.assertEqual(row_button_states(False, True),
+                         {"verify": False, "stop": False, "log": True, "force": False})
+
+    def test_busy_disables_everything(self):
+        self.assertFalse(any(row_button_states(True, False).values()))
+
+
+class DeleteKeyGuardTests(unittest.TestCase):
+    def test_text_inputs_block_delete(self):
+        for cls in ("Entry", "TEntry", "TCombobox", "Text"):
+            self.assertFalse(delete_key_allowed(cls))
+
+    def test_body_and_unknown_focus_allow_delete(self):
+        for cls in (None, "Tk", "Frame", "TButton"):
+            self.assertTrue(delete_key_allowed(cls))
+
+
+class StillRunningTests(unittest.TestCase):
+    def test_message_lists_pids_and_is_warning(self):
+        text = still_running_message("Firefox", "stop", [12, 34])
+        self.assertIn("12, 34", text)
+        self.assertEqual(status_kind(text), "warning")
+
+
+class PublicIpExpiryTests(unittest.TestCase):
+    def test_fresh_and_expired(self):
+        self.assertEqual(fresh_public_ip(("1.2.3.4", 100.0), 200.0), "1.2.3.4")
+        self.assertEqual(fresh_public_ip(("1.2.3.4", 100.0), 400.0), "")
+        self.assertEqual(fresh_public_ip(None, 400.0), "")

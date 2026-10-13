@@ -238,5 +238,52 @@ class AdoptionStateTests(unittest.TestCase):
         self.assertEqual(state_from_dict({}).adoptions, [])
 
 
+class StateValidationTests(unittest.TestCase):
+    def _item(self, **over):
+        item = {"iface": "wlan0", "app": "/usr/bin/x", "namespace": "ns_a", "subnet": "10.200.7.0/24",
+                "table": 1007, "priority": 1007}
+        item.update(over)
+        return item
+
+    def test_invalid_subnets_dropped(self):
+        for bad in ("garbage", "192.168.5.0/24", "10.200.300.0/24", "10.200.7.0/16", "10.200.0.0/24",
+                    "10.200.7.1/24", "10.200.255.0/24"):
+            with self.subTest(bad=bad):
+                st = state_from_dict({"subnets": {"wlan0": bad, "eth0": "10.200.2.0/24"},
+                                      "bindings": [self._item(subnet=bad)]})
+                self.assertEqual(st.subnets, {"eth0": "10.200.2.0/24"})
+                self.assertEqual(st.bindings, [])
+
+    def test_out_of_range_table_priority_dropped(self):
+        for over in ({"table": 0}, {"table": -5}, {"priority": 0}, {"priority": 99999}):
+            with self.subTest(over=over):
+                self.assertEqual(state_from_dict({"bindings": [self._item(**over)]}).bindings, [])
+
+    def test_valid_binding_kept(self):
+        self.assertEqual(len(state_from_dict({"bindings": [self._item()]}).bindings), 1)
+
+
+class BindingPidTests(unittest.TestCase):
+    def _item(self, **over):
+        item = {"iface": "wlan0", "app": "/usr/bin/x", "namespace": "ns_a", "subnet": "10.200.7.0/24",
+                "table": 1007, "priority": 1007}
+        item.update(over)
+        return item
+
+    def test_old_state_has_no_pid(self):
+        self.assertIsNone(state_from_dict({"bindings": [self._item()]}).bindings[0].pid)
+
+    def test_pid_round_trip(self):
+        st = state_from_dict({"bindings": [self._item(pid=4321)]})
+        self.assertEqual(st.bindings[0].pid, 4321)
+        again = state_from_dict(state_to_dict(st))
+        self.assertEqual(again.bindings[0].pid, 4321)
+
+    def test_garbage_pid_tolerated(self):
+        for bad in ("abc", True, 0, -3, [1]):
+            with self.subTest(bad=bad):
+                self.assertIsNone(state_from_dict({"bindings": [self._item(pid=bad)]}).bindings[0].pid)
+
+
 if __name__ == "__main__":
     unittest.main()

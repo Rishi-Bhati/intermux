@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 VERSION = "2.0.0"
-APP_NAME = "intermux"
 
 STATE_DIR = Path("/var/lib/intermux")
 STATE_FILE = STATE_DIR / "state.json"
@@ -12,7 +11,6 @@ LOCK_FILE = RUN_DIR / "helper.lock"
 NETNS_DIR = Path("/var/run/netns")          # where `ip netns add` keeps namespace handles
 ETC_NETNS_DIR = Path("/etc/netns")          # per-namespace resolv.conf
 
-POLKIT_ACTION_ID = "org.intermux.run"
 INSTALL_BIN = Path("/usr/lib/intermux/intermux")   # installed (onedir) binary; polkit annotates this path
 
 SUBNET_BASE_OCTET = 200                     # subnets are 10.200.N.0/24, N in 1..254

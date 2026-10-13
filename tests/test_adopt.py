@@ -117,5 +117,113 @@ class LeftoverRulesTests(unittest.TestCase):
         self.assertEqual(adopt.leftover_rules({}), [])
 
 
+class PolicyTests(unittest.TestCase):
+    def test_rule_args_v4_and_v6(self):
+        self.assertEqual(adopt.rule_args(1), ["rule", "add", "fwmark", "0x101", "lookup", "2001",
+                                              "priority", "2001"])
+        self.assertEqual(adopt.rule_args(1, 6, "del")[:3], ["-6", "rule", "del"])
+
+    def test_route_commands_kill_switch_and_v6_blackhole(self):
+        cmds = adopt.route_commands(1, "wlan0", "10.0.0.1")
+        self.assertEqual(cmds[0], ["route", "replace", "default", "via", "10.0.0.1", "dev", "wlan0",
+                                   "table", "2001", "metric", "100"])
+        self.assertEqual(cmds[1], ["route", "replace", "unreachable", "default", "metric", "1000",
+                                   "table", "2001"])
+        self.assertEqual(cmds[2], ["-6", "route", "replace", "unreachable", "default", "table", "2001"])
+        self.assertNotIn("via", adopt.route_commands(1, "wlan0", None)[0])
+
+    def test_table_ok(self):
+        good = [{"dst": "default", "gateway": "10.0.0.1", "dev": "wlan0"},
+                {"dst": "default", "type": "unreachable"}]
+        self.assertTrue(adopt.table_ok(good, "wlan0", "10.0.0.1"))
+        self.assertFalse(adopt.table_ok(good[1:], "wlan0", "10.0.0.1"))
+        self.assertFalse(adopt.table_ok(good[:1], "wlan0", "10.0.0.1"))
+        self.assertFalse(adopt.table_ok(good, "wlan0", "10.0.0.9"))
+        self.assertFalse(adopt.table_ok(None, "wlan0", None))
+
+    def _run(self, existing_rules):
+        calls = []
+        ok = mock.Mock()
+        with mock.patch.object(adopt, "_ip_bin", return_value="ip"), \
+             mock.patch.object(adopt, "_rule_exists", side_effect=lambda s, f=4: f in existing_rules), \
+             mock.patch.object(adopt.commands, "run_checked",
+                               side_effect=lambda argv, **k: calls.append(list(argv)) or ok):
+            adopt.apply_policy(1, "wlan0", "10.0.0.1")
+        return calls
+
+    def test_apply_installs_both_rules_and_routes(self):
+        calls = self._run(set())
+        self.assertIn(["ip", "rule", "add", "fwmark", "0x101", "lookup", "2001", "priority", "2001"], calls)
+        self.assertIn(["ip", "-6", "rule", "add", "fwmark", "0x101", "lookup", "2001", "priority", "2001"],
+                      calls)
+        self.assertIn(["ip", "-6", "route", "replace", "unreachable", "default", "table", "2001"], calls)
+
+    def test_apply_is_idempotent_when_rules_exist(self):
+        calls = self._run({4, 6})
+        self.assertFalse([c for c in calls if "rule" in c])
+
+    def test_apply_rejects_unsafe_iface(self):
+        with self.assertRaises(ValidationError):
+            adopt.apply_policy(1, "wl;an", None)
+
+    def test_remove_policy_removes_v6_too(self):
+        calls = []
+        with mock.patch.object(adopt, "_ip_bin", return_value="ip"), \
+             mock.patch.object(adopt.commands, "run_checked", side_effect=lambda a, **k: calls.append(list(a))):
+            adopt.remove_policy(1)
+        self.assertIn(["ip", "-6", "rule", "del", "fwmark", "0x101", "lookup", "2001", "priority", "2001"],
+                      calls)
+        self.assertIn(["ip", "-6", "route", "flush", "table", "2001"], calls)
+
+    def test_sweep_removes_v6_rule_without_v4(self):
+        calls = []
+        rule = {"priority": 2001, "fwmark": "0x101", "table": "2001"}
+
+        def fake_json(argv, **k):
+            return [rule] if "-6" in argv else []
+
+        with mock.patch.object(adopt, "_ip_bin", return_value="ip"), \
+             mock.patch.object(adopt.commands, "json_cmd", side_effect=fake_json), \
+             mock.patch.object(adopt.commands, "run_checked", side_effect=lambda a, **k: calls.append(list(a))), \
+             mock.patch.object(adopt, "CGROUP_ROOT", tempfile.mkdtemp()):
+            adopt.sweep_leftovers()
+        self.assertIn(["ip", "-6", "rule", "del", "fwmark", "0x101", "lookup", "2001", "priority", "2001"],
+                      calls)
+        self.assertIn(["ip", "-6", "route", "flush", "table", "2001"], calls)
+
+
+class RefreshTests(unittest.TestCase):
+    def _iface(self, bindable=True, gws=("10.0.0.1",)):
+        return mock.Mock(bindable=bindable, gateways=list(gws))
+
+    def test_refresh_policy_noop_when_healthy(self):
+        good = [{"dst": "default", "gateway": "10.0.0.1", "dev": "wlan0"},
+                {"dst": "default", "type": "unreachable"}]
+        with mock.patch.object(adopt, "_ip_bin", return_value="ip"), \
+             mock.patch.object(adopt.commands, "json_cmd", return_value=good), \
+             mock.patch.object(adopt, "_rule_exists", return_value=True), \
+             mock.patch.object(adopt, "apply_policy") as apply:
+            self.assertFalse(adopt.refresh_policy(1, "wlan0", "10.0.0.1"))
+        apply.assert_not_called()
+
+    def test_refresh_policy_reapplies_when_default_dropped(self):
+        only_fallback = [{"dst": "default", "type": "unreachable"}]
+        with mock.patch.object(adopt, "_ip_bin", return_value="ip"), \
+             mock.patch.object(adopt.commands, "json_cmd", return_value=only_fallback), \
+             mock.patch.object(adopt, "_rule_exists", return_value=True), \
+             mock.patch.object(adopt, "apply_policy") as apply:
+            self.assertTrue(adopt.refresh_policy(1, "wlan0", "10.0.0.1"))
+        apply.assert_called_once_with(1, "wlan0", "10.0.0.1")
+
+    def test_refresh_adoptions_skips_down_and_missing(self):
+        a1 = mock.Mock(iface="up0", slot=1)
+        a2 = mock.Mock(iface="down0", slot=2)
+        a3 = mock.Mock(iface="gone0", slot=3)
+        ifaces = {"up0": self._iface(), "down0": self._iface(bindable=False)}
+        with mock.patch.object(adopt, "refresh_policy", return_value=True) as rp:
+            self.assertEqual(adopt.refresh_adoptions([a1, a2, a3], ifaces), [1])
+        rp.assert_called_once_with(1, "up0", "10.0.0.1")
+
+
 if __name__ == "__main__":
     unittest.main()

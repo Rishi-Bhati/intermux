@@ -10,7 +10,6 @@ from pathlib import Path
 from unittest import mock
 
 from intermux import bugreport
-from intermux.errors import ValidationError
 
 
 def _fake_diagnostics(**overrides):
@@ -81,25 +80,6 @@ class DiagnosticsTests(unittest.TestCase):
 
 
 class WriteTests(unittest.TestCase):
-    def test_writes_owner_only_file_with_expected_name(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            with mock.patch.object(bugreport, "collect_diagnostics", return_value=_fake_diagnostics()):
-                path = bugreport.write_bug_report(title="Crash", description="It crashes", report_type="bug",
-                                                  directory=Path(tmp) / "reports")
-            self.assertTrue(path.exists())
-            self.assertEqual(path.parent.name, "reports")
-            self.assertTrue(path.name.startswith("intermux-report-"))
-            self.assertTrue(path.name.endswith("-bug.md"))
-            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
-            self.assertIn("# Crash", path.read_text(encoding="utf-8"))
-
-    def test_invalid_fields_are_rejected_before_writing(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "reports"
-            with self.assertRaises(ValidationError):
-                bugreport.write_bug_report(title="", description="D", directory=target)
-            self.assertFalse(target.exists())
-
     def test_zip_contains_system_report_and_redacted_logs(self) -> None:
         import zipfile
 
@@ -199,3 +179,84 @@ class LogFileListingTests(unittest.TestCase):
         self.assertEqual(names, ["dangling.log", "good.log"])
         self.assertEqual(bugreport._log_files(Path("/nonexistent/intermux-logs")), [])
 
+
+
+class ScrubUrlTokenTests(unittest.TestCase):
+    def test_url_query_removed_keeping_host_and_path(self) -> None:
+        out = bugreport.scrub_text("GET https://example.com/a/b?user=x&key=abc#frag ok", "", None)
+        self.assertEqual(out, "GET https://example.com/a/b?QUERY ok")
+        self.assertEqual(bugreport.scrub_text("http://h.test/p?q=1", "", None), "http://h.test/p?QUERY")
+
+    def test_url_without_query_is_kept(self) -> None:
+        self.assertEqual(bugreport.scrub_text("see https://example.com/docs", "", None),
+                         "see https://example.com/docs")
+
+    def test_report_tokens_removed(self) -> None:
+        out = bugreport.scrub_text("tok rsk_0123abcdEF99 and rpk_deadbeef.", "", None)
+        self.assertNotIn("0123abcd", out)
+        self.assertNotIn("deadbeef", out)
+        self.assertEqual(out, "tok TOKEN and TOKEN.")
+
+
+class LogTailTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.home = self._tmp.name
+        self.log_dir = Path(self.home) / bugreport.LOG_DIR_REL
+        self.log_dir.mkdir(parents=True)
+
+    def _logs(self):
+        with mock.patch.object(bugreport, "_interfaces", return_value=[]), \
+             mock.patch.object(bugreport, "_bindings", return_value=[]), \
+             mock.patch.object(bugreport, "_tools", return_value=[]):
+            return bugreport.collect_diagnostics(home=self.home)["recent_logs"]
+
+    def test_large_file_only_tail_is_read(self) -> None:
+        big = self.log_dir / "big.log"
+        with open(big, "wb") as fh:
+            fh.write(b"HEAD-MARKER\n")
+            fh.write(b"x" * 20 * 1024 * 1024)
+            fh.write(b"\nlast line one\nlast line two\n")
+        real_read = os.read
+        total = []
+
+        def counting_read(fd, n):
+            data = real_read(fd, n)
+            total.append(len(data))
+            return data
+
+        with mock.patch("intermux.bugreport.os.read", side_effect=counting_read):
+            logs = self._logs()
+        self.assertLessEqual(sum(total), bugreport.LOG_TAIL_BYTES)
+        self.assertIn("last line two", logs[0]["text"])
+        self.assertNotIn("HEAD-MARKER", logs[0]["text"])
+
+    def test_fifo_is_skipped_without_hanging(self) -> None:
+        os.mkfifo(self.log_dir / "pipe.log")
+        (self.log_dir / "ok.log").write_text("fine\n", encoding="utf-8")
+        logs = self._logs()
+        self.assertEqual([e["file"] for e in logs], ["ok.log"])
+
+    def test_symlink_is_skipped(self) -> None:
+        secret = Path(self.home) / "secret.txt"
+        secret.write_text("TOPSECRET\n", encoding="utf-8")
+        os.symlink(secret, self.log_dir / "link.log")
+        logs = self._logs()
+        self.assertEqual(logs, [])
+
+    def test_zip_skips_fifo_and_symlink(self) -> None:
+        import zipfile
+        os.mkfifo(self.log_dir / "pipe.log")
+        secret = Path(self.home) / "secret.txt"
+        secret.write_text("TOPSECRET\n", encoding="utf-8")
+        os.symlink(secret, self.log_dir / "link.log")
+        (self.log_dir / "ok.log").write_text("fine\n", encoding="utf-8")
+        out = Path(self.home) / "out"
+        with mock.patch.object(bugreport, "_interfaces", return_value=[]), \
+             mock.patch.object(bugreport, "_bindings", return_value=[]), \
+             mock.patch.object(bugreport, "_tools", return_value=[]):
+            path = bugreport.write_bug_zip(directory=out, home=self.home)
+        with zipfile.ZipFile(path) as z:
+            names = [n for n in z.namelist() if n.startswith("logs/")]
+        self.assertEqual(names, ["logs/ok.log"])

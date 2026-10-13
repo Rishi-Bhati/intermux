@@ -24,7 +24,9 @@ def build_parser() -> argparse.ArgumentParser:
     """Return the argument parser with all user-facing sub-commands."""
     parser = argparse.ArgumentParser(
         prog="intermux",
-        description="Route individual desktop applications through a chosen network interface.",
+        description="Route individual desktop applications through a chosen network interface. "
+                    "Run without a command to open the GUI.",
+        epilog="Internal commands used by the installed services (not for direct use): helper, watch.",
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
@@ -43,21 +45,19 @@ def build_parser() -> argparse.ArgumentParser:
                        help="open a separate profile if the application is already running")
     group.add_argument("--close-existing", action="store_true",
                        help="close running instances of the application and reopen it")
-    p.add_argument("--allow-unsupported", action="store_true",
-                   help="try to bind an application InterMux does not support")
 
     sub.add_parser("status", help="show bindings")
 
     p = sub.add_parser("stop", help="stop the application bound to an interface")
-    p.add_argument("--app", required=True, metavar="APP")
-    p.add_argument("--iface", required=True, metavar="IF")
+    p.add_argument("--app", required=True, metavar="APP", help="command name or path of the application")
+    p.add_argument("--iface", required=True, metavar="IF", help="network interface it is bound to")
 
     p = sub.add_parser("kill", help="stop every host instance of an application")
-    p.add_argument("--app", required=True, metavar="APP")
+    p.add_argument("--app", required=True, metavar="APP", help="command name or path of the application")
     p.add_argument("--force", action="store_true", help="kill survivors with SIGKILL")
 
     p = sub.add_parser("verify", help="print the public IP seen from an interface namespace")
-    p.add_argument("--iface", required=True, metavar="IF")
+    p.add_argument("--iface", required=True, metavar="IF", help="network interface to check")
 
     sub.add_parser("teardown-idle", help="remove plumbing of bindings with no running applications")
 
@@ -106,7 +106,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
     except Exception as exc:  # last-resort guard: users never see a traceback
         log.debug("unexpected failure", exc_info=True)
-        _error(f"unexpected error: {exc}")
+        _error(f"unexpected error: {exc} (set INTERMUX_DEBUG=1 for details)")
         return 1
 
 
@@ -274,7 +274,7 @@ def _cmd_bind(args: argparse.Namespace) -> int:
     _info(f"binding {name} to {args.iface}")
     try:
         result = helper_client.bind(args.iface, app_path, running_policy=policy,
-                                    allow_unsupported=args.allow_unsupported, env=env)
+                                    env=env)
     except HelperError as exc:
         if exc.code != "already_running":
             raise
@@ -285,7 +285,7 @@ def _cmd_bind(args: argparse.Namespace) -> int:
         if answer[0] == "adopt":
             return _adopt_and_report(args.iface, app_path)
         result = helper_client.bind(args.iface, app_path, running_policy=answer[1],
-                                    allow_unsupported=args.allow_unsupported, env=env)
+                                    env=env)
     _report_bind(result or {})
     return 0
 
@@ -372,6 +372,10 @@ def _cmd_release(args: argparse.Namespace) -> int:
 
     _info(f"releasing adoption {args.id}")
     data = helper_client.call("release_adoption", {"id": args.id}) or {}
+    still = data.get("still_running") or []
+    if still:
+        _warn(f"released, but processes are still running: {_join(still)}")
+        return 1
     _ok(f"released; moved pids back: {_join(data.get('released') or [])}")
     return 0
 

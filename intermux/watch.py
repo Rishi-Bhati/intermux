@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict, Iterable, Optional, Set
 
 from intermux import config, engine, state
 from intermux.system import adopt as adopt_sys
-from intermux.system import procs
+from intermux.system import netinfo, procs
 
 log = logging.getLogger("intermux.watch")
 
@@ -68,13 +68,30 @@ def _default_check() -> bool:
 
 
 def _has_routes() -> bool:
-    return bool(state.load_state(config.STATE_FILE).subnets)
+    st = state.load_state(config.STATE_FILE)
+    return bool(st.subnets or st.adoptions)
+
+
+def refresh_adoption_routes() -> Dict[str, Any]:
+    """Re-add the route table (interface default, kill-switch fallback, IPv6 blackhole) of every adoption
+    whose interface is back. Runs under the state lock; touches no state."""
+    adoptions = state.load_state(config.STATE_FILE).adoptions
+    if not adoptions:
+        return {}
+    try:
+        current = {i.name: i for i in netinfo.list_interfaces()}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("cannot list interfaces: %s", exc)
+        return {}
+    slots = adopt_sys.refresh_adoptions(adoptions, current)
+    return {"refreshed_adoptions": slots} if slots else {}
 
 
 def run_once(teardown: Optional[Callable[[], Dict[str, Any]]] = None,
              refresh: Optional[Callable[[], Dict[str, Any]]] = None, *,
              check: Optional[Callable[[], bool]] = None,
-             routes: Optional[Callable[[], bool]] = None) -> Dict[str, Any]:
+             routes: Optional[Callable[[], bool]] = None,
+             refresh_adoptions: Optional[Callable[[], Dict[str, Any]]] = None) -> Dict[str, Any]:
     """One pass: tear down idle bindings, then re-add policy routes the kernel dropped.
 
     `check` (default: the cheap idle check) decides whether teardown runs; `routes` (default: state has
@@ -87,12 +104,14 @@ def run_once(teardown: Optional[Callable[[], Dict[str, Any]]] = None,
         return {}
     teardown = teardown or engine.teardown_idle
     refresh = refresh or engine.refresh_routes
+    refresh_adoptions = refresh_adoptions or refresh_adoption_routes
     report: Dict[str, Any] = {}
     with state.state_lock():
         if idle:
             report.update(teardown())
         if want_refresh:
             report.update(refresh())
+            report.update(refresh_adoptions())
     removed = report.get("removed") or []
     if removed:
         log.info("released idle bindings: %s", ", ".join(str(r) for r in removed))

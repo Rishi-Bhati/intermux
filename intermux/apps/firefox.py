@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from intermux.apps import AppHandler, LaunchContext
+from intermux.errors import ValidationError
 from intermux.system import procs, safefs
 from intermux.system.session import UserInfo
 
@@ -77,18 +78,24 @@ def profile_roots(home: str) -> List[Path]:
     ]
 
 
+PROFILES_INI_MAX = 256 * 1024
+
+
 def default_profile_dir(home: str) -> Optional[Path]:
-    """Return the default profile directory, or None if none exists on disk."""
+    """Return the default profile directory, or None if none exists on disk.
+
+    profiles.ini is read without following symlinks and with a size cap.
+    """
     for root in profile_roots(home):
         ini = root / "profiles.ini"
-        if not ini.is_file():
-            continue
         try:
-            text = ini.read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            log.warning("cannot read %s: %s", ini, exc)
+            raw = safefs.read_file_nofollow(os.fspath(ini), home, PROFILES_INI_MAX)
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except (OSError, ValidationError) as exc:
+            log.warning("not reading %s: %s", ini, exc)
             return None
-        profile = parse_default_profile(text, root)
+        profile = parse_default_profile(raw.decode("utf-8", errors="replace"), root)
         if profile is None or not profile.is_dir():
             return None
         return profile
@@ -131,16 +138,16 @@ def separate_profile_dir(home: str, iface: str) -> Path:
 def remove_stale_locks(profile_dir: Path, home: str) -> List[str]:
     """Delete Firefox lock files in a profile directory under home; return the names removed.
 
-    The profile directory is resolved first, so a profiles.ini that points outside home
-    is refused. Only lock names and non-directory entries are removed.
+    The path is walked from home with no-follow directory descriptors, so a symlinked or
+    swapped component is refused and nothing outside home can be touched. Only regular
+    files and symlinks named lock or .parentlock are unlinked, through the directory fd.
     """
-    if not safefs.is_within(os.fspath(profile_dir), home):
-        log.warning("refusing to remove Firefox locks outside the home directory: %s", profile_dir)
-        return []
-    real_dir = os.path.realpath(profile_dir)
     removed: List[str] = []
     try:
-        dir_fd = os.open(real_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        dir_fd = safefs.open_dir_nofollow(os.fspath(profile_dir), home)
+    except ValidationError:
+        log.warning("refusing to remove Firefox locks via an unsafe path: %s", profile_dir)
+        return removed
     except OSError:
         return removed
     try:
@@ -154,10 +161,10 @@ def remove_stale_locks(profile_dir: Path, home: str) -> List[str]:
             try:
                 os.unlink(name, dir_fd=dir_fd)
             except OSError as exc:
-                log.warning("could not remove %s in %s: %s", name, real_dir, exc)
+                log.warning("could not remove %s in %s: %s", name, profile_dir, exc)
                 continue
             removed.append(name)
-            log.info("removed stale Firefox lock %s", os.path.join(real_dir, name))
+            log.info("removed stale Firefox lock %s", os.path.join(profile_dir, name))
     finally:
         os.close(dir_fd)
     return removed

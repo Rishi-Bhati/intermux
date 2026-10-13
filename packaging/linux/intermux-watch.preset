@@ -1,0 +1,2 @@
+# Enable the routing watcher on install (it resets routing when routed apps exit).
+enable intermux-watch.service

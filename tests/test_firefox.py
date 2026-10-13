@@ -233,13 +233,11 @@ class GetHandlerTests(unittest.TestCase):
         handler = get_handler("/usr/lib/firefox/firefox")
         self.assertIsInstance(handler, FirefoxHandler)
         self.assertEqual(handler.name, "firefox")
-        self.assertTrue(handler.supported)
 
     def test_chromium_supported_and_recognises_running_instances(self):
         handler = get_handler("/opt/brave.com/brave/brave-browser")
         self.assertIsInstance(handler, ChromiumHandler)
         self.assertEqual(handler.name, "chromium")
-        self.assertTrue(handler.supported)
         names = handler.comm_names("/usr/bin/brave-origin")
         self.assertIn("brave", names)
         self.assertIn("brave-origin", names)
@@ -297,3 +295,66 @@ class GetHandlerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NoFollowLockTests(TempHomeTestCase):
+    def test_symlinked_parent_component_is_refused(self):
+        outside = self.home / "outside"
+        (outside / "prof").mkdir(parents=True)
+        (outside / "prof" / "lock").write_text("", encoding="utf-8")
+        home = self.home / "h"
+        home.mkdir()
+        os.symlink(outside, home / "link")
+        self.assertEqual(remove_stale_locks(home / "link" / "prof", str(home)), [])
+        self.assertTrue((outside / "prof" / "lock").exists())
+
+    def test_symlinked_profile_dir_is_refused(self):
+        home = self.home / "h"
+        home.mkdir()
+        real = self.home / "real"
+        real.mkdir()
+        (real / ".parentlock").write_text("", encoding="utf-8")
+        os.symlink(real, home / "prof")
+        self.assertEqual(remove_stale_locks(home / "prof", str(home)), [])
+        self.assertTrue((real / ".parentlock").exists())
+
+    def test_path_outside_home_is_refused(self):
+        home = self.home / "h"
+        home.mkdir()
+        other = self.home / "other"
+        other.mkdir()
+        (other / "lock").write_text("", encoding="utf-8")
+        self.assertEqual(remove_stale_locks(other, str(home)), [])
+        self.assertTrue((other / "lock").exists())
+
+    def test_oversized_profiles_ini_is_ignored(self):
+        root = self.home / ".mozilla" / "firefox"
+        (root / "abc.default").mkdir(parents=True)
+        (root / "profiles.ini").write_text(
+            "[Profile0]\nPath=abc.default\nDefault=1\n" + "#" * (300 * 1024), encoding="utf-8")
+        self.assertIsNone(default_profile_dir(str(self.home)))
+
+    def test_symlinked_profiles_ini_is_ignored(self):
+        root = self.home / ".mozilla" / "firefox"
+        (root / "abc.default").mkdir(parents=True)
+        real = self.home / "elsewhere.ini"
+        real.write_text("[Profile0]\nPath=abc.default\nDefault=1\n", encoding="utf-8")
+        os.symlink(real, root / "profiles.ini")
+        self.assertIsNone(default_profile_dir(str(self.home)))
+
+
+class ChromiumNameMatchTests(unittest.TestCase):
+    def test_unrelated_prefix_names_are_not_chromium(self):
+        for path in ("/usr/bin/operator", "/usr/bin/chromatic", "/usr/bin/bravery", "/usr/bin/chromedriver"):
+            self.assertNotIsInstance(get_handler(path), ChromiumHandler, path)
+
+    def test_known_variants_still_match(self):
+        for path in ("/usr/bin/brave", "/usr/bin/brave-origin", "/usr/bin/google-chrome-stable",
+                     "/usr/bin/chromium-browser", "/usr/bin/chrome", "/usr/bin/opera",
+                     "/usr/bin/microsoft-edge-stable"):
+            self.assertIsInstance(get_handler(path), ChromiumHandler, path)
+
+    def test_family_lookup_is_not_a_plain_prefix(self):
+        from intermux.apps import chromium_family
+        self.assertEqual(chromium_family("/usr/bin/operator"), ("chromium", ()))
+        self.assertEqual(chromium_family("/usr/bin/brave-origin")[0], "brave")

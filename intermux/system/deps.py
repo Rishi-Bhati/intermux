@@ -27,11 +27,16 @@ _INSTALL_CMD = {
     "apk": "sudo apk add",
 }
 
+# policykit-1 is a transitional package on Debian 13 / Ubuntu 24.04+ (it pulls in pkexec and polkitd) and the
+# only name on older releases, so it installs everywhere on apt systems.
 # (tool, required, purpose, default package, per-package-manager package overrides)
 _TOOL_SPECS: Tuple[Tuple[str, bool, str, str, Dict[str, str]], ...] = (
     ("ip", True, "network namespaces and routing", "iproute2", {"dnf": "iproute"}),
-    ("iptables", True, "NAT for namespaces", "iptables", {}),
-    ("pgrep", False, "detect running apps", "procps", {"pacman": "procps-ng"}),
+    # iptables is the iptables-nft front end on current distros; Fedora/RHEL name the package explicitly.
+    ("iptables", True, "NAT for namespaces", "iptables", {"dnf": "iptables-nft"}),
+    # sysctl (procps) is run inside the namespace for the DNS redirect (route_localnet).
+    ("sysctl", True, "namespace DNS redirect", "procps",
+     {"pacman": "procps-ng", "dnf": "procps-ng", "apk": "procps-ng"}),
     ("runuser", True, "launch apps as your user", "util-linux", {}),
     ("pkexec", True, "graphical privilege prompt", "policykit-1",
      {"pacman": "polkit", "dnf": "polkit", "zypper": "polkit", "apk": "polkit"}),

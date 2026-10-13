@@ -5,12 +5,16 @@
 BUNDLE_DIST := $(CURDIR)/build-dist
 BUNDLE_WORK := $(CURDIR)/build-work
 
+# Keep PyInstaller's cache inside the build tree: sbuild/pbuilder have no usable $HOME.
+export PYINSTALLER_CONFIG_DIR := $(CURDIR)/build-work/pyi-config
+
 %:
 	dh $@
 
 override_dh_auto_configure:
 
 override_dh_auto_build:
+	mkdir -p $(PYINSTALLER_CONFIG_DIR)
 	pyinstaller intermux_linux.spec --noconfirm \
 		--distpath $(BUNDLE_DIST) --workpath $(BUNDLE_WORK)
 
@@ -33,10 +37,19 @@ override_dh_auto_install:
 	install -Dm644 packaging/linux/intermux-watch.service \
 		debian/intermux/usr/lib/systemd/system/intermux-watch.service
 
+# Enable and start the routing watcher on install (adds the enable/start
+# snippets to the maintainer scripts) and restart it on upgrade.
+override_dh_installsystemd:
+	dh_installsystemd intermux-watch.service
+
 # Stripping or rewriting dependencies breaks the PyInstaller bundle
 override_dh_strip:
 
 override_dh_shlibdeps:
+
+override_dh_makeshlibs:
+
+override_dh_dwz:
 
 override_dh_auto_clean:
 	rm -rf $(BUNDLE_DIST) $(BUNDLE_WORK)

@@ -33,6 +33,42 @@ class PackagingTests(unittest.TestCase):
                     "install.sh"):
             self.assertIn("intermux-watch.service", (ROOT / rel).read_text(), rel)
 
+    def test_debian_native_version_has_no_revision(self) -> None:
+        self.assertIn("native", (ROOT / "packaging/debian/source/format").read_text())
+        first = (ROOT / "packaging/debian/changelog").read_text().splitlines()[0]
+        self.assertRegex(first, r"^intermux \(\d+(\.\d+)*\) ")
+
+    def test_pyinstaller_pins_match(self) -> None:
+        install = re.search(r'PYINSTALLER_VERSION="([\d.]+)"', (ROOT / "install.sh").read_text())
+        self.assertIsNotNone(install)
+        workflow = (ROOT / ".github/workflows/build_linux.yml").read_text()
+        self.assertIn("pyinstaller==" + install.group(1), workflow)
+
+    def test_builds_do_not_need_home(self) -> None:
+        for rel in ("packaging/debian/rules", "packaging/fedora/intermux.spec", "packaging/arch/PKGBUILD",
+                    "install.sh"):
+            self.assertIn("PYINSTALLER_CONFIG_DIR", (ROOT / rel).read_text(), rel)
+
+    def test_watcher_is_enabled_by_arch_and_fedora(self) -> None:
+        self.assertIn("systemctl enable --now intermux-watch", (ROOT / "packaging/arch/intermux.install").read_text())
+        self.assertIn("enable intermux-watch.service", (ROOT / "packaging/linux/intermux-watch.preset").read_text())
+        self.assertIn("%systemd_post intermux-watch.service", (ROOT / "packaging/fedora/intermux.spec").read_text())
+
+    def test_no_bashisms_in_rpm_scriptlets(self) -> None:
+        self.assertNotIn("&>", (ROOT / "packaging/fedora/intermux.spec").read_text())
+
+    def test_install_script_trust_and_preflight(self) -> None:
+        text = (ROOT / "install.sh").read_text()
+        self.assertIn("--allow-local-bundle", text)
+        self.assertIn("import tkinter", text)
+        self.assertIn("/run/systemd/system", text)
+        self.assertNotIn("command -v systemctl", text)
+
+    def test_release_tarball_ships_install_files(self) -> None:
+        text = (ROOT / ".github/workflows/build_linux.yml").read_text()
+        for needle in ("install.sh", "uninstall.sh", "README.md", "packaging/linux", "README-install.txt"):
+            self.assertIn(needle, text)
+
 
 if __name__ == "__main__":
     unittest.main()

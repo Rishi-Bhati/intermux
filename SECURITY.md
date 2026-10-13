@@ -46,6 +46,6 @@ Protections in the helper:
 ### Network Requests
 
 - **Verify contacts a public IP service.** The Verify action sends a request to `https://api.ipify.org` from inside the selected interface's network namespace, so that service sees the public IP address of that connection. Nothing else in InterMux contacts this address.
-- **The report button does not upload anything.** "Save bug report" only writes a zip to your own disk (default `~/intermux-reports`), and "Open reporting portal" only opens the portal page in your browser, where you upload the zip yourself. No credentials are bundled with InterMux. `intermux/report.py` has an optional API submit function that reads a token from `INTERMUX_REPORTARY_TOKEN` and refuses redirects, but the GUI does not call it.
+- **The report button does not upload anything.** "Save bug report" only writes a zip to your own disk (default `~/intermux-reports`), and "Open reporting portal" only opens the portal page in your browser, where you upload the zip yourself. No credentials are bundled with InterMux.
 
 If you find a case where any of these protections can be bypassed, please report it as described above.

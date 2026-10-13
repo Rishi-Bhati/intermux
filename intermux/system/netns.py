@@ -12,7 +12,6 @@ import socket
 import struct
 import threading
 import time
-from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 from intermux import config

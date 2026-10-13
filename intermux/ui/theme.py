@@ -38,7 +38,6 @@ COMBO_ARROW = PALETTE["text"]  # dropdown arrow colour; contrasts with surface_a
 SPACE_OUTER = 24   # window padding
 SPACE_CARD_GAP = 16  # between cards
 SPACE_INNER = 12   # inside cards
-BUTTON_MIN_HEIGHT = 34
 BUTTON_PAD_X = 14
 CHECK_SIZE = 16
 CHECK_GAP = 8  # transparent strip right of the indicator, so the label does not touch the box

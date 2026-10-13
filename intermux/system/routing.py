@@ -5,16 +5,13 @@ import logging
 from ipaddress import IPv4Network
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
-from intermux.config import PRIORITY_BASE, SUBNET_BASE_OCTET, TABLE_BASE
+from intermux.config import PRIORITY_BASE, TABLE_BASE
 from intermux.errors import SystemCommandError
-from intermux.system.commands import CmdResult, json_cmd, run, run_checked, which
+from intermux.subnets import POOL
+from intermux.system.commands import CmdResult, ip_bin, json_cmd, run, run_checked
 
 log = logging.getLogger("intermux.routing")
 
-IP = which("ip") or "/usr/sbin/ip"
-POOL = IPv4Network(f"10.{SUBNET_BASE_OCTET}.0.0/16")
-_PRIORITY_MIN = PRIORITY_BASE + 1
-_PRIORITY_MAX = PRIORITY_BASE + 254
 _RULE_MISSING = "No such"
 _FLUSH_MISSING = "FIB table does not exist"
 
@@ -91,7 +88,7 @@ def _run_tolerating(argv: List[str], markers: tuple) -> CmdResult:
 
 def list_rules() -> List[Dict[str, Any]]:
     """All ip rules as parsed by `ip -j rule show`; [] on failure."""
-    data = json_cmd([IP, "-j", "rule", "show"])
+    data = json_cmd([ip_bin(), "-j", "rule", "show"])
     if not isinstance(data, list):
         return []
     return [rule for rule in data if isinstance(rule, dict)]
@@ -147,7 +144,7 @@ def stray_routes(routes: Iterable[Any], subnet: IPv4Network, iface: str, gateway
 
 def route_del_args(route: Dict[str, Any], table: int) -> List[str]:
     """`ip route del` arguments for one entry of `ip -j route show table T`."""
-    argv = [IP, "route", "del"]
+    argv = [ip_bin(), "route", "del"]
     kind = route.get("type")
     if isinstance(kind, str) and kind not in ("", "unicast"):
         argv.append(kind)
@@ -171,37 +168,37 @@ def ensure_policy(subnet: IPv4Network, iface: str, table: int, priority: int, ga
     strict rp_filter rejects the namespace's ARP for its gateway and host-generated ICMP leaves by the uplink.
     New routes are added before stray ones are deleted, so the table is never empty while apps run."""
     if host_veth:
-        run_checked([IP, "route", "replace", str(subnet), "dev", host_veth, "scope", "link",
+        run_checked([ip_bin(), "route", "replace", str(subnet), "dev", host_veth, "scope", "link",
                      "src", str(subnet.network_address + 1), "table", str(table)])
-    route = [IP, "route", "replace", "default"]
+    route = [ip_bin(), "route", "replace", "default"]
     if gateway:
         route += ["via", gateway]
     route += ["dev", iface, "table", str(table), "metric", str(_ROUTE_METRIC)]
     run_checked(route)
-    run_checked([IP, "route", "replace", "unreachable", "default",
+    run_checked([ip_bin(), "route", "replace", "unreachable", "default",
                  "metric", str(_BLACKHOLE_METRIC), "table", str(table)])
-    for stray in stray_routes(json_cmd([IP, "-j", "route", "show", "table", str(table)]), subnet, iface,
+    for stray in stray_routes(json_cmd([ip_bin(), "-j", "route", "show", "table", str(table)]), subnet, iface,
                               gateway, host_veth):
         run(route_del_args(stray, table), tolerate=("No such process",))
     if not any(rule_matches(rule, subnet, table, priority) for rule in list_rules()):
-        run_checked([IP, "rule", "add", "from", str(subnet), "lookup", str(table), "priority", str(priority)])
+        run_checked([ip_bin(), "rule", "add", "from", str(subnet), "lookup", str(table), "priority", str(priority)])
 
 
 def policy_route_present(table: int, subnet: IPv4Network, iface: str, gateway: Optional[str],
                          host_veth: Optional[str] = None) -> bool:
     """True when `table` holds exactly the routes ensure_policy adds. The kernel deletes the interface route
     when the link goes down or loses its address (Wi-Fi roam, tether re-plug); only the fallback is left then."""
-    return policy_table_ok(json_cmd([IP, "-j", "route", "show", "table", str(table)]), subnet, iface, gateway,
+    return policy_table_ok(json_cmd([ip_bin(), "-j", "route", "show", "table", str(table)]), subnet, iface, gateway,
                            host_veth)
 
 
 def remove_policy(subnet: IPv4Network, table: int, priority: int) -> None:
     """Delete the from-subnet rule and flush its table. Missing rules or tables are not errors."""
-    run([IP, "rule", "del", "from", str(subnet), "lookup", str(table), "priority", str(priority)],
+    run([ip_bin(), "rule", "del", "from", str(subnet), "lookup", str(table), "priority", str(priority)],
         tolerate=(_RULE_MISSING,))
     flush_table(table)
 
 
 def flush_table(table: int) -> None:
     """Flush all routes in `table`; a table that does not exist is not an error."""
-    _run_tolerating([IP, "route", "flush", "table", str(table)], (_FLUSH_MISSING,))
+    _run_tolerating([ip_bin(), "route", "flush", "table", str(table)], (_FLUSH_MISSING,))

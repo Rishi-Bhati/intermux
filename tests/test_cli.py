@@ -27,14 +27,12 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(args.iface, "wlan0")
         self.assertFalse(args.separate_profile)
         self.assertFalse(args.close_existing)
-        self.assertFalse(args.allow_unsupported)
 
     def test_bind_flags(self):
         args = _parse(["bind", "--app", "/usr/bin/firefox", "--iface", "eth0",
-                       "--separate-profile", "--allow-unsupported"])
+                       "--separate-profile"])
         self.assertTrue(args.separate_profile)
         self.assertFalse(args.close_existing)
-        self.assertTrue(args.allow_unsupported)
 
     def test_bind_separate_and_close_are_exclusive(self):
         with self.assertRaises(SystemExit):
@@ -180,3 +178,29 @@ class ResetReportTests(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("firefox", out)
 
+
+
+class StillRunningReportTests(unittest.TestCase):
+    def _run(self, argv, data):
+        import io
+
+        out = io.StringIO()
+        with mock.patch("intermux.helper.client.call", return_value=data), \
+             mock.patch("intermux.cli._resolve_app", return_value="/usr/bin/x"), mock.patch("sys.stdout", out):
+            rc = cli.main(argv)
+        return rc, out.getvalue()
+
+    def test_release_with_survivors_warns(self):
+        rc, out = self._run(["release", "abc"], {"released": [1], "still_running": [7, 8]})
+        self.assertEqual(rc, 1)
+        self.assertIn("7, 8", out)
+
+    def test_release_clean(self):
+        rc, _ = self._run(["release", "abc"], {"released": [1], "still_running": []})
+        self.assertEqual(rc, 0)
+
+    def test_stop_and_kill_with_survivors(self):
+        for argv in (["stop", "--app", "x", "--iface", "wlan0"], ["kill", "--app", "x"]):
+            rc, out = self._run(argv, {"stopped": [], "still_running": [9]})
+            self.assertEqual(rc, 1, argv)
+            self.assertIn("9", out)

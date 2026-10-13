@@ -1,11 +1,11 @@
-"""Local bug report bundles that can be uploaded to the web portal.
+"""Local bug report zip that can be uploaded to the web portal.
 
-A bundle is one Markdown file: the report fields plus diagnostic details
-(versions, interfaces, bindings, tools and recent logs). It is written to the
-user's own folder. This module never sends anything over the network.
+The zip holds a Markdown system report (versions, interfaces, bindings and tools) and the
+recent app logs. It is written to the user's own folder. This module never sends anything
+over the network.
 
-Home directory paths are replaced with "~" in the log excerpts, but the file
-can still contain app names and log lines, so users should review it first.
+Home directory paths are replaced with "~" and addresses are scrubbed, but the files can
+still contain app names and log lines, so users should review them first.
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ import logging
 import os
 import platform
 import re
+import stat
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from intermux import report
 from intermux.config import VERSION
 
 log = logging.getLogger("intermux.bugreport")
@@ -27,6 +27,7 @@ REPORT_DIR_NAME = "intermux-reports"
 LOG_DIR_REL = Path(".local/state/intermux/logs")
 LOG_FILES_TO_INCLUDE = 3
 LOG_LINES_PER_FILE = 60
+LOG_TAIL_BYTES = 256 * 1024
 
 
 def default_report_dir() -> Path:
@@ -120,13 +121,47 @@ def _log_files(log_dir: Path) -> List[Path]:
         return []
 
 
+def _read_log_tail(path: Path, max_lines: int, max_bytes: int = LOG_TAIL_BYTES) -> Optional[List[str]]:
+    """Last max_lines lines from the final max_bytes of a regular file; None if it is unsafe or unreadable.
+
+    Symlinks, FIFOs and other non-regular files are skipped. Only the tail is read.
+    """
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            return None
+        start = max(0, st.st_size - max_bytes)
+        os.lseek(fd, start, os.SEEK_SET)
+        chunks = []
+        remaining = max_bytes
+        while remaining > 0:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+    text = b"".join(chunks).decode("utf-8", errors="replace")
+    lines = text.splitlines()
+    if start > 0 and lines:
+        lines = lines[1:]  # the first line may be cut in half
+    return lines[-max_lines:]
+
+
 def _recent_logs(home: str) -> List[Dict[str, Any]]:
     files = _log_files(Path(home) / LOG_DIR_REL)
     excerpts = []
     for path in files[:LOG_FILES_TO_INCLUDE]:
-        try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-LOG_LINES_PER_FILE:]
-        except OSError:
+        lines = _read_log_tail(path, LOG_LINES_PER_FILE)
+        if lines is None:
             continue
         text = scrub_text("\n".join(lines), home, _current_user())
         excerpts.append({"file": path.name, "text": text})
@@ -148,16 +183,20 @@ _IPV4_RE = re.compile(
 )
 _HOME_RE = re.compile(r"/home/[^/\s]+/")
 _RUN_USER_RE = re.compile(r"/run/user/[0-9]+")
+_URL_QUERY_RE = re.compile(r"(https?://[^\s?#\"'<>]*)\?[^\s\"'<>]*", re.IGNORECASE)
+_TOKEN_RE = re.compile(r"\br[sp]k_[0-9A-Fa-f]+")
 
 
 def scrub_text(text: str, home: Optional[str], username: Optional[str]) -> str:
-    """Remove personal data: home path, user name, IP and MAC addresses."""
+    """Remove personal data: home path, user name, IP and MAC addresses, URL queries and report tokens."""
     if home:
         text = text.replace(home, "~")
     text = _HOME_RE.sub("/home/USER/", text)
     text = _RUN_USER_RE.sub("/run/user/UID", text)
     if username and len(username) >= 2:
         text = re.sub(rf"(?<![0-9A-Za-z_]){re.escape(username)}(?![0-9A-Za-z_])", "USER", text)
+    text = _TOKEN_RE.sub("TOKEN", text)
+    text = _URL_QUERY_RE.sub(r"\1?QUERY", text)
     text = _MAC_RE.sub("xx:xx:xx:xx:xx:xx", text)
     text = _IPV6_RE.sub("x:x:x", text)
     text = _IPV4_RE.sub("x.x.x.x", text)
@@ -298,35 +337,12 @@ def write_bug_zip(directory: Optional[Path] = None, home: Optional[str] = None) 
     with os.fdopen(fd, "wb") as handle, zipfile.ZipFile(handle, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("system-report.md", summary)
         for log_path in log_files:
-            try:
-                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
+            lines = _read_log_tail(log_path, LOG_LINES_IN_ZIP)
+            if lines is None:
                 continue
-            text = scrub_text("\n".join(lines[-LOG_LINES_IN_ZIP:]), home, user)
+            text = scrub_text("\n".join(lines), home, user)
             archive.writestr(f"logs/{log_path.name}", text + "\n")
         if not log_files:
             archive.writestr("logs/README.txt", "No app log files were found.\n")
     return path
 
-
-def write_bug_report(*, title: Optional[str], description: Optional[str], report_type: str = "bug",
-                     impact: Optional[str] = None, frequency: Optional[str] = None,
-                     steps: Optional[str] = None, directory: Optional[Path] = None,
-                     include_logs: bool = True) -> Path:
-    """Validate the fields, collect diagnostics and write the bundle. Returns the file path."""
-    payload = report.build_payload(
-        title=title, description=description, report_type=report_type,
-        impact=impact, frequency=frequency, steps=steps)
-    created = time.strftime("%Y-%m-%d %H:%M:%S %Z")
-    diagnostics = collect_diagnostics(include_logs=include_logs)
-    text = build_markdown(payload, diagnostics, created)
-
-    target_dir = directory or default_report_dir()
-    target_dir.mkdir(parents=True, exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    path = target_dir / f"intermux-report-{stamp}-{payload['report_type']}.md"
-    # Written with owner-only permissions: the bundle can contain log lines.
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        handle.write(text)
-    return path

@@ -26,8 +26,6 @@ class LaunchContext:
 
 class AppHandler:
     name: str = "generic"
-    supported: bool = True
-    unsupported_reason: str = ""
 
     def comm_names(self, app_path: str) -> List[str]:
         """Process names (comm) used to recognise running instances of the app."""
@@ -57,11 +55,16 @@ CHROMIUM_FAMILIES = (
 )
 
 
+def _name_matches(base: str, name: str) -> bool:
+    """Exact basename, or the name followed by a hyphen or dot (brave-origin, chromium-browser)."""
+    return base == name or base.startswith((name + "-", name + "."))
+
+
 def chromium_family(app_path: str) -> Tuple[str, Tuple[str, ...]]:
     """(family, process names) for a Chromium-family binary; the family is "chromium" if unknown. Pure."""
     base = os.path.basename(app_path).lower()
     for prefix, family, names in CHROMIUM_FAMILIES:
-        if base.startswith(prefix):
+        if _name_matches(base, prefix):
             return family, names
     return "chromium", ()
 
@@ -72,8 +75,6 @@ class ChromiumHandler(AppHandler):
     --user-data-dir, so the new process is a real second instance that stays inside the namespace."""
 
     name = "chromium"
-    supported = True
-    unsupported_reason = ""
 
     def __init__(self, app_path: str = "") -> None:
         self.family = chromium_family(app_path)[0]
@@ -127,6 +128,6 @@ def get_handler(app_path: str) -> AppHandler:
     base = os.path.basename(app_path).lower()
     if "firefox" in base:
         return FirefoxHandler()
-    if base.startswith(CHROMIUM_NAMES):
+    if any(_name_matches(base, n) for n in CHROMIUM_NAMES):
         return ChromiumHandler(app_path)
     return AppHandler()

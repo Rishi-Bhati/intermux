@@ -144,7 +144,7 @@ def _nft_bin() -> str:
 
 
 def _ip_bin() -> str:
-    return commands.which("ip") or "/usr/sbin/ip"
+    return commands.ip_bin()
 
 
 def apply_nft(slot: int, group_rel: str, iface: str) -> None:
@@ -178,8 +178,35 @@ def list_nft_tables() -> List[str]:
     return names
 
 
-def _rule_exists(slot: int) -> bool:
-    data = commands.json_cmd([_ip_bin(), "-j", "rule", "show"])
+_ROUTE_METRIC = 100          # the interface default; wins while the link is up
+_BLACKHOLE_METRIC = 1000     # kill switch: drop instead of falling through to the main table
+_V6_MISSING = _IP_MISSING + ("Address family not supported", "Operation not supported",
+                             "Protocol not supported", "RTNETLINK answers: Not supported")
+
+
+def rule_args(slot: int, family: int = 4, action: str = "add") -> List[str]:
+    """argv (without the ip binary) for the slot's fwmark rule; family 6 adds the `-6` flag."""
+    argv = ["-6"] if family == 6 else []
+    return argv + ["rule", action, "fwmark", hex(slot_mark(slot)), "lookup", str(slot_table(slot)),
+                   "priority", str(slot_priority(slot))]
+
+
+def route_commands(slot: int, iface: str, gateway: Optional[str]) -> List[List[str]]:
+    """argv lists (without the ip binary) that fill the slot's tables: IPv4 interface default at metric 100,
+    IPv4 unreachable fallback at metric 1000, and an IPv6 unreachable default (no IPv6 leak)."""
+    table = str(slot_table(slot))
+    route = ["route", "replace", "default"]
+    if gateway:
+        route += ["via", gateway]
+    route += ["dev", iface, "table", table, "metric", str(_ROUTE_METRIC)]
+    return [
+        route,
+        ["route", "replace", "unreachable", "default", "metric", str(_BLACKHOLE_METRIC), "table", table],
+        ["-6", "route", "replace", "unreachable", "default", "table", table],
+    ]
+
+
+def _has_rule(data: Any, slot: int) -> bool:
     if not isinstance(data, list):
         return False
     mark = slot_mark(slot)
@@ -196,29 +223,93 @@ def _rule_exists(slot: int) -> bool:
     return False
 
 
+def _rule_exists(slot: int, family: int = 4) -> bool:
+    argv = [_ip_bin()] + (["-6"] if family == 6 else []) + ["-j", "rule", "show"]
+    return _has_rule(commands.json_cmd(argv), slot)
+
+
+def table_ok(routes: Any, iface: str, gateway: Optional[str]) -> bool:
+    """True when `ip -j route show table T` holds the interface default and the unreachable fallback."""
+    if not isinstance(routes, list):
+        return False
+    have_iface = have_fallback = False
+    for r in routes:
+        if not isinstance(r, dict) or r.get("dst") != "default":
+            continue
+        if r.get("type") == "unreachable":
+            have_fallback = True
+        elif r.get("dev") == iface and (r.get("gateway") or None) == (gateway or None):
+            have_iface = True
+    return have_iface and have_fallback
+
+
+def _v6_step(argv: List[str]) -> None:
+    """Run an IPv6 command; a host without IPv6 support has nothing to leak, so that is not an error."""
+    commands.run_checked(argv, tolerate=_V6_MISSING)
+
+
 def apply_policy(slot: int, iface: str, gateway: Optional[str]) -> None:
-    """Add the fwmark rule and the default route in the slot's table."""
+    """Install the fwmark rules (IPv4, plus an IPv6 blackhole) and the slot's routes. Safe to repeat."""
     if not isinstance(iface, str) or not _IFACE_RE.match(iface):
         raise ValidationError(f"unsafe interface name: {iface!r}")
     ip = _ip_bin()
     if not _rule_exists(slot):
-        commands.run_checked([ip, "rule", "add", "fwmark", hex(slot_mark(slot)), "lookup",
-                              str(slot_table(slot)), "priority", str(slot_priority(slot))])
-    route = [ip, "route", "replace", "default"]
-    if gateway:
-        route += ["via", gateway]
-    route += ["dev", iface, "table", str(slot_table(slot))]
-    commands.run_checked(route)
+        commands.run_checked([ip] + rule_args(slot))
+    for argv in route_commands(slot, iface, gateway):
+        if argv[0] == "-6":
+            _v6_step([ip] + argv)
+        else:
+            commands.run_checked([ip] + argv)
+    try:
+        v6_rule = _rule_exists(slot, 6)
+    except Exception as exc:  # noqa: BLE001 - IPv6 may be disabled
+        log.warning("cannot list IPv6 rules: %s", exc)
+        return
+    if not v6_rule:
+        _v6_step([ip] + rule_args(slot, 6))
+
+
+def refresh_policy(slot: int, iface: str, gateway: Optional[str]) -> bool:
+    """Re-add the slot's routes and rules when the kernel dropped them (link flap). True if it re-applied."""
+    ip = _ip_bin()
+    try:
+        routes = commands.json_cmd([ip, "-j", "route", "show", "table", str(slot_table(slot))])
+        healthy = table_ok(routes, iface, gateway) and _rule_exists(slot) and _rule_exists(slot, 6)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("cannot inspect adoption table %d: %s", slot_table(slot), exc)
+        return False
+    if healthy:
+        return False
+    apply_policy(slot, iface, gateway)
+    return True
+
+
+def refresh_adoptions(adoptions: Iterable[Any], interfaces: Any) -> List[int]:
+    """Refresh every adoption whose interface is present and bindable. `interfaces` maps name -> object with
+    `.bindable` and `.gateways`. Down interfaces stay on the unreachable fallback. Returns refreshed slots."""
+    done: List[int] = []
+    for a in adoptions:
+        interface = interfaces.get(a.iface)
+        if interface is None or not getattr(interface, "bindable", False):
+            continue
+        gateways = getattr(interface, "gateways", None) or []
+        try:
+            if refresh_policy(a.slot, a.iface, gateways[0] if gateways else None):
+                done.append(a.slot)
+                log.info("re-added the adoption route for %s", a.iface)
+        except Exception as exc:  # noqa: BLE001 - one bad adoption must not stop the rest
+            log.warning("cannot refresh adoption %s: %s", a.slot, exc)
+    return done
 
 
 def remove_policy(slot: int) -> None:
-    """Remove the slot's ip rule and flush its route table; missing entries are fine."""
+    """Remove the slot's ip rules (IPv4 and IPv6) and flush its tables; missing entries are fine."""
     ip = _ip_bin()
-    commands.run_checked([ip, "rule", "del", "fwmark", hex(slot_mark(slot)), "lookup",
-                          str(slot_table(slot)), "priority", str(slot_priority(slot))],
-                         tolerate=_IP_MISSING)
-    commands.run_checked([ip, "route", "flush", "table", str(slot_table(slot))],
-                         tolerate=_IP_MISSING)
+    table = str(slot_table(slot))
+    commands.run_checked([ip] + rule_args(slot, 4, "del"), tolerate=_IP_MISSING)
+    commands.run_checked([ip, "route", "flush", "table", table], tolerate=_IP_MISSING)
+    commands.run_checked([ip] + rule_args(slot, 6, "del"), tolerate=_V6_MISSING)
+    commands.run_checked([ip, "-6", "route", "flush", "table", table], tolerate=_V6_MISSING)
 
 
 def leftover_rules(rules: Any) -> List[dict]:
@@ -238,6 +329,27 @@ def leftover_rules(rules: Any) -> List[dict]:
                 and MARK_BASE + SLOT_MIN <= fw <= MARK_BASE + SLOT_MAX):
             found.append(rule)
     return found
+
+
+def _sweep_v6() -> None:
+    """Delete leftover IPv6 adoption rules and flush their tables; listed separately so they go even when
+    the IPv4 rule is already gone. Never raises."""
+    ip = _ip_bin()
+    try:
+        rules = leftover_rules(commands.json_cmd([ip, "-6", "-j", "rule", "show"]))
+    except Exception as exc:  # noqa: BLE001 - IPv6 may be disabled
+        log.debug("cannot list IPv6 rules: %s", exc)
+        return
+    for rule in rules:
+        try:
+            fw = int(str(rule["fwmark"]).split("/")[0], 0)
+            prio = int(rule["priority"])
+            table = int(str(rule.get("table")))
+            _v6_step([ip, "-6", "rule", "del", "fwmark", hex(fw), "lookup", str(table), "priority", str(prio)])
+            if TABLE_BASE + SLOT_MIN <= table <= TABLE_BASE + SLOT_MAX:
+                _v6_step([ip, "-6", "route", "flush", "table", str(table)])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("cannot delete leftover IPv6 rule %r: %s", rule, exc)
 
 
 def sweep_leftovers() -> None:
@@ -274,6 +386,7 @@ def sweep_leftovers() -> None:
             commands.run_checked([ip, "route", "flush", "table", str(table)], tolerate=_IP_MISSING)
         except Exception as exc:  # noqa: BLE001
             log.warning("cannot flush table %d: %s", table, exc)
+    _sweep_v6()
     try:
         for d in sorted((Path(CGROUP_ROOT) / GROUP_PARENT).glob("adopt-*")):
             try:

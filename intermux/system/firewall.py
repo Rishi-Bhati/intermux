@@ -7,14 +7,13 @@ from ipaddress import IPv4Network
 from pathlib import Path
 from typing import List, NamedTuple, Optional, Tuple
 
-from intermux.config import SUBNET_BASE_OCTET
 from intermux.errors import MissingToolError, ValidationError
+from intermux.subnets import POOL
 from intermux.system.commands import run, run_checked, which
 
 log = logging.getLogger("intermux.firewall")
 
 IP_FORWARD_PATH = Path("/proc/sys/net/ipv4/ip_forward")
-POOL = IPv4Network(f"10.{SUBNET_BASE_OCTET}.0.0/16")
 _IPTABLES_CANDIDATES = ("iptables", "iptables-nft", "iptables-legacy")
 _NAT_CHAINS = frozenset({"PREROUTING", "POSTROUTING"})
 _MISSING_RULE = ("does a matching rule exist", "Bad rule")

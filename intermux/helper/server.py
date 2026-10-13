@@ -90,7 +90,6 @@ def _run_batch(ops: Sequence[Dict[str, Any]], user: "session.UserInfo") -> list:
                     user=user,
                     env=_sanitize_bind_env(op["env"], user),
                     running_policy=op["running_policy"],
-                    allow_unsupported=op["allow_unsupported"],
                 )
             else:
                 data = engine.adopt(op["iface"], op["app"], user=user)
@@ -98,6 +97,10 @@ def _run_batch(ops: Sequence[Dict[str, Any]], user: "session.UserInfo") -> list:
         except InterMuxError as exc:
             log.warning("batch %s %s failed: %s", kind, op["app"], exc.message)
             results.append({"ok": False, "error": {"code": exc.code, "message": exc.message, "data": exc.data}})
+        except Exception:  # noqa: BLE001 - one op's unexpected failure must not lose the other results
+            log.exception("batch %s %s failed unexpectedly", kind, op["app"])
+            results.append({"ok": False, "error": {"code": "internal",
+                                                   "message": "internal error; see the helper log", "data": None}})
     return results
 
 
@@ -117,7 +120,6 @@ def _dispatch(action: str, params: Dict[str, Any], user: Optional["session.UserI
                 user=user,
                 env=env,
                 running_policy=params["running_policy"],
-                allow_unsupported=params["allow_unsupported"],
             )
         if action == "stop_app":
             return engine.stop_app(params["iface"], params["app"], uid=user.uid)

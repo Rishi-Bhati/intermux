@@ -81,7 +81,7 @@ def _v_policy(name: str, value: Any) -> str:
     return value
 
 
-def _v_env(name: str, value: Any) -> Dict[str, str]:
+def _v_env(_name: str, value: Any) -> Dict[str, str]:
     return validate_env(value)
 
 
@@ -92,7 +92,6 @@ _PARAM_SPECS: Dict[str, Dict[str, Tuple[Callable[[str, Any], Any], Any]]] = {
         "iface": (_v_iface, _REQUIRED),
         "app": (_v_app, _REQUIRED),
         "running_policy": (_v_policy, "ask"),
-        "allow_unsupported": (_v_bool, False),
         "env": (_v_env, {}),
     },
     "stop_app": {

@@ -1,4 +1,4 @@
-intermux (2.0.0-1) UNRELEASED; urgency=medium
+intermux (2.0.0) UNRELEASED; urgency=medium
 
   * Initial packaging (starting point, untested).
 

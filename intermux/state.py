@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+import ipaddress
 import json
 import logging
 import os
@@ -12,11 +13,25 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
-from intermux.config import LOCK_FILE, STATE_FILE
+from intermux.config import LOCK_FILE, STATE_FILE, SUBNET_BASE_OCTET
 
 log = logging.getLogger("intermux.state")
 
 _REQUIRED_BINDING_KEYS = ("iface", "app", "namespace", "subnet", "table", "priority")
+_POOL = ipaddress.IPv4Network(f"10.{SUBNET_BASE_OCTET}.0.0/16")
+_MAX_TABLE = 0x7FFFFFFF
+_MAX_PRIORITY = 32765
+
+
+def valid_pool_subnet(value: Any) -> bool:
+    """True when value is a canonical /24 inside the InterMux pool with third octet 1..254."""
+    if not isinstance(value, str):
+        return False
+    try:
+        net = ipaddress.IPv4Network(value, strict=True)
+    except ValueError:
+        return False
+    return net.prefixlen == 24 and net.subnet_of(_POOL) and 1 <= net.network_address.packed[2] <= 254
 
 
 @dataclass
@@ -31,6 +46,7 @@ class Binding:
     profile_mode: str = "default"    # "default" | "separate"
     log_path: str = ""
     created_at: str = ""             # ISO 8601 UTC
+    pid: Optional[int] = None        # pid of the launched process (session leader); None in old state
 
 
 @dataclass
@@ -90,7 +106,7 @@ def state_from_dict(data: Dict[str, Any]) -> State:
     raw_subnets = data.get("subnets")
     if isinstance(raw_subnets, dict):
         for iface, cidr in raw_subnets.items():
-            if isinstance(iface, str) and isinstance(cidr, str):
+            if isinstance(iface, str) and valid_pool_subnet(cidr):
                 subnets[iface] = cidr
             else:
                 log.warning("ignoring malformed subnet entry: %r -> %r", iface, cidr)
@@ -142,6 +158,21 @@ def _binding_from_dict(item: Any) -> Optional[Binding]:
     except (TypeError, ValueError):
         log.warning("ignoring binding with non-integer table/priority: %r", item)
         return None
+    if not valid_pool_subnet(item["subnet"]):
+        log.warning("ignoring binding with invalid subnet: %r", item)
+        return None
+    if not 1 <= table <= _MAX_TABLE or not 1 <= priority <= _MAX_PRIORITY:
+        log.warning("ignoring binding with out-of-range table/priority: %r", item)
+        return None
+    raw_pid = item.get("pid")
+    pid: Optional[int] = None
+    if raw_pid is not None and not isinstance(raw_pid, bool):
+        try:
+            pid = int(raw_pid)
+        except (TypeError, ValueError):
+            pid = None
+        if pid is not None and pid <= 1:
+            pid = None
     app = str(item["app"])
     return Binding(
         iface=str(item["iface"]),
@@ -154,6 +185,7 @@ def _binding_from_dict(item: Any) -> Optional[Binding]:
         profile_mode=str(item.get("profile_mode") or "default"),
         log_path=str(item.get("log_path") or ""),
         created_at=str(item.get("created_at") or ""),
+        pid=pid,
     )
 
 

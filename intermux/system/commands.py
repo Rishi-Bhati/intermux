@@ -19,6 +19,11 @@ NOT_FOUND_RETURNCODE = 127
 TIMEOUT_RETURNCODE = 124
 
 
+def ip_bin() -> str:
+    """Path of the ip tool, looked up when called so tests and PATH changes are honoured."""
+    return which("ip") or "/usr/sbin/ip"
+
+
 @dataclass
 class CmdResult:
     argv: List[str]

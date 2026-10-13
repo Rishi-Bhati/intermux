@@ -1,6 +1,5 @@
 # Maintainer: TODO <name and email>
-# Starting point, untested. The source URL below is a placeholder for the
-# release tarball; set it (and the checksum) before building.
+# Starting point, untested. The source is the GitHub tag tarball for v$pkgver.
 pkgname=intermux
 pkgver=2.0.0
 pkgrel=1
@@ -8,16 +7,23 @@ pkgdesc="Bind individual applications to specific network interfaces"
 arch=('x86_64' 'aarch64')
 url="https://github.com/Rishi-Bhati/intermux"
 license=('MIT')
-depends=('iproute2' 'iptables' 'polkit' 'util-linux' 'procps-ng' 'xdg-utils')
+depends=('iproute2' 'iptables' 'polkit' 'util-linux' 'procps-ng' 'xdg-utils' 'glibc')
 # tk: PyInstaller needs the Tcl/Tk libraries (tkinter) at build time to bundle the GUI
 makedepends=('python-pyinstaller' 'tk')
+optdepends=('nftables: route already-running apps'
+            'curl: public IP check')
+install=intermux.install
 # !strip: stripping breaks the PyInstaller bundle
-options=('!strip')
+options=('!strip' '!debug')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+# SKIP is a placeholder: replace it with the real SHA-256 of the release
+# tarball (updpkgsums) before publishing this package.
 sha256sums=('SKIP')
 
 build() {
     cd "$srcdir/$pkgname-$pkgver"
+    # Keep PyInstaller's cache in the build tree (no $HOME in clean chroots)
+    export PYINSTALLER_CONFIG_DIR="$srcdir/pyi-config"
     pyinstaller intermux_linux.spec --noconfirm \
         --distpath "$srcdir/dist" --workpath "$srcdir/build"
 }
@@ -45,5 +51,7 @@ package() {
     # Watcher that resets routing when routed apps exit (enable: systemctl enable --now intermux-watch)
     install -Dm644 "$src/packaging/linux/intermux-watch.service" \
         "$pkgdir/usr/lib/systemd/system/intermux-watch.service"
+    install -Dm644 "$src/packaging/linux/intermux-watch.preset" \
+        "$pkgdir/usr/lib/systemd/system-preset/90-intermux.preset"
     install -Dm644 "$src/license" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
