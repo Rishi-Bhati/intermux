@@ -12,7 +12,7 @@
 
 Please send every bug report and security concern through the InterMux reporting portal:
 
-**https://reportary.onrender.com/p/nWQbq2dDTlsy89u6XBWG2UV0pz9-vQuR_WnRuU7U7bWUMVi5rqRlwDxhs8j_w6r9/**
+**[InterMux reporting portal](https://reportary.onrender.com/p/nWQbq2dDTlsy89u6XBWG2UV0pz9-vQuR_WnRuU7U7bWUMVi5rqRlwDxhs8j_w6r9/)**
 
 How to report:
 
@@ -24,7 +24,7 @@ Before you upload, look through the zip. It holds logs and system details. Inter
 
 **Exception:** if a problem would let an unprivileged user gain root or run commands as another user, do not post it on the portal before it is fixed. Report it privately through GitHub security advisories instead:
 
-1. Go to https://github.com/Rishi-Bhati/intermux/security/advisories/new
+1. Open the [private security advisory form](https://github.com/Rishi-Bhati/intermux/security/advisories/new)
 2. Describe the problem, the steps to reproduce it, the affected version, and your distribution.
 
 This is a small project maintained on a best-effort basis. Confirmed issues are fixed before public disclosure.
