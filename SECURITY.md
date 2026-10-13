@@ -22,12 +22,7 @@ How to report:
 
 Before you upload, look through the zip. It holds logs and system details. InterMux removes your home path, user name, IP and MAC addresses, URL queries and tokens, but check it for anything private.
 
-**Exception:** if a problem would let an unprivileged user gain root or run commands as another user, do not post it on the portal before it is fixed. Report it privately through GitHub security advisories instead:
-
-1. Open the [private security advisory form](https://github.com/Rishi-Bhati/intermux/security/advisories/new)
-2. Describe the problem, the steps to reproduce it, the affected version, and your distribution.
-
-This is a small project maintained on a best-effort basis. Confirmed issues are fixed before public disclosure.
+This is a small project maintained on a best-effort basis.
 
 ## Security Model
 
