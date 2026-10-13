@@ -8,6 +8,29 @@ still launch as you, with your profile and data.
 
 ### What's new
 
+InterMux 2.0 is the biggest change since the first Linux release. It is safer, works with more
+applications, and installs like any other program.
+
+* **Route apps that are already running.** "Shift current session" moves a running application
+  onto a chosen interface without restarting it. While it is routed, its traffic cannot leak out
+  any other interface.
+* **Assign many apps at once.** Assign sets up every selected application with a single
+  authorization prompt.
+* **Brave and other Chromium browsers.** Each interface gets its own browser profile, so a
+  browser that is already open no longer blocks the new binding.
+* **Name lookups inside each namespace.** Each namespace has its own DNS resolver, so name
+  resolution does not depend on the host's `/etc/resolv.conf`.
+* **Routing resets itself.** On systemd systems, a watcher tears down routing when a bound app
+  exits, so the network is not left changed.
+* **Privilege split.** The window and CLI run as you. Only a small helper, started through polkit,
+  runs as root.
+* **Bug reports stay on your disk.** The report dialog saves a zip you can attach to an issue.
+  Nothing is uploaded automatically.
+* **Pre-built bundle.** One download runs on glibc 2.35 and newer. Installing was tested on
+  Ubuntu 22.04 and Debian 12.
+
+### Features
+
 * **Installable and runnable.** Install with `sudo ./install.sh` to get a system-wide program, a
   launcher entry and a polkit policy. Or run from source with `python3 -m intermux`.
 * **Unprivileged GUI and CLI.** Listing interfaces, listing apps, status and the dependency check
