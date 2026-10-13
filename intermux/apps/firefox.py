@@ -92,7 +92,11 @@ def default_profile_dir(home: str) -> Optional[Path]:
             raw = safefs.read_file_nofollow(os.fspath(ini), home, PROFILES_INI_MAX)
         except (FileNotFoundError, NotADirectoryError):
             continue
-        except (OSError, ValidationError) as exc:
+        except ValidationError as exc:
+            # A symlinked root (for example a dotfile manager) is skipped; the other roots still count.
+            log.warning("not reading %s: %s", ini, exc)
+            continue
+        except OSError as exc:
             log.warning("not reading %s: %s", ini, exc)
             return None
         profile = parse_default_profile(raw.decode("utf-8", errors="replace"), root)

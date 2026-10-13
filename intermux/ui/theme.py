@@ -353,7 +353,6 @@ class ScrollFrame(tk.Frame if tk is not None else object):  # type: ignore[misc]
         self.inner.bind("<Configure>", self._on_inner)
         self.canvas.bind("<Configure>", self._on_canvas)
         self._wheel_target: Any = None
-        self._wheel_ids: Dict[str, str] = {}
 
     def _yview(self, *args: Any) -> None:
         self.canvas.yview(*args)
@@ -401,7 +400,6 @@ class ScrollFrame(tk.Frame if tk is not None else object):  # type: ignore[misc]
 
     def detach_wheel(self) -> None:
         target, self._wheel_target = self._wheel_target, None
-        self._wheel_ids = {}
         if target is None:
             return
         registry = getattr(target, _REGISTRY_ATTR, None) or []

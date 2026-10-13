@@ -130,6 +130,18 @@ class DefaultProfileDirTests(TempHomeTestCase):
             "[Profile0]\nPath=abc.default\nDefault=1\n", encoding="utf-8")
         self.assertEqual(default_profile_dir(str(self.home)), root / "abc.default")
 
+    def test_symlinked_native_root_does_not_hide_snap_root(self):
+        elsewhere = self.home / "dotfiles" / "mozilla" / "firefox"
+        (elsewhere / "linked.default").mkdir(parents=True)
+        (elsewhere / "profiles.ini").write_text(
+            "[Profile0]\nPath=linked.default\nDefault=1\n", encoding="utf-8")
+        os.symlink(self.home / "dotfiles" / "mozilla", self.home / ".mozilla")
+        root = self.home / "snap" / "firefox" / "common" / ".mozilla" / "firefox"
+        (root / "snapprof").mkdir(parents=True)
+        (root / "profiles.ini").write_text(
+            "[Profile0]\nPath=snapprof\nDefault=1\n", encoding="utf-8")
+        self.assertEqual(default_profile_dir(str(self.home)), root / "snapprof")
+
     def test_finds_profile_under_snap_root(self):
         root = self.home / "snap" / "firefox" / "common" / ".mozilla" / "firefox"
         (root / "snapprof").mkdir(parents=True)
