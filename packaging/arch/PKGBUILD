@@ -1,7 +1,7 @@
 # Maintainer: TODO <name and email>
 # Starting point, untested. The source is the GitHub tag tarball for v$pkgver.
 pkgname=intermux
-pkgver=2.0.0
+pkgver=2.0.1
 pkgrel=1
 pkgdesc="Bind individual applications to specific network interfaces"
 arch=('x86_64' 'aarch64')

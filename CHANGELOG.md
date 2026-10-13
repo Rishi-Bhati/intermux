@@ -7,31 +7,15 @@ Earlier releases are described in [release_notes.md](release_notes.md).
 
 ## [Unreleased]
 
+## [2.0.1] — 2026-10-13
+
 ### Fixed
 
-- **Uninstall.** `uninstall.sh` sends its reset straight to the helper. Before, it ran `intermux reset` as root, which the root guard refuses, so uninstalling failed unless `--force` was given.
-- **Running-app detection for browsers.** "Close and reopen" and "Force-quit" for one Chromium-based browser no longer match the processes of another (for example Brave no longer matches Chrome). Chrome and Edge launchers (`google-chrome-stable`, `microsoft-edge-stable`) are recognised.
-- **Reset.** The CLI and GUI now say when reset kept the routing of apps that are still running.
+- **Firefox profiles.** A symlinked Firefox profile root (for example one managed by a dotfile tool) no longer stops InterMux from reading the other roots, such as Snap or Flatpak Firefox.
 
 ### Changed
 
-- **DNS in namespaces.** Each namespace uses its interface's gateway first, then `1.1.1.1` and `9.9.9.9`, instead of the host's resolvers.
-
-### Security
-
-- **Privilege boundary.** The root helper accepts only validated requests from the calling user.
-- **Process scoping.** Actions that stop or find applications now apply only to the intended processes.
-- **Firewall and routing scoping.** Firewall and routing changes are limited to InterMux's own subnets, tables and rules.
-- **File handling for root.** The helper handles user-owned files more safely when running as root.
-- **Install ownership.** Installed files are owned by root and cannot be changed by regular users.
-- **Uninstall safety.** The uninstaller removes only what InterMux installed.
-- **Report client redirects.** The report client no longer follows redirects blindly.
-
-### Added
-
-- **Automatic cleanup.** The `intermux-watch` systemd service removes a binding's namespace, routes and NAT rules when its last app exits. It does a cheap check each pass and only takes the state lock when something is idle. `install.sh` and the distro packages install it.
-- **Chromium-based browsers.** Chromium, Chrome, Brave, Vivaldi, Edge and Opera can be bound. A separate profile gets its own data folder per browser and interface.
-- **Report issue.** A GUI button and the `intermux report` command save a bug report zip (app logs and system details, with personal data scrubbed on a best-effort basis) to `~/intermux-reports/`, or open the reporting portal (`--web`, `--out DIR`).
+- **Security reporting.** SECURITY.md sends every security report and bug report to the Reportary portal, with the bug-report zip from the GUI or `intermux report`.
 
 ## [2.0.0] (Linux)
 
@@ -57,6 +41,10 @@ The Linux edition was rewritten as a Python package. The GUI runs without root, 
 - **Continuous integration.** Unit tests on every pull request, an opt-in namespace integration job, and a build workflow that publishes a release tarball with a SHA-256 checksum.
 - **Tests.** Unit tests cover subnets, state, command handling, process handling, interface parsing, Firefox handling, desktop entries, the helper protocol and the CLI parser.
 
+- **Automatic cleanup.** The `intermux-watch` systemd service removes a binding's namespace, routes and NAT rules when its last app exits. It does a cheap check each pass and only takes the state lock when something is idle. `install.sh` and the distro packages install it.
+- **Chromium-based browsers.** Chromium, Chrome, Brave, Vivaldi, Edge and Opera can be bound. A separate profile gets its own data folder per browser and interface.
+- **Report issue.** A GUI button and the `intermux report` command save a bug report zip (app logs and system details, with personal data scrubbed on a best-effort basis) to `~/intermux-reports/`, or open the reporting portal (`--web`, `--out DIR`).
+
 ### Changed
 
 - **Minimum Python** is now 3.9 (was 3.6).
@@ -65,6 +53,7 @@ The Linux edition was rewritten as a Python package. The GUI runs without root, 
 - **Subnets** come from the `10.200.N.0/24` pool, and routing tables use IDs from `1000 + N`.
 - **Forwarding** is set through `/proc/sys/net/ipv4/ip_forward`. The `sysctl` tool is still used inside each namespace for the DNS redirect.
 - **Privilege elevation** works from the PyInstaller binary, which re-runs itself instead of calling `python3`.
+- **DNS in namespaces.** Each namespace uses its interface's gateway first, then `1.1.1.1` and `9.9.9.9`, instead of the host's resolvers.
 
 ### Removed
 
@@ -72,12 +61,25 @@ The Linux edition was rewritten as a Python package. The GUI runs without root, 
 - **Legacy code.** The old root-level `core/`, `gui/` and `cli.py` were replaced by the `intermux` package.
 - **Manual routing configuration.** The table and priority values in `core/router.py` are gone. They are now derived from the subnet index.
 
+### Fixed
+
+- **Uninstall.** `uninstall.sh` sends its reset straight to the helper. Before, it ran `intermux reset` as root, which the root guard refuses, so uninstalling failed unless `--force` was given.
+- **Running-app detection for browsers.** "Close and reopen" and "Force-quit" for one Chromium-based browser no longer match the processes of another (for example Brave no longer matches Chrome). Chrome and Edge launchers (`google-chrome-stable`, `microsoft-edge-stable`) are recognised.
+- **Reset.** The CLI and GUI now say when reset kept the routing of apps that are still running.
+
 ### Security
 
 - Privileged operations are limited to the helper, which runs only through polkit authorization.
 - Requests are validated against a fixed schema, and unknown fields are rejected.
 - The environment passed to applications is limited to an allowlist.
 - No command is run through a shell.
+- **Privilege boundary.** The root helper accepts only validated requests from the calling user.
+- **Process scoping.** Actions that stop or find applications now apply only to the intended processes.
+- **Firewall and routing scoping.** Firewall and routing changes are limited to InterMux's own subnets, tables and rules.
+- **File handling for root.** The helper handles user-owned files more safely when running as root.
+- **Install ownership.** Installed files are owned by root and cannot be changed by regular users.
+- **Uninstall safety.** The uninstaller removes only what InterMux installed.
+- **Report client redirects.** The report client no longer follows redirects blindly.
 
 ## Previous Releases
 

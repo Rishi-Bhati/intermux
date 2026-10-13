@@ -13,7 +13,7 @@
 
 InterMux lets you choose which network connection each application uses. For example, you can keep a torrent client on Ethernet while your browser uses Wi-Fi or a phone hotspot. It runs each bound application inside its own network namespace and routes that namespace through the interface you pick. A small root helper, gated by polkit, sets up the networking. Your applications always run as your own user, so your profiles and settings are kept.
 
-InterMux has a graphical interface and a command line. Version 2.0.0 is the Linux edition. A separate Windows edition lives in [`windows/`](windows/README.md).
+InterMux has a graphical interface and a command line. Version 2.0.1 is the Linux edition. A separate Windows edition lives in [`windows/`](windows/README.md).
 
 ## Supported platforms
 

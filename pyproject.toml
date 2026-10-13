@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "intermux"
-version = "2.0.0"
+version = "2.0.1"
 description = "Route individual desktop applications through a chosen network interface on Linux."
 readme = "README.md"
 license = {text = "MIT"}

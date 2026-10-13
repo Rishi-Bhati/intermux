@@ -1,5 +1,13 @@
 # InterMux Release Notes
 
+## v2.0.1 — Linux fixes
+
+* **Firefox profiles.** A symlinked Firefox profile root (for example one managed by a dotfile tool) no longer stops InterMux from reading the other roots, so Snap or Flatpak Firefox profiles are still found.
+* **Security reports.** SECURITY.md sends every security and bug report to the Reportary portal. The bug report zip is created from the GUI's **Report issue** button or `intermux report`.
+* **Internal.** Removed an unused field from the scroll helper in the GUI.
+
+---
+
 ## v2.0.0 — Linux Overhaul
 
 InterMux on Linux has been rewritten as a Python package. The window runs as your normal user,

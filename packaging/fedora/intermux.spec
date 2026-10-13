@@ -13,7 +13,7 @@
 # bundled-runtime packages.
 
 Name:           intermux
-Version:        2.0.0
+Version:        2.0.1
 Release:        1%{?dist}
 Summary:        Bind individual applications to specific network interfaces
 License:        MIT
@@ -106,5 +106,6 @@ appstream-util validate-relax --nonet \
 %{_presetdir}/90-intermux.preset
 
 %changelog
-* Tue Oct 13 2026 TODO Maintainer <maintainer@example.com> - 2.0.0-1
-- Initial packaging (starting point, untested)
+* Tue Oct 13 2026 TODO Maintainer <maintainer@example.com> - 2.0.1-1
+- 2.0.1: keep scanning Firefox profile roots past a symlinked one; security reports go to the Reportary portal
+- 2.0.0: initial packaging (starting point, untested)
