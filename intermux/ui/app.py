@@ -530,6 +530,8 @@ class InterMuxApp:
         body.rowconfigure(0, weight=1)
         scroll = theme.ScrollFrame(body, p["surface"])
         scroll.grid(row=0, column=0, sticky="nsew")
+        # Mouse wheel and touchpad scrolling for this section (the window routes events by pointer position).
+        scroll.attach_wheel(self.root)
         host = scroll.inner
         host.columnconfigure(0, weight=1)
         # Empty state: a sibling of the ScrollFrame (created after it, so drawn above the canvas),

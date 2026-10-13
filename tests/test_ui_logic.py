@@ -215,3 +215,67 @@ class SnapshotRowsTests(unittest.TestCase):
         _, adopted = snapshot_rows(st, table, {}.get, lambda g: [])
         self.assertFalse(adopted[0]["alive"])
 
+
+
+class WheelRoutingTests(unittest.TestCase):
+    """Two ScrollFrames in one window: a wheel or touchpad event scrolls only the section under the pointer."""
+
+    def setUp(self) -> None:
+        try:
+            import tkinter as tk
+            self.root = tk.Tk()
+        except Exception as exc:  # no display in this environment
+            self.skipTest(f"no display: {exc}")
+        self.root.withdraw()
+
+    def tearDown(self) -> None:
+        self.root.destroy()
+
+    def _section(self, rows: int):
+        from intermux.ui import theme
+        import tkinter as tk
+        frame = theme.ScrollFrame(self.root, "#000000")
+        frame.pack(fill="both", expand=True)
+        labels = []
+        for i in range(rows):
+            label = tk.Label(frame.inner, text=f"row {i}")
+            label.pack(anchor="w")
+            labels.append(label)
+        frame.attach_wheel(self.root)
+        self.root.update_idletasks()
+        frame.update_region()
+        return frame, labels
+
+    def test_wheel_scrolls_only_the_section_under_the_pointer(self) -> None:
+        import tkinter as tk
+        self.root.geometry("300x300")
+        first, first_labels = self._section(200)
+        second, _ = self._section(200)
+        self.root.update()
+        before = second.canvas.yview()[0]
+        first_before = first.canvas.yview()[0]
+        first_labels[0].event_generate("<MouseWheel>", delta=-120)
+        self.root.update()
+        self.assertGreater(first.canvas.yview()[0], first_before)
+        self.assertEqual(second.canvas.yview()[0], before)
+
+    def test_button4_and_button5_scroll_up_and_down(self) -> None:
+        self.root.geometry("300x300")
+        frame, labels = self._section(200)
+        self.root.update()
+        labels[0].event_generate("<Button-5>")
+        self.root.update()
+        down = frame.canvas.yview()[0]
+        self.assertGreater(down, 0.0)
+        labels[0].event_generate("<Button-4>")
+        self.root.update()
+        self.assertLess(frame.canvas.yview()[0], down)
+
+    def test_detached_section_no_longer_scrolls(self) -> None:
+        self.root.geometry("300x300")
+        frame, labels = self._section(200)
+        self.root.update()
+        frame.detach_wheel()
+        labels[0].event_generate("<MouseWheel>", delta=-120)
+        self.root.update()
+        self.assertEqual(frame.canvas.yview()[0], 0.0)

@@ -312,6 +312,29 @@ def apply_theme(root: Any) -> Dict[str, str]:
 # Shared widget: vertically scrolling frame
 # ---------------------------------------------------------------------------
 
+_WHEEL_SEQUENCES = ("<MouseWheel>", "<Button-4>", "<Button-5>")
+_REGISTRY_ATTR = "_intermux_scrollframes"
+
+
+def _route_wheel(toplevel: Any, event: Any) -> None:
+    """Send a wheel or touchpad event to the nearest ScrollFrame that contains its widget."""
+    registry = getattr(toplevel, _REGISTRY_ATTR, None) or []
+    if not registry:
+        return
+    widget = getattr(event, "widget", None)
+    if isinstance(widget, str):
+        try:
+            widget = toplevel.nametowidget(widget)
+        except (tk.TclError, KeyError, AttributeError):
+            return
+    while widget is not None:
+        for frame in registry:
+            if frame is widget:
+                frame._wheel(event)
+                return
+        widget = getattr(widget, "master", None)
+
+
 class ScrollFrame(tk.Frame if tk is not None else object):  # type: ignore[misc]
     """A frame whose `inner` child scrolls vertically inside a Canvas with a ttk scrollbar."""
 
@@ -361,25 +384,30 @@ class ScrollFrame(tk.Frame if tk is not None else object):  # type: ignore[misc]
         self.update_region()
 
     def attach_wheel(self, toplevel: Any) -> None:
-        """Bind the wheel once on the containing toplevel (no bind_all, no pointer queries)."""
+        """Route wheel and touchpad scrolling to this frame when the pointer is over it.
+
+        One handler per toplevel serves every ScrollFrame in that window. It finds the nearest registered
+        frame that contains the widget receiving the event, so each section scrolls independently and an
+        event is never applied twice. No bind_all and no pointer queries.
+        """
         self.detach_wheel()
+        registry = getattr(toplevel, _REGISTRY_ATTR, None)
+        if registry is None:
+            registry = []
+            setattr(toplevel, _REGISTRY_ATTR, registry)
+            for sequence in _WHEEL_SEQUENCES:
+                toplevel.bind(sequence, lambda e, tl=toplevel: _route_wheel(tl, e), add="+")
+        registry.append(self)
         self._wheel_target = toplevel
-        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-            self._wheel_ids[sequence] = toplevel.bind(sequence, self._wheel, add="+")
 
     def detach_wheel(self) -> None:
         target, self._wheel_target = self._wheel_target, None
-        ids, self._wheel_ids = self._wheel_ids, {}
+        self._wheel_ids = {}
         if target is None:
             return
-        for sequence, funcid in ids.items():
-            try:
-                existing = target.bind(sequence)
-                kept = "\n".join(line for line in existing.split("\n") if funcid not in line)
-                target.bind(sequence, kept)
-                target.deletecommand(funcid)
-            except tk.TclError:
-                pass
+        registry = getattr(target, _REGISTRY_ATTR, None) or []
+        if self in registry:
+            registry.remove(self)
 
     def _notify(self) -> None:
         if self._on_view:
