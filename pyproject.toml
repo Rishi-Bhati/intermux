@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "intermux"
+version = "2.0.0"
+description = "Route individual desktop applications through a chosen network interface on Linux."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+classifiers = [
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+]
+
+[project.scripts]
+intermux = "intermux.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["intermux*"]

@@ -1,0 +1,35 @@
+# Native package (source/format 3.0 (native)): the version has no Debian
+# revision. pyinstaller in older stable/LTS releases may be too old; use a
+# backport or PPA with PyInstaller 6.20.0.
+# Starting point, untested. Build-Depends and Depends names must be checked
+# against the target Debian/Ubuntu release.
+Source: intermux
+Section: net
+Priority: optional
+Maintainer: TODO Maintainer <maintainer@example.com>
+Build-Depends: debhelper-compat (= 13),
+               python3,
+               binutils,
+               pyinstaller,
+               python3-tk
+Standards-Version: 4.6.2
+Homepage: https://github.com/Rishi-Bhati/intermux
+Rules-Requires-Root: no
+
+Package: intermux
+Architecture: any
+Depends: ${misc:Depends},
+         iproute2,
+         iptables,
+         pkexec | policykit-1,
+         util-linux,
+         procps,
+         xdg-utils,
+         python3-tk,
+         libc6
+Description: bind individual applications to specific network interfaces
+ InterMux runs a chosen application inside its own network namespace and
+ routes that namespace through a selected network interface.
+ .
+ Changing network configuration requires administrator authentication
+ through polkit.

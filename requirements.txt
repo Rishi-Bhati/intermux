@@ -1,8 +1,5 @@
-Brotli==1.1.0
-click==8.2.1
-markdown2==2.5.3
-MarkupSafe==3.0.2
-minijinja==2.11.0
-page==0.3
-PyYAML==6.0.2
-tk==0.1.0
+# InterMux has no third-party runtime dependencies. It uses only the Python standard library
+# (tkinter ships with Python; install python3-tk on Debian/Ubuntu if the GUI is missing).
+#
+# Build tooling is pinned where it is used:
+#   PyInstaller 6.11.1 -> install.sh and .github/workflows/build_linux.yml

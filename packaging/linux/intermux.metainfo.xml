@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.intermux.InterMux</id>
+  <name>InterMux</name>
+  <summary>Bind individual applications to specific network interfaces</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer>
+    <name>InterMux contributors</name>
+  </developer>
+  <url type="homepage">https://github.com/Rishi-Bhati/intermux</url>
+  <launchable type="desktop-id">intermux.desktop</launchable>
+  <icon type="stock">intermux</icon>
+  <description>
+    <p>InterMux runs a chosen application inside its own network namespace and routes that namespace through a selected network interface, so one app can use Wi-Fi while everything else uses Ethernet, or the reverse.</p>
+    <ul>
+      <li>Pick an application from the desktop menu and a network interface</li>
+      <li>Launch the application bound to that interface, with its traffic routed by policy rules</li>
+      <li>Check the public IP seen from the bound interface</li>
+      <li>Stop bindings and remove the network plumbing when no longer needed</li>
+    </ul>
+    <p>Changing network configuration requires administrator authentication through polkit.</p>
+  </description>
+  <categories>
+    <category>Network</category>
+    <category>System</category>
+  </categories>
+  <releases>
+    <release version="2.0.0" date="2026-10-13"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

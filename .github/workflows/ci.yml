@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Unit tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4  # TODO: pin to a commit SHA
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5  # TODO: pin to a commit SHA
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Byte-compile
+        run: python -m compileall -q intermux tests
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -t . -v
+
+  netns-integration:
+    name: Network namespace integration
+    runs-on: ubuntu-22.04
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4  # TODO: pin to a commit SHA
+
+      - name: Install system tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y iproute2 iptables util-linux
+
+      # Uses the system python3 so that `sudo -E` resolves it the same way on every run.
+      - name: Run namespace integration tests as root
+        run: sudo -E env INTERMUX_INTEGRATION=1 python3 -m unittest tests.test_netns_integration -v
+
+  packaging-lint:
+    name: Packaging lint
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4  # TODO: pin to a commit SHA
+
+      - name: Install lint tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y desktop-file-utils
+
+      - name: Shell syntax
+        run: |
+          bash -n install.sh
+          bash -n uninstall.sh
+          sh -n packaging/debian/postinst
+
+      - name: Desktop entry
+        run: desktop-file-validate packaging/linux/intermux.desktop

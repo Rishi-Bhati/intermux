@@ -1,0 +1,56 @@
+#!/usr/bin/make -f
+# Starting point, untested. Bundles the PyInstaller onedir build into
+# /usr/lib/intermux, the same layout that install.sh produces.
+
+BUNDLE_DIST := $(CURDIR)/build-dist
+BUNDLE_WORK := $(CURDIR)/build-work
+
+# Keep PyInstaller's cache inside the build tree: sbuild/pbuilder have no usable $HOME.
+export PYINSTALLER_CONFIG_DIR := $(CURDIR)/build-work/pyi-config
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+
+override_dh_auto_build:
+	mkdir -p $(PYINSTALLER_CONFIG_DIR)
+	pyinstaller intermux_linux.spec --noconfirm \
+		--distpath $(BUNDLE_DIST) --workpath $(BUNDLE_WORK)
+
+override_dh_auto_install:
+	install -d debian/intermux/usr/lib/intermux
+	cp -a $(BUNDLE_DIST)/intermux/. debian/intermux/usr/lib/intermux/
+	chmod -R a+rX debian/intermux/usr/lib/intermux
+	chmod 755 debian/intermux/usr/lib/intermux/intermux
+	install -d debian/intermux/usr/bin
+	ln -s /usr/lib/intermux/intermux debian/intermux/usr/bin/intermux
+	install -Dm644 packaging/linux/org.intermux.policy \
+		debian/intermux/usr/share/polkit-1/actions/org.intermux.policy
+	install -Dm644 packaging/linux/intermux.desktop \
+		debian/intermux/usr/share/applications/intermux.desktop
+	install -Dm644 packaging/linux/intermux.svg \
+		debian/intermux/usr/share/icons/hicolor/scalable/apps/intermux.svg
+	install -Dm644 packaging/linux/intermux.metainfo.xml \
+		debian/intermux/usr/share/metainfo/org.intermux.InterMux.metainfo.xml
+	# Watcher that resets routing when routed apps exit; dh_installsystemd enables it.
+	install -Dm644 packaging/linux/intermux-watch.service \
+		debian/intermux/usr/lib/systemd/system/intermux-watch.service
+
+# Enable and start the routing watcher on install (adds the enable/start
+# snippets to the maintainer scripts) and restart it on upgrade.
+override_dh_installsystemd:
+	dh_installsystemd intermux-watch.service
+
+# Stripping or rewriting dependencies breaks the PyInstaller bundle
+override_dh_strip:
+
+override_dh_shlibdeps:
+
+override_dh_makeshlibs:
+
+override_dh_dwz:
+
+override_dh_auto_clean:
+	rm -rf $(BUNDLE_DIST) $(BUNDLE_WORK)
+	dh_auto_clean

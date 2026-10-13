@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=InterMux
+GenericName=Network Interface Binder
+Comment=Advanced Network Interface Management
+Exec=intermux
+Icon=intermux
+Terminal=false
+StartupNotify=true
+Categories=Network;
+Keywords=network;proxy;interface;bind;namespace;vpn;

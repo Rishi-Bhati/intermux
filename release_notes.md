@@ -1,5 +1,49 @@
 # InterMux Release Notes
 
+## v2.0.0 — Linux Overhaul
+
+InterMux on Linux has been rewritten as a Python package. The window runs as your normal user,
+and only a small helper, started through polkit, makes the network changes as root. Applications
+still launch as you, with your profile and data.
+
+### What's new
+
+* **Installable and runnable.** Install with `sudo ./install.sh` to get a system-wide program, a
+  launcher entry and a polkit policy. Or run from source with `python3 -m intermux`.
+* **Unprivileged GUI and CLI.** Listing interfaces, listing apps, status and the dependency check
+  need no root. Changes ask for authorization once through the system's polkit prompt.
+* **One network namespace per interface.** Each bound interface gets its own namespace, connected
+  to the host with a veth pair, with its own routing table and rules. Traffic from a bound app
+  always leaves through its interface.
+* **Application picker.** Choose apps from the installed desktop applications, with search. Apps
+  that cannot be bound are shown greyed out with the reason.
+* **Public IP check.** Verify the public IP seen from any binding.
+* **Safer cleanup.** Teardown idle removes plumbing for bindings with no running app. Reset
+  everything removes all InterMux setup, and can also stop the apps it started.
+* **Firefox profiles.** Use your default profile, or a separate profile per interface when Firefox
+  is already running.
+* **Logs per binding.** Each app's output goes to `~/.local/state/intermux/logs/`. The GUI can open
+  it with one click.
+* **Dependency check.** `intermux check` lists what is missing and how to install it.
+* **Distribution.** Build with PyInstaller, uninstall with `sudo ./uninstall.sh`, and starting points
+  for Arch, Debian and Fedora packaging are included (untested).
+
+### Changes
+
+* Python 3.9 or newer is required (was 3.6).
+* There are no third-party Python dependencies.
+* The old `core/`, `gui/` and root `cli.py` files are replaced by the `intermux` package.
+* Logs moved from `~/.local/share/intermux/intermux.log` to per-binding files under
+  `~/.local/state/intermux/logs/`.
+* IPv4 forwarding is set through `/proc`. The `sysctl` tool (procps) is still used inside each namespace for the DNS redirect.
+
+### Known limitations
+
+* Flatpak apps cannot be bound yet.
+* IPv4 only. Virtual and VPN interfaces are not offered for binding.
+
+---
+
 ## v2.0.0 — Windows Proxy & App Launcher Fixes
 
 ### 🪟 Windows Platform Enhancements
