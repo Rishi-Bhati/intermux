@@ -10,14 +10,24 @@
 
 ## Reporting a Vulnerability
 
-Please report security problems privately. Do not use a public issue or the public reporting portal for them, especially anything that could let an unprivileged user gain root or run commands as another user.
+Please send every bug report and security concern through the InterMux reporting portal:
 
-Report privately through GitHub security advisories:
+**https://reportary.onrender.com/p/nWQbq2dDTlsy89u6XBWG2UV0pz9-vQuR_WnRuU7U7bWUMVi5rqRlwDxhs8j_w6r9/**
+
+How to report:
+
+1. Create a bug report zip. In the GUI, click **Report issue**, then **Save bug report**. From the command line, run `intermux report`. The zip is saved to `~/intermux-reports` by default; use `--out DIR` to choose another folder.
+2. Open the portal and upload the zip. In the GUI, **Open reporting portal** opens the page. From the command line, `intermux report --web` opens it.
+3. Describe what you did, what you expected, what happened, your distribution, and the InterMux version.
+
+Before you upload, look through the zip. It holds logs and system details. InterMux removes your home path, user name, IP and MAC addresses, URL queries and tokens, but check it for anything private.
+
+**Exception:** if a problem would let an unprivileged user gain root or run commands as another user, do not post it on the portal before it is fixed. Report it privately through GitHub security advisories instead:
 
 1. Go to https://github.com/Rishi-Bhati/intermux/security/advisories/new
 2. Describe the problem, the steps to reproduce it, the affected version, and your distribution.
 
-This is a small project maintained on a best-effort basis. Confirmed issues are fixed through the private advisory before public disclosure.
+This is a small project maintained on a best-effort basis. Confirmed issues are fixed before public disclosure.
 
 ## Security Model
 
