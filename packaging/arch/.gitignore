@@ -1,0 +1,7 @@
+intermux*.tar.gz
+src
+pkg
+*.pkg.tar.zst
+.SRCINFO
+.AURINFO
+
