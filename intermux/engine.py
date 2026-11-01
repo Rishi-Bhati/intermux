@@ -410,8 +410,23 @@ def restart_app(iface: str, app: str, *, user: UserInfo, env: Dict[str, str]) ->
         raise ConflictError("the application did not exit, so it was not restarted", code="still_running",
                             data={"pids": stopped["still_running"]})
     keep = "separate" if binding.profile_mode == "separate" else None
-    policy = "separate" if keep else "close"
-    return bind(app, iface, user=user, env=env, running_policy=policy, keep_profile=keep)
+    # "ask", never "close": a copy the user runs outside InterMux must not be closed by a restart. If one
+    # is running, the caller gets already_running and can decide.
+    policy = "separate" if keep else "ask"
+    return _bind_again(app, iface, user=user, env=env, policy=policy, keep=keep)
+
+
+def _bind_again(app: str, iface: str, *, user: UserInfo, env: Dict[str, str], policy: str,
+                keep: Optional[str]) -> Dict[str, Any]:
+    """bind() for restart and move, with a clear message when another copy runs outside InterMux."""
+    try:
+        return bind(app, iface, user=user, env=env, running_policy=policy, keep_profile=keep)
+    except ConflictError as exc:
+        if exc.code != "already_running":
+            raise
+        raise ConflictError(f"{os.path.basename(app)} was stopped, but another copy is running outside "
+                            "InterMux; close it, then route the app again", code="already_running",
+                            data=exc.data) from exc
 
 
 def move_app(iface: str, app: str, to: str, *, user: UserInfo, env: Dict[str, str]) -> Dict[str, Any]:
@@ -434,7 +449,7 @@ def move_app(iface: str, app: str, to: str, *, user: UserInfo, env: Dict[str, st
         raise ConflictError("the application did not exit, so it was not moved", code="still_running",
                             data={"pids": stopped["still_running"]})
     keep = "separate" if binding.profile_mode == "separate" else None
-    result = bind(app, to, user=user, env=env, running_policy="separate" if keep else "close", keep_profile=keep)
+    result = _bind_again(app, to, user=user, env=env, policy="separate" if keep else "ask", keep=keep)
     st = state.load_state(config.STATE_FILE)
     st.bindings = [b for b in st.bindings if not (b.iface == iface and b.app == app)]
     cidr = st.subnets.get(iface)

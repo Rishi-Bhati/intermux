@@ -192,11 +192,12 @@ class RestartTests(_EngineCase):
         kwargs = bind.call_args[1]
         self.assertEqual((kwargs["running_policy"], kwargs["keep_profile"]), ("separate", "separate"))
 
-    def test_restart_default_profile_closes(self):
+    def test_restart_default_profile_asks(self):
         with mock.patch.object(engine, "stop_app", return_value={"stopped": [], "still_running": []}), \
                 mock.patch.object(engine, "bind", return_value={}) as bind:
             engine.restart_app("wlan0", "/usr/bin/x", user=USER, env={})
-        self.assertEqual((bind.call_args[1]["running_policy"], bind.call_args[1]["keep_profile"]), ("close", None))
+        # never "close": a copy running outside InterMux must not be closed by a restart
+        self.assertEqual((bind.call_args[1]["running_policy"], bind.call_args[1]["keep_profile"]), ("ask", None))
 
     def test_restart_refuses_when_app_survives(self):
         with mock.patch.object(engine, "stop_app", return_value={"stopped": [], "still_running": [5]}), \
@@ -204,6 +205,15 @@ class RestartTests(_EngineCase):
             with self.assertRaises(ConflictError):
                 engine.restart_app("wlan0", "/usr/bin/x", user=USER, env={})
         bind.assert_not_called()
+
+    def test_restart_explains_a_copy_outside_intermux(self):
+        conflict = ConflictError("application is already running", code="already_running", data={"pids": [8]})
+        with mock.patch.object(engine, "stop_app", return_value={"stopped": [5], "still_running": []}), \
+                mock.patch.object(engine, "bind", side_effect=conflict):
+            with self.assertRaises(ConflictError) as ctx:
+                engine.restart_app("wlan0", "/usr/bin/x", user=USER, env={})
+        self.assertIn("outside InterMux", ctx.exception.message)
+        self.assertEqual(ctx.exception.data, {"pids": [8]})
 
     def test_restart_unknown_binding(self):
         with self.assertRaises(NotFoundError):
