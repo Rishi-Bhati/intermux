@@ -45,8 +45,31 @@ def build_parser() -> argparse.ArgumentParser:
                        help="open a separate profile if the application is already running")
     group.add_argument("--close-existing", action="store_true",
                        help="close running instances of the application and reopen it")
+    p.add_argument("--dns", metavar="SERVERS",
+                   help="DNS for the interface namespace: auto, a preset (cloudflare, google, quad9) or "
+                        "servers separated by commas; by default an existing namespace keeps its DNS")
 
-    sub.add_parser("status", help="show bindings")
+    sub.add_parser("status", help="show bindings, DNS, bandwidth limits and traffic")
+
+    p = sub.add_parser("dns", help="change the DNS servers of an interface namespace")
+    p.add_argument("--iface", required=True, metavar="IF", help="interface whose namespace to change")
+    p.add_argument("servers", metavar="SERVERS",
+                   help="auto, a preset (cloudflare, google, quad9) or servers separated by commas")
+
+    p = sub.add_parser("limit", help="limit the bandwidth of an interface namespace (Mbit/s)")
+    p.add_argument("--iface", required=True, metavar="IF", help="interface whose namespace to limit")
+    p.add_argument("--down", type=float, metavar="MBIT", help="download limit; omit to remove it")
+    p.add_argument("--up", type=float, metavar="MBIT", help="upload limit; omit to remove it")
+
+    p = sub.add_parser("restart", help="restart an application in its namespace with the same options")
+    p.add_argument("--app", required=True, metavar="APP", help="command name or path of the application")
+    p.add_argument("--iface", required=True, metavar="IF", help="network interface it is bound to")
+
+    p = sub.add_parser("remove", help="stop everything in an interface namespace and remove the namespace")
+    p.add_argument("--iface", required=True, metavar="IF", help="interface whose namespace to remove")
+    p.add_argument("--yes", action="store_true", help="do not ask for confirmation")
+
+    sub.add_parser("reconnect", help="re-add the routes of namespaces whose interface is back (e.g. a VPN)")
 
     p = sub.add_parser("stop", help="stop the application bound to an interface")
     p.add_argument("--app", required=True, metavar="APP", help="command name or path of the application")
@@ -270,11 +293,12 @@ def _cmd_bind(args: argparse.Namespace) -> int:
         policy = "separate"
     else:
         policy = "ask"
+    dns = parse_dns_arg(args.dns) if args.dns else "keep"
     name = os.path.basename(app_path)
     _info(f"binding {name} to {args.iface}")
     try:
         result = helper_client.bind(args.iface, app_path, running_policy=policy,
-                                    env=env)
+                                    env=env, dns=dns)
     except HelperError as exc:
         if exc.code != "already_running":
             raise
@@ -285,7 +309,7 @@ def _cmd_bind(args: argparse.Namespace) -> int:
         if answer[0] == "adopt":
             return _adopt_and_report(args.iface, app_path)
         result = helper_client.bind(args.iface, app_path, running_policy=answer[1],
-                                    env=env)
+                                    env=env, dns=dns)
     _report_bind(result or {})
     return 0
 
@@ -327,10 +351,52 @@ def _cmd_status(args: argparse.Namespace) -> int:
             nat = "yes" if any(b.subnet in line.split() for line in nat_lines) else "no"
         rows.append([b.app_name, b.iface, b.subnet, b.profile_mode, status, ns_up, nat, b.log_path or "-"])
     _print_table(["APP", "IFACE", "SUBNET", "PROFILE", "STATUS", "NAMESPACE", "NAT", "LOG"], rows)
+    if getattr(st, "subnets", None):
+        print()
+        _print_namespaces(st)
     if adoptions:
         print()
         _print_adoptions(adoptions)
     return 0
+
+
+def parse_dns_arg(text: str) -> Any:
+    """"auto" or a list of servers from a --dns / dns argument. Raises ValidationError."""
+    from intermux import dnsconf
+    from intermux.errors import ValidationError
+
+    if text.strip().lower() == dnsconf.AUTO:
+        return dnsconf.AUTO
+    try:
+        return dnsconf.parse_servers(text)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from None
+
+
+def _print_namespaces(st: Any) -> None:
+    """One row per interface namespace: DNS, bandwidth limit and traffic since it was created."""
+    from intermux import dnsconf
+    from intermux.system import netns, shaping, traffic
+
+    subnets = getattr(st, "subnets", None) or {}
+    limits = getattr(st, "limits", None) or {}
+    dns_map = getattr(st, "dns", None) or {}
+    rows = []
+    for iface in sorted(subnets):
+        host_v = netns.veth_names(iface)[0]
+        counters = traffic.read_counters([host_v]).get(host_v)
+        if counters is None:
+            moved = "-"
+        else:
+            down, up = traffic.veth_sample(counters)
+            moved = f"↓ {traffic.format_bytes(down)}  ↑ {traffic.format_bytes(up)}"
+        limit = limits.get(iface) or {}
+        limit_text = (f"↓ {shaping.format_mbit(limit.get('down'))}  ↑ {shaping.format_mbit(limit.get('up'))}"
+                      if limit else "none")
+        rows.append([iface, netns.namespace_name(iface), subnets[iface],
+                     dnsconf.describe(dns_map.get(iface, [])), limit_text, moved])
+    if rows:
+        _print_table(["IFACE", "NAMESPACE", "SUBNET", "DNS", "LIMIT", "TRAFFIC"], rows)
 
 
 def _print_adoptions(adoptions: Sequence[Any]) -> None:
@@ -409,6 +475,70 @@ def _cmd_verify(args: argparse.Namespace) -> int:
         return 0
     _error(f"could not determine public IP via {args.iface}: {data.get('error') or 'unknown error'}")
     return 1
+
+
+def _cmd_dns(args: argparse.Namespace) -> int:
+    from intermux import dnsconf
+    from intermux.helper import client as helper_client
+
+    dns = parse_dns_arg(args.servers)
+    data = helper_client.call("set_dns", {"iface": args.iface, "dns": dns}) or {}
+    label = "automatic" if data.get("automatic") else dnsconf.describe(data.get("servers") or [])
+    _ok(f"DNS of {args.iface}: {label} ({_join(data.get('servers') or [])})")
+    for warning in data.get("warnings") or []:
+        _warn(str(warning))
+    return 0
+
+
+def _cmd_limit(args: argparse.Namespace) -> int:
+    from intermux.helper import client as helper_client
+    from intermux.system import shaping
+
+    data = helper_client.call("set_limit", {"iface": args.iface, "down": args.down, "up": args.up}) or {}
+    if not data.get("down") and not data.get("up"):
+        _ok(f"removed the bandwidth limit of {args.iface}")
+    else:
+        _ok(f"limited {args.iface}: download {shaping.format_mbit(data.get('down'))}, "
+            f"upload {shaping.format_mbit(data.get('up'))}")
+    return 0
+
+
+def _cmd_restart(args: argparse.Namespace) -> int:
+    from intermux.helper import client as helper_client
+    from intermux.system import session
+
+    app_path = _resolve_app(args.app, args.iface)
+    env = session.build_app_env(session.detect_session())
+    _info(f"restarting {os.path.basename(app_path)} on {args.iface}")
+    data = helper_client.call("restart_app", {"iface": args.iface, "app": app_path, "env": env}) or {}
+    _report_bind(data)
+    return 0
+
+
+def _cmd_remove(args: argparse.Namespace) -> int:
+    from intermux.helper import client as helper_client
+
+    if not args.yes and not _confirm(f"stop everything in the {args.iface} namespace and remove it?"):
+        _warn("cancelled")
+        return 1
+    data = helper_client.call("remove_namespace", {"iface": args.iface}) or {}
+    if data.get("removed"):
+        _ok(f"removed the {args.iface} namespace" + (f" ({_join(data.get('apps') or [])})" if data.get("apps") else ""))
+        return 0
+    _warn(f"the namespace is kept: processes still running ({_join(data.get('still_running') or [])})")
+    return 1
+
+
+def _cmd_reconnect(args: argparse.Namespace) -> int:
+    from intermux.helper import client as helper_client
+
+    data = helper_client.call("reconnect") or {}
+    refreshed = data.get("refreshed") or []
+    if refreshed:
+        _ok(f"reconnected: {_join(refreshed)}")
+    else:
+        _info("every namespace whose interface is up already has its route")
+    return 0
 
 
 def _cmd_teardown_idle(args: argparse.Namespace) -> int:
@@ -511,4 +641,9 @@ _HANDLERS: Dict[str, Handler] = {
     "release": _cmd_release,
     "check": _cmd_check,
     "report": _cmd_report,
+    "dns": _cmd_dns,
+    "limit": _cmd_limit,
+    "restart": _cmd_restart,
+    "remove": _cmd_remove,
+    "reconnect": _cmd_reconnect,
 }

@@ -9,14 +9,15 @@ import time
 from functools import partial
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from intermux import apps, config, state
+from intermux import apps, config, dnsconf, state
 from intermux.apps import desktop_entries
 from intermux.apps.desktop_entries import AppEntry
 from intermux.errors import InterMuxError
 from intermux.helper import client as helper_client
 from intermux.system import commands, deps, netinfo, netns, procs, traffic
 from intermux.system import session as session_mod
-from intermux.ui import graph, icons, monitor, theme
+from intermux.ui import dialogs, graph, icons, monitor, theme
+from intermux.ui.history import History, Item as HistoryItem
 from intermux.ui.worker import Worker
 
 try:
@@ -59,6 +60,8 @@ def snapshot_rows(st: Any, table: Sequence[Any], ns_inode: Any, group_pids: Any)
             "app_name": binding.app_name,
             "log_path": binding.log_path,
             "running": ino is not None and ino in live_netns,
+            "pids": sorted(proc.pid for proc in table if ino is not None and proc.netns == ino),
+            "profile_mode": binding.profile_mode,
         })
     adopted: List[Dict[str, Any]] = []
     for adoption in st.adoptions:
@@ -79,9 +82,26 @@ def _snapshot_task() -> Dict[str, Any]:
     from intermux.system import adopt as adopt_sys
 
     interfaces = netinfo.list_interfaces()
-    rows, adopted = snapshot_rows(state.load_state(), procs.list_procs(), procs.netns_inode,
-                                  adopt_sys.read_group_pids)
-    return {"interfaces": interfaces, "bindings": rows, "adoptions": adopted}
+    st = state.load_state()
+    rows, adopted = snapshot_rows(st, procs.list_procs(), procs.netns_inode, adopt_sys.read_group_pids)
+    return {"interfaces": interfaces, "bindings": rows, "adoptions": adopted,
+            "namespaces": namespace_settings(st)}
+
+
+def namespace_settings(st: Any) -> Dict[str, Dict[str, Any]]:
+    """Per interface namespace: its hand-picked DNS servers ([] = automatic) and bandwidth limit. Pure."""
+    return {iface: {"dns": list(st.dns.get(iface, [])), "limit": dict(st.limits.get(iface, {}))}
+            for iface in st.subnets}
+
+
+def _env_task(fn: Any, *args: Any, **kwargs: Any) -> Any:
+    """Run a helper call that starts an app, adding the invoking user's allowlisted desktop environment."""
+    session = session_mod.detect_session(probe=True)
+    return fn(*args, env=session_mod.build_app_env(session), **kwargs)
+
+
+def _restart_call(iface: str, app: str, env: Dict[str, str]) -> Any:
+    return helper_client.call("restart_app", {"iface": iface, "app": app, "env": env})
 
 
 def _environment_task() -> Tuple[Any, List[deps.Dependency]]:
@@ -163,9 +183,9 @@ def delete_key_allowed(focus_class: Optional[str]) -> bool:
 
 
 def row_button_states(running: bool, idle: bool) -> Dict[str, bool]:
-    """Which buttons of a binding row are enabled. Stopped rows keep only Log. Pure."""
+    """Which buttons of a binding row are enabled. Stopped rows keep Log and Restart (start it again). Pure."""
     return {"verify": idle and running, "stop": idle and running,
-            "log": idle, "force": idle and running}
+            "log": idle, "force": idle and running, "restart": idle}
 
 
 def still_running_message(name: str, action: str, pids: Sequence[Any]) -> str:
@@ -187,7 +207,7 @@ def _set_enabled(widget: Any, enabled: bool) -> None:
 
 KIND_LABELS = {
     "wifi": "Wi-Fi", "ethernet": "Ethernet", "usb": "USB", "bluetooth": "Bluetooth",
-    "mobile": "Mobile", "virtual": "Virtual", "other": "Other",
+    "mobile": "Mobile", "vpn": "VPN", "virtual": "Virtual", "other": "Other",
 }
 NO_IFACE_TEXT = "No bindable interface found. Connect to a network and press Refresh."
 CARD_ICON = 32
@@ -229,6 +249,27 @@ def interface_label(iface: Any) -> str:
     addr = iface.ipv4_cidrs[0].split("/")[0] if iface.ipv4_cidrs else ""
     kind = KIND_LABELS.get(iface.kind, iface.kind)
     return "  ".join(part for part in (iface.name, kind, addr) if part)
+
+
+def pending_detail(item: Dict[str, Any], existing: Sequence[str]) -> str:
+    """Second line of a queued app: "via wlan0 · new namespace · DNS Cloudflare". Pure."""
+    where = "existing namespace" if item["iface"] in existing else "new namespace"
+    dns = item.get("dns", dnsconf.KEEP)
+    if isinstance(dns, list):
+        dns_text = f"DNS {dnsconf.describe(dns)}"
+    elif item["iface"] in existing:
+        dns_text = "keeps its DNS"
+    else:
+        dns_text = "automatic DNS"
+    return f"via {item['iface']} · {where} · {dns_text}"
+
+
+def pids_text(pids: Sequence[int]) -> str:
+    """"1 process (1234)" or "4 processes (1234, 1240, +2)". Pure."""
+    if not pids:
+        return ""
+    shown = ", ".join(str(p) for p in list(pids)[:2]) + (f", +{len(pids) - 2}" if len(pids) > 2 else "")
+    return f"{len(pids)} process{'es' if len(pids) != 1 else ''} ({shown})"
 
 
 def queue_add(items: List[Dict[str, Any]], item: Dict[str, Any]) -> bool:
@@ -379,8 +420,8 @@ class _PendingRow:
         self.name = tk.Label(self.frame, text=item["name"], background=bg, foreground=p["text"],
                              font=theme.font("label"), anchor="w")
         self.name.grid(row=0, column=1, sticky="sw", pady=(8, 0))
-        self.via = tk.Label(self.frame, text=f"via {item['iface']}", background=bg, foreground=p["text_muted"],
-                            font=theme.font("mono"), anchor="w")
+        self.via = tk.Label(self.frame, text=pending_detail(item, list(app._namespaces)), background=bg,
+                            foreground=p["text_muted"], font=theme.font("small"), anchor="w")
         self.via.grid(row=1, column=1, sticky="nw", pady=(0, 8))
         self.remove = tk.Label(self.frame, text="✕", background=bg, foreground=p["text_muted"],
                                font=theme.font("small"), cursor="hand2", padx=10)
@@ -409,7 +450,7 @@ class _AppCard:
                               highlightcolor=p["focus"], takefocus=0)
         self.frame.columnconfigure(2, weight=1)
         self.stripe = tk.Frame(self.frame, background=p["line_hi"], width=3)
-        self.stripe.grid(row=0, column=0, rowspan=2, sticky="ns")
+        self.stripe.grid(row=0, column=0, rowspan=3, sticky="ns")
         self.icon_host = tk.Frame(self.frame, background=bg, width=CARD_ICON, height=CARD_ICON)
         self.icon_host.grid(row=0, column=1, rowspan=2, padx=(12, 12), pady=12, sticky="n")
         self.icon_host.grid_propagate(False)
@@ -425,13 +466,16 @@ class _AppCard:
         self.kind.pack(side="left", padx=(6, 0), pady=(2, 0))
 
         via = tk.Frame(self.frame, background=bg)
-        via.grid(row=1, column=2, sticky="nw", pady=(3, 11))
+        via.grid(row=1, column=2, sticky="nw", pady=(3, 4))
         self.via_glyph = tk.Canvas(via, width=16, height=16, background=bg, highlightthickness=0, borderwidth=0)
         self.via_glyph.pack(side="left")
         self.via = tk.Label(via, text="", background=bg, foreground=p["text_muted"], font=theme.font("mono"))
         self.via.pack(side="left", padx=(5, 0))
         self.ip = tk.Label(via, text="", background=bg, foreground=p["text"], font=theme.font("mono"))
         self.ip.pack(side="left", padx=(10, 0))
+        self.extra = tk.Label(self.frame, text="", background=bg, foreground=p["text_muted"],
+                              font=theme.font("small"), anchor="w")
+        self.extra.grid(row=2, column=2, columnspan=2, sticky="ew", pady=(0, 10))
 
         rate = tk.Frame(self.frame, background=bg)
         rate.grid(row=0, column=3, sticky="se", padx=(8, 14), pady=(10, 0))
@@ -441,7 +485,7 @@ class _AppCard:
         self.spark.canvas.pack(side="left")
 
         actions = tk.Frame(self.frame, background=bg)
-        actions.grid(row=1, column=3, sticky="ne", padx=(8, 12), pady=(6, 10))
+        actions.grid(row=1, column=3, sticky="ne", padx=(8, 12), pady=(6, 4))
         if adopted:
             self.buttons = [ttk.Button(actions, text="Release", style="Small.Secondary.TButton",
                                        command=lambda: app._on_release_adoption(self.data))]
@@ -449,6 +493,8 @@ class _AppCard:
             self.buttons = [
                 ttk.Button(actions, text="Verify IP", style="Small.Secondary.TButton",
                            command=lambda: self._act(app._on_verify)),
+                ttk.Button(actions, text="Restart", style="Small.Secondary.TButton",
+                           command=lambda: self._act(app._on_restart)),
                 ttk.Button(actions, text="Stop", style="Small.Secondary.TButton",
                            command=lambda: self._act(app._on_stop)),
                 ttk.Button(actions, text="Log", style="Small.Secondary.TButton",
@@ -460,7 +506,7 @@ class _AppCard:
             button.grid(row=0, column=index, padx=(0 if index == 0 else 6, 0))
         self.data: Dict[str, Any] = {}
         for widget in (self.frame, self.icon_host, self.name, self.via, self.pill, self.ip, title, via, rate,
-                       self.rate, self.kind, self.stripe, self.via_glyph, self.spark.canvas):
+                       self.rate, self.kind, self.stripe, self.via_glyph, self.spark.canvas, self.extra):
             widget.bind("<Button-1>", lambda _e: app.select_binding(self.key))
             widget.bind("<Button-3>", lambda e: app._show_app_menu(self.key, e))
 
@@ -486,9 +532,20 @@ class _AppCard:
         graph.draw_kind_glyph(self.via_glyph, kind, 8, 8, 14, p["text_muted"], p["surface"])
         self.ip.configure(text=f"IP {public_ip}" if public_ip else "")
         self.stripe.configure(background=colour if alive else p["line_hi"])
+        self._pids = pids_text(data.get("pids") or []) if not self.adopted else ""
 
-    def set_traffic(self, history: Optional[Sequence[Tuple[float, float]]], shared: int) -> None:
+    def set_traffic(self, history: Optional[Sequence[Tuple[float, float]]], shared: int,
+                    totals: Optional[Tuple[int, int]] = None) -> None:
         p = theme.current_palette()
+        parts = [getattr(self, "_pids", "")]
+        if totals is not None:
+            parts.append(f"total ↓ {traffic.format_bytes(totals[0])} ↑ {traffic.format_bytes(totals[1])}")
+        text = "  ·  ".join(x for x in parts if x)
+        self.extra.configure(text=text)
+        if text:
+            self.extra.grid()
+        else:
+            self.extra.grid_remove()
         if history is None:
             self.rate.configure(text="counted on its connection", foreground=p["text_muted"])
             self.spark.update([], 1.0, p["text_muted"])
@@ -511,7 +568,7 @@ class _AppCard:
             _set_enabled(self.buttons[0], enabled)
             return
         states = row_button_states(running, enabled)
-        for button, key in zip(self.buttons, ("verify", "stop", "log", "force")):
+        for button, key in zip(self.buttons, ("verify", "restart", "stop", "log", "force")):
             _set_enabled(button, states[key])
 
 
@@ -552,6 +609,8 @@ class InterMuxApp:
         self._adoptions: List[Dict[str, Any]] = []
         self.tracker = traffic.RateTracker()
         self.colours = monitor.ColourBook()
+        self._namespaces: Dict[str, Dict[str, Any]] = {}
+        self.history = History()
 
         root.title(f"InterMux {config.VERSION}")
         root.geometry(initial_geometry(root.winfo_screenwidth(), root.winfo_screenheight()))
@@ -559,6 +618,7 @@ class InterMuxApp:
         self.app_var = tk.StringVar(root, value="")
         self.iface_var = tk.StringVar(root, value="")
         self.separate_var = tk.BooleanVar(root, value=False)
+        self.dns_var = tk.StringVar(root, value=dialogs.AUTO_LABEL)
         self.session_var = tk.StringVar(root, value="Detecting session")
         self.status_var = tk.StringVar(root, value="")
 
@@ -747,16 +807,23 @@ class InterMuxApp:
         for widget in (self.app_tile, self.app_icon_host, self.app_name_label, self.app_path_label):
             widget.bind("<Button-1>", lambda _e: self._on_pick())
 
-        label("Or type a command or path", 4, top=12)
-        self.path_entry = ttk.Entry(inner, textvariable=self.app_var)
+        label("Or type a command or path (recent apps in the list)", 4, top=12)
+        self.path_entry = ttk.Combobox(inner, textvariable=self.app_var, values=self._history_values(),
+                                       font=theme.font("body"), height=12)
         self.path_entry.grid(row=5, column=0, sticky="ew")
+        self.path_entry.bind("<<ComboboxSelected>>", lambda _e: self._on_history_pick())
+
+        label("DNS for this connection", 6, top=12)
+        self.dns_combo = ttk.Combobox(inner, textvariable=self.dns_var, values=dialogs.DNS_CHOICES,
+                                      font=theme.font("body"))
+        self.dns_combo.grid(row=7, column=0, sticky="ew")
 
         ttk.Checkbutton(
             inner, text="Separate profile if it is already running",
             variable=self.separate_var, style="Card.TCheckbutton",
-        ).grid(row=6, column=0, sticky="w", pady=(12, 0))
+        ).grid(row=8, column=0, sticky="w", pady=(12, 0))
         self.add_btn = ttk.Button(inner, text="Add to queue", style="Primary.TButton", command=self._on_add)
-        self.add_btn.grid(row=7, column=0, sticky="ew", pady=(14, 0))
+        self.add_btn.grid(row=9, column=0, sticky="ew", pady=(14, 0))
 
     def _build_queue(self, parent: Any) -> None:
         p = self.palette
@@ -912,6 +979,7 @@ class InterMuxApp:
         self._apply_interfaces(result["interfaces"])
         self._apply_bindings(result["bindings"])
         self._apply_adoptions(result.get("adoptions", []))
+        self._namespaces = dict(result.get("namespaces") or {})
         self._render_cards()
         self._render_lanes()
         self._update_buttons()
@@ -999,6 +1067,7 @@ class InterMuxApp:
             else:
                 lane.separator.grid_remove()
             lane.set_chips(self._chips_for(iface.name), self.select_binding, self._show_app_menu)
+            lane.set_namespace(self._namespaces.get(iface.name), self._show_lane_menu)
         if wanted:
             self.lanes_empty.place_forget()
         else:
@@ -1111,7 +1180,8 @@ class InterMuxApp:
             else:
                 name = ns_key(data["iface"])
                 card.set_traffic(self.tracker.history(name) if name in self.tracker.names() else
-                                 [(0.0, 0.0)] * self.tracker.size, shared.get(data["iface"], 1))
+                                 [(0.0, 0.0)] * self.tracker.size, shared.get(data["iface"], 1),
+                                 self.tracker.totals(name))
         self.live_label.configure(text=f"live · {time.strftime('%H:%M:%S')}")
 
     # -- bindings -----------------------------------------------------------
@@ -1182,6 +1252,8 @@ class InterMuxApp:
             states = row_button_states(bool(data["running"]), idle)
             menu.add_command(label="Verify public IP", command=self._on_verify,
                              state="normal" if states["verify"] else "disabled")
+            menu.add_command(label="Restart", command=self._on_restart,
+                             state="normal" if states["restart"] else "disabled")
             menu.add_command(label="Stop", command=self._on_stop, state="normal" if states["stop"] else "disabled")
             menu.add_command(label="Open log", command=self._on_open_log,
                              state="normal" if states["log"] else "disabled")
@@ -1287,8 +1359,16 @@ class InterMuxApp:
         if entry is not None:
             self._picked_entries[app_path] = entry
         name = entry.name if entry is not None else os.path.basename(app_path)
+        try:
+            dns_value = dialogs.dns_choice_value(self.dns_var.get())
+        except ValueError as exc:
+            self._set_status(f"Could not use the DNS servers: {exc}", "error")
+            return
         item = {"iface": iface, "app": app_path, "name": name,
-                "policy": "separate" if self.separate_var.get() else "ask"}
+                "policy": "separate" if self.separate_var.get() else "ask",
+                # "Automatic" keeps what an existing namespace uses; a new one picks servers automatically.
+                "dns": dnsconf.KEEP if dns_value == dnsconf.AUTO else dns_value,
+                "dns_text": "" if dns_value == dnsconf.AUTO else self.dns_var.get().strip()}
         if queue_add(self._pending, item):
             self._set_status(f"Added {name} via {iface} to pending.")
         else:
@@ -1364,7 +1444,7 @@ class InterMuxApp:
                 op = {"op": "adopt", "iface": item["iface"], "app": item["app"]}
             else:
                 op = {"op": "bind", "iface": item["iface"], "app": item["app"],
-                      "running_policy": policy}
+                      "running_policy": policy, "dns": item.get("dns", dnsconf.KEEP)}
             plan.append((item, op))
         if not plan:
             self._assigning = False
@@ -1392,12 +1472,15 @@ class InterMuxApp:
                 if item in self._pending:
                     self._pending.remove(item)
                 done.append(name)
+                self.history.add(HistoryItem(app=item["app"], name=name, iface=item["iface"],
+                                             dns=item.get("dns_text", "")))
             else:
                 err = result.get("error") if isinstance(result, dict) else None
                 err = err if isinstance(err, dict) else {}
                 failed.append(f"{name} ({err.get('code') or 'error'}: {err.get('message') or 'failed'})")
         self._render_pending()
         self._update_buttons()
+        self.path_entry.configure(values=self._history_values())
         if failed:
             prefix = f"Assigned {len(done)}. " if done else ""
             self._set_status(f"{prefix}Failed, still pending: " + "; ".join(failed), "error")
@@ -1405,6 +1488,137 @@ class InterMuxApp:
             self._set_status("Assigned " + ", ".join(done) + ".", "success")
         else:
             self._set_status("Nothing was assigned.")
+
+    # -- history ------------------------------------------------------------
+
+    def _history_values(self) -> List[str]:
+        return [item.app for item in self.history.items]
+
+    def _on_history_pick(self) -> None:
+        """Picking a recent app restores the DNS it was routed with (and its connection, if still usable)."""
+        item = self.history.find(self.app_var.get().strip())
+        if item is None:
+            return
+        self.dns_var.set(item.dns or dialogs.AUTO_LABEL)
+        label = next((lbl for lbl, name in self._iface_map.items() if name == item.iface), None)
+        if label is not None:
+            self.iface_var.set(label)
+        self._update_buttons()
+
+    # -- per-app and per-connection controls ------------------------------
+
+    def _on_restart(self) -> None:
+        row = self._selected_row()
+        if row is None:
+            return
+        self._run_mutation(
+            f"Restarting {row['app_name']} on {row['iface']}",
+            _env_task, partial(_restart_call, row["iface"], row["app"]),
+            on_done=partial(self._on_restart_done, row["app_name"]),
+        )
+
+    def _on_restart_done(self, name: str, result: Any, error: Optional[BaseException]) -> None:
+        if error is not None:
+            self._fail("Restart failed", error)
+            return
+        warnings = result.get("warnings", []) if isinstance(result, dict) else []
+        self._set_status(f"Restarted {name}." + (f" Warning: {warnings[0]}" if warnings else ""),
+                         "warning" if warnings else "success")
+
+    def _show_lane_menu(self, iface: str, event: Any) -> None:
+        """The settings of a connection's namespace: limit, DNS, reconnect, remove."""
+        p = self.palette
+        info = self._namespaces.get(iface) or {}
+        idle = self._busy == 0
+        state_ = "normal" if idle else "disabled"
+        menu = tk.Menu(self.root, tearoff=False, background=p["surface_alt"], foreground=p["text"],
+                       activebackground=p["accent"], activeforeground=p["accent_text"],
+                       disabledforeground=p["line_hi"], borderwidth=1, relief="flat")
+        menu.add_command(label="Limit bandwidth…", state=state_, command=lambda: self._on_limit(iface))
+        menu.add_command(label="DNS servers…", state=state_, command=lambda: self._on_dns(iface))
+        menu.add_command(label="Re-add routes", state=state_, command=self._on_reconnect)
+        menu.add_separator()
+        menu.add_command(label="Remove namespace…", state=state_, command=lambda: self._on_remove_namespace(iface))
+        if not info:
+            for index in (0, 1, 4):
+                menu.entryconfigure(index, state="disabled")
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _on_limit(self, iface: str) -> None:
+        current = (self._namespaces.get(iface) or {}).get("limit") or {}
+        answer = dialogs.LimitDialog(self.root, iface, current).run()
+        if answer is None:
+            return
+        down, up = answer
+        self._run_mutation(f"Setting the bandwidth limit of {iface}", helper_client.call, "set_limit",
+                           {"iface": iface, "down": down, "up": up},
+                           on_done=partial(self._on_limit_done, iface))
+
+    def _on_limit_done(self, iface: str, result: Any, error: Optional[BaseException]) -> None:
+        if error is not None:
+            self._fail("Bandwidth limit failed", error)
+            return
+        from intermux.system import shaping
+        if not result.get("down") and not result.get("up"):
+            self._set_status(f"Removed the bandwidth limit of {iface}.", "success")
+        else:
+            self._set_status(f"Limited {iface}: download {shaping.format_mbit(result.get('down'))}, "
+                             f"upload {shaping.format_mbit(result.get('up'))}.", "success")
+
+    def _on_dns(self, iface: str) -> None:
+        current = (self._namespaces.get(iface) or {}).get("dns") or []
+        answer = dialogs.DnsDialog(self.root, iface, current).run()
+        if answer is None:
+            return
+        self._run_mutation(f"Changing the DNS of {iface}", helper_client.call, "set_dns",
+                           {"iface": iface, "dns": answer}, on_done=partial(self._on_dns_done, iface))
+
+    def _on_dns_done(self, iface: str, result: Any, error: Optional[BaseException]) -> None:
+        if error is not None:
+            self._fail("DNS change failed", error)
+            return
+        label = "automatic" if result.get("automatic") else dnsconf.describe(result.get("servers") or [])
+        warnings = result.get("warnings") or []
+        self._set_status(f"DNS of {iface}: {label}." + (f" Warning: {warnings[0]}" if warnings else ""),
+                         "warning" if warnings else "success")
+
+    def _on_reconnect(self) -> None:
+        self._run_mutation("Re-adding routes", helper_client.call, "reconnect", on_done=self._on_reconnect_done)
+
+    def _on_reconnect_done(self, result: Any, error: Optional[BaseException]) -> None:
+        if error is not None:
+            self._fail("Re-adding routes failed", error)
+            return
+        refreshed = result.get("refreshed") or []
+        self._set_status(f"Routes re-added for {', '.join(refreshed)}." if refreshed
+                         else "Every connection that is up already has its route.")
+
+    def _on_remove_namespace(self, iface: str) -> None:
+        names = [r["app_name"] for r in self._rows.values() if r["iface"] == iface]
+        choice, _ = _ask_choice(
+            self.root, "Remove namespace",
+            f"Stop everything running through {iface} and remove its namespace, routes and rules?"
+            + (f"\n\nApps: {', '.join(names)}." if names else "")
+            + " Unsaved work in those apps may be lost.",
+            [("Remove", "kill"), ("Cancel", None)],
+        )
+        if choice != "kill":
+            return
+        self._run_mutation(f"Removing the {iface} namespace", helper_client.call, "remove_namespace",
+                           {"iface": iface}, on_done=partial(self._on_remove_namespace_done, iface))
+
+    def _on_remove_namespace_done(self, iface: str, result: Any, error: Optional[BaseException]) -> None:
+        if error is not None:
+            self._fail("Remove failed", error)
+            return
+        if result.get("removed"):
+            self._set_status(f"Removed the {iface} namespace.", "success")
+        else:
+            still = result.get("still_running") or []
+            self._set_status(still_running_message(iface, "remove", still), "warning")
 
     def _on_stop(self) -> None:
         row = self._selected_row()

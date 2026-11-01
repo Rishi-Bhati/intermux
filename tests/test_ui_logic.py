@@ -287,9 +287,9 @@ class RowStateTests(unittest.TestCase):
     def test_running_row_all_enabled_when_idle(self):
         self.assertTrue(all(row_button_states(True, True).values()))
 
-    def test_stopped_row_keeps_only_log(self):
+    def test_stopped_row_keeps_log_and_restart(self):
         self.assertEqual(row_button_states(False, True),
-                         {"verify": False, "stop": False, "log": True, "force": False})
+                         {"verify": False, "stop": False, "log": True, "force": False, "restart": True})
 
     def test_busy_disables_everything(self):
         self.assertFalse(any(row_button_states(True, False).values()))

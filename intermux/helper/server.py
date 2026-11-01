@@ -67,7 +67,7 @@ def _resolve_user(environ: Mapping[str, str]) -> "session.UserInfo":
     return session.user_for_uid(uid)
 
 
-_USER_ACTIONS = ("bind", "stop_app", "kill_app", "adopt", "batch")
+_USER_ACTIONS = ("bind", "stop_app", "kill_app", "adopt", "batch", "restart_app", "remove_namespace")
 
 
 def _require_user(user: Optional["session.UserInfo"]) -> "session.UserInfo":
@@ -90,6 +90,7 @@ def _run_batch(ops: Sequence[Dict[str, Any]], user: "session.UserInfo") -> list:
                     user=user,
                     env=_sanitize_bind_env(op["env"], user),
                     running_policy=op["running_policy"],
+                    dns=op.get("dns", "keep"),
                 )
             else:
                 data = engine.adopt(op["iface"], op["app"], user=user)
@@ -120,6 +121,7 @@ def _dispatch(action: str, params: Dict[str, Any], user: Optional["session.UserI
                 user=user,
                 env=env,
                 running_policy=params["running_policy"],
+                dns=params["dns"],
             )
         if action == "stop_app":
             return engine.stop_app(params["iface"], params["app"], uid=user.uid)
@@ -137,6 +139,17 @@ def _dispatch(action: str, params: Dict[str, Any], user: Optional["session.UserI
             return engine.adopt(params["iface"], params["app"], user=user)
         if action == "release_adoption":
             return engine.release_adoption(params["id"], user=user)
+        if action == "set_dns":
+            return engine.set_dns(params["iface"], params["dns"])
+        if action == "set_limit":
+            return engine.set_limit(params["iface"], params["down"], params["up"])
+        if action == "restart_app":
+            return engine.restart_app(params["iface"], params["app"], user=user,
+                                      env=_sanitize_bind_env(params["env"], user))
+        if action == "remove_namespace":
+            return engine.remove_namespace(params["iface"], uid=user.uid)
+        if action == "reconnect":
+            return engine.refresh_routes()
     raise ValidationError("unknown action")
 
 

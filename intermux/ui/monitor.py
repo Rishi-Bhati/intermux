@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from intermux import dnsconf
 from intermux.system import traffic
 from intermux.ui import graph, theme
 
@@ -111,6 +112,26 @@ class ColourBook:
         return self._given[key]
 
 
+def namespace_badges(info: Optional[Dict[str, Any]]) -> str:
+    """"DNS Cloudflare · ↓ 20 Mbit/s ↑ 5 Mbit/s" for a namespace with hand-picked settings, else "". Pure."""
+    if not info:
+        return ""
+    from intermux.system import shaping
+
+    parts = []
+    if info.get("dns"):
+        parts.append(f"DNS {dnsconf.describe(info['dns'])}")
+    limit = info.get("limit") or {}
+    caps = []
+    if limit.get("down"):
+        caps.append(f"↓ {shaping.format_mbit(limit['down'])}")
+    if limit.get("up"):
+        caps.append(f"↑ {shaping.format_mbit(limit['up'])}")
+    if caps:
+        parts.append("limit " + " ".join(caps))
+    return "  ·  ".join(parts)
+
+
 def graph_scale(history: Sequence[Tuple[float, float]]) -> float:
     """A round ceiling over both directions of a lane's history. Pure."""
     peak = max((max(d, u) for d, u in history), default=0.0)
@@ -190,6 +211,9 @@ class LaneRow:
         self.dot.pack(side="left")
         self.state = tk.Label(state, text="", background=bg, foreground=p["text_muted"], font=theme.font("small"))
         self.state.pack(side="left", padx=(6, 0))
+        self.badges = tk.Label(ident, text="", background=bg, foreground=p["text_muted"], font=theme.font("small"),
+                               justify="left", anchor="w")
+        self.badges.grid(row=4, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         main = tk.Frame(self.frame, background=bg)
         main.grid(row=0, column=1, sticky="nsew", padx=(0, 18), pady=(10, 10))
@@ -202,7 +226,12 @@ class LaneRow:
         self.chips_host.grid(row=0, column=0, sticky="w")
         self.route_btn = ttk.Button(strip, text="+ Route an app here", style="Small.Link.TButton",
                                     command=lambda: on_route(self.name))
-        self.route_btn.grid(row=0, column=1, sticky="e")
+        self.route_btn.grid(row=0, column=2, sticky="e")
+        self.menu_btn = ttk.Button(strip, text="Settings ▾", style="Small.CardGhost.TButton")
+        self.menu_btn.grid(row=0, column=3, sticky="e", padx=(4, 0))
+        self.menu_btn.grid_remove()
+        self._on_menu: Optional[Callable[[str, Any], None]] = None
+        self.menu_btn.bind("<ButtonRelease-1>", self._open_menu)
         self.graph = graph.TrafficGraph(main, bg, height=GRAPH_HEIGHT)
         self.graph.canvas.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
 
@@ -222,6 +251,24 @@ class LaneRow:
             self.route_btn.grid_remove()
         self._iface = iface
         self._kind = kind
+
+    def _open_menu(self, event: Any) -> None:
+        if self._on_menu is not None and not self.menu_btn.instate(["disabled"]):
+            self._on_menu(self.name, event)
+
+    def set_namespace(self, info: Optional[Dict[str, Any]], on_menu: Callable[[str, Any], None]) -> None:
+        """Show the namespace's DNS and limit next to the chips, and its settings menu, when one exists."""
+        self._on_menu = on_menu
+        text = namespace_badges(info).replace("  ·  ", "\n")
+        self.badges.configure(text=text)
+        if text:
+            self.badges.grid()
+        else:
+            self.badges.grid_remove()
+        if info is None:
+            self.menu_btn.grid_remove()
+        else:
+            self.menu_btn.grid()
 
     def set_chips(self, apps: Sequence[Dict[str, Any]], on_click: Callable[[str], None],
                   on_menu: Optional[Callable[[str, Any], None]] = None) -> None:

@@ -121,6 +121,11 @@ class RateTracker:
             return 0, 0
         return max(last[1] - first[0], 0), max(last[2] - first[1], 0)
 
+    def totals(self, name: str) -> Optional[Tuple[int, int]]:
+        """The latest raw (download, upload) byte counts, e.g. since a veth pair was created."""
+        last = self._last.get(name)
+        return (last[1], last[2]) if last is not None else None
+
     def peak(self, name: str) -> float:
         series = self._history.get(name)
         return max((max(d, u) for d, u in series), default=0.0) if series else 0.0

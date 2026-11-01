@@ -147,3 +147,79 @@ class AppHelperTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Phase2HelperTests(unittest.TestCase):
+    def test_pending_detail(self):
+        item = {"iface": "wlan0", "app": "/usr/bin/x", "dns": "keep"}
+        self.assertEqual(appmod.pending_detail(item, []), "via wlan0 · new namespace · automatic DNS")
+        self.assertEqual(appmod.pending_detail(item, ["wlan0"]), "via wlan0 · existing namespace · keeps its DNS")
+        item["dns"] = ["1.1.1.1", "1.0.0.1"]
+        self.assertEqual(appmod.pending_detail(item, ["wlan0"]), "via wlan0 · existing namespace · DNS Cloudflare")
+
+    def test_pids_text(self):
+        self.assertEqual(appmod.pids_text([]), "")
+        self.assertEqual(appmod.pids_text([7]), "1 process (7)")
+        self.assertEqual(appmod.pids_text([1, 2, 3, 4]), "4 processes (1, 2, +2)")
+
+    def test_namespace_settings_and_badges(self):
+        from intermux import state
+        st = state.State(subnets={"wlan0": "10.200.1.0/24", "eth0": "10.200.2.0/24"},
+                         dns={"wlan0": ["9.9.9.9", "149.112.112.112"]}, limits={"wlan0": {"down": 20.0, "up": 0.5}})
+        info = appmod.namespace_settings(st)
+        self.assertEqual(info["eth0"], {"dns": [], "limit": {}})
+        self.assertEqual(monitor.namespace_badges(info["wlan0"]), "DNS Quad9  ·  limit ↓ 20 Mbit/s ↑ 500 kbit/s")
+        self.assertEqual(monitor.namespace_badges(info["eth0"]), "")
+        self.assertEqual(monitor.namespace_badges(None), "")
+
+    def test_tracker_totals(self):
+        t = traffic.RateTracker()
+        self.assertIsNone(t.totals("x"))
+        t.update({"x": (10, 20)}, 0.0)
+        self.assertEqual(t.totals("x"), (10, 20))
+
+
+class DialogParsingTests(unittest.TestCase):
+    def test_dns_choice(self):
+        from intermux.ui import dialogs
+        self.assertEqual(dialogs.dns_choice_value("Automatic"), "auto")
+        self.assertEqual(dialogs.dns_choice_value("  "), "auto")
+        self.assertEqual(dialogs.dns_choice_value(dialogs.DNS_CHOICES[1]), ["1.1.1.1", "1.0.0.1"])
+        self.assertEqual(dialogs.dns_choice_label(["8.8.8.8", "8.8.4.4"]), "Google: 8.8.8.8, 8.8.4.4")
+        self.assertEqual(dialogs.dns_choice_label([]), "Automatic")
+        with self.assertRaises(ValueError):
+            dialogs.dns_choice_value("localhost")
+
+    def test_limit_field(self):
+        from intermux.ui import dialogs
+        self.assertIsNone(dialogs.parse_limit(""))
+        self.assertIsNone(dialogs.parse_limit("0"))
+        self.assertEqual(dialogs.parse_limit("2,5"), 2.5)
+        for bad in ("abc", "-3", "1e9"):
+            with self.subTest(text=bad), self.assertRaises(ValueError):
+                dialogs.parse_limit(bad)
+
+
+class HistoryTests(unittest.TestCase):
+    def test_add_dedupes_limits_and_persists(self):
+        from intermux.ui.history import History, Item, LIMIT
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "state" / "history.json"
+            h = History(path)
+            for i in range(LIMIT + 3):
+                h.add(Item(app=f"/usr/bin/app{i}", name=f"app{i}"))
+            h.add(Item(app="/usr/bin/app5", name="app5", iface="wlan0", dns="Quad9"))
+            again = History(path)
+            self.assertEqual(len(again.items), LIMIT)
+            self.assertEqual(again.items[0].app, "/usr/bin/app5")
+            self.assertEqual(again.find("/usr/bin/app5").dns, "Quad9")
+            self.assertEqual(sum(1 for i in again.items if i.app == "/usr/bin/app5"), 1)
+
+    def test_bad_file_is_ignored(self):
+        from intermux.ui.history import History
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "history.json"
+            path.write_text('[{"app": "relative"}, 5, {"app": "/ok", "name": "ok"}]')
+            self.assertEqual([i.app for i in History(path).items], ["/ok"])
+            path.write_text("not json")
+            self.assertEqual(History(path).items, [])

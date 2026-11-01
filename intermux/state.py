@@ -72,6 +72,14 @@ class State:
     bindings: List[Binding] = field(default_factory=list)
     ip_forward_prev: Optional[str] = None                   # value before we first enabled forwarding
     adoptions: List[Adoption] = field(default_factory=list)
+    dns: Dict[str, List[str]] = field(default_factory=dict)   # iface -> DNS servers chosen by hand
+    limits: Dict[str, Dict[str, Optional[float]]] = field(default_factory=dict)  # iface -> {"down", "up"} Mbit/s
+
+    def forget_iface(self, iface: str) -> None:
+        """Drop everything kept per interface once its namespace is gone."""
+        self.subnets.pop(iface, None)
+        self.dns.pop(iface, None)
+        self.limits.pop(iface, None)
 
     def bindings_for_iface(self, iface: str) -> List[Binding]:
         return [b for b in self.bindings if b.iface == iface]
@@ -134,7 +142,42 @@ def state_from_dict(data: Dict[str, Any]) -> State:
         bindings=bindings,
         ip_forward_prev=None if ip_prev is None else str(ip_prev),
         adoptions=adoptions,
+        dns=_dns_from_dict(data.get("dns")),
+        limits=_limits_from_dict(data.get("limits")),
     )
+
+
+def _dns_from_dict(raw: Any) -> Dict[str, List[str]]:
+    from intermux import dnsconf
+
+    found: Dict[str, List[str]] = {}
+    if not isinstance(raw, dict):
+        return found
+    for iface, servers in raw.items():
+        try:
+            found[str(iface)] = dnsconf.check_servers(servers)
+        except ValueError:
+            log.warning("ignoring malformed DNS entry: %r -> %r", iface, servers)
+    return found
+
+
+def _limits_from_dict(raw: Any) -> Dict[str, Dict[str, Optional[float]]]:
+    from intermux.system import shaping
+
+    found: Dict[str, Dict[str, Optional[float]]] = {}
+    if not isinstance(raw, dict):
+        return found
+    for iface, item in raw.items():
+        try:
+            if not isinstance(item, dict):
+                raise ValueError("not an object")
+            limit = {"down": shaping.check_mbit(item.get("down")), "up": shaping.check_mbit(item.get("up"))}
+        except ValueError:
+            log.warning("ignoring malformed limit entry: %r -> %r", iface, item)
+            continue
+        if limit["down"] or limit["up"]:
+            found[str(iface)] = limit
+    return found
 
 
 def _to_int(value: Any, default: int) -> int:

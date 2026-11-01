@@ -28,5 +28,7 @@ ENV_ALLOWLIST = frozenset({
 
 APP_PATH_ENV = "/usr/local/bin:/usr/bin:/bin"
 PUBLIC_IP_URL = "https://api.ipify.org"
-VIRTUAL_PREFIXES = ("lo", "veth", "br-", "docker", "virbr", "vmnet", "vboxnet", "tun", "tap")
+VIRTUAL_PREFIXES = ("lo", "veth", "br-", "docker", "virbr", "vmnet", "vboxnet")
+# VPN tunnels: an app can be routed through one without turning the VPN on for the whole system.
+VPN_PREFIXES = ("tun", "tap", "wg", "ppp")
 APP_LOG_DIR_REL = Path(".local/state/intermux/logs")   # relative to the user's home

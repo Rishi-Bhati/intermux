@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
-from intermux.config import VIRTUAL_PREFIXES
+from intermux.config import VIRTUAL_PREFIXES, VPN_PREFIXES
 from intermux.system import commands
 
 log = logging.getLogger("intermux.netinfo")
@@ -29,7 +29,7 @@ class Address:
 @dataclass
 class Interface:
     name: str
-    kind: str                    # "wifi" | "ethernet" | "usb" | "bluetooth" | "mobile" | "virtual" | "other"
+    kind: str                    # "wifi" | "ethernet" | "usb" | "bluetooth" | "mobile" | "vpn" | "virtual" | "other"
     up: bool
     operstate: str
     flags: List[str]
@@ -48,8 +48,19 @@ class Interface:
         return is_virtual_name(self.name) or self.kind == "virtual"
 
     @property
+    def is_vpn(self) -> bool:
+        return self.kind == "vpn"
+
+    @property
     def bindable(self) -> bool:
-        return self.up and bool(self.ipv4_cidrs) and not self.is_virtual and self.default_route
+        """Up with an IPv4 address and a way out: a default route through it, or a VPN tunnel.
+
+        A tunnel needs no default route in the main table: the namespace gets its own default route
+        straight into the tunnel (WireGuard, OpenVPN tun, PPP have no gateway), so a VPN can carry one app
+        while the rest of the system keeps its normal route."""
+        if not self.up or not self.ipv4_cidrs or self.is_virtual:
+            return False
+        return self.default_route or self.is_vpn
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -60,10 +71,17 @@ def is_virtual_name(name: str) -> bool:
     return name.startswith(tuple(VIRTUAL_PREFIXES))
 
 
+def is_vpn_name(name: str) -> bool:
+    """True when the interface name starts with one of config.VPN_PREFIXES (tun, tap, wg, ppp)."""
+    return name.startswith(tuple(VPN_PREFIXES))
+
+
 def classify_kind(name: str, sys_class_net: Path = Path("/sys/class/net")) -> str:
     """Classify an interface by its name and its sysfs entry."""
     if is_virtual_name(name):
         return "virtual"
+    if is_vpn_name(name):
+        return "vpn"
     dev = Path(sys_class_net) / name
     if _exists(dev / "wireless") or _exists(dev / "phy80211"):
         return "wifi"

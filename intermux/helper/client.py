@@ -83,6 +83,7 @@ def bind(
     *,
     running_policy: str = "ask",
     env: Optional[Dict[str, str]] = None,
+    dns: Any = "keep",
 ) -> Any:
     """Bind an application to an interface through the helper."""
     return call(
@@ -92,6 +93,7 @@ def bind(
             "app": app,
             "running_policy": running_policy,
             "env": dict(env or {}),
+            "dns": dns,
         },
     )
 

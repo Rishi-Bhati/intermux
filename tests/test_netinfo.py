@@ -113,7 +113,7 @@ class ParseIpJsonTests(_SysfsTestCase):
             "wlan0": "wifi",
             "enp3s0": "ethernet",
             "enp0s20u1": "usb",
-            "tun0": "virtual",
+            "tun0": "vpn",
             "docker0": "virtual",
         })
 
@@ -152,7 +152,19 @@ class ParseIpJsonTests(_SysfsTestCase):
         tun = self.by_name["tun0"]
         self.assertTrue(tun.default_route)
         self.assertEqual(tun.gateways, [])
-        self.assertFalse(tun.bindable)
+        # A VPN tunnel is bindable: the namespace route goes straight into it.
+        self.assertTrue(tun.bindable)
+
+    def test_vpn_without_default_route_is_bindable(self) -> None:
+        wg = Interface(name="wg0", kind="vpn", up=True, operstate="UNKNOWN", flags=["UP"], mac=None, mtu=1420,
+                       addresses=[Address("inet", "10.66.0.2", 32, None, "global")], default_route=False,
+                       gateways=[])
+        self.assertTrue(wg.is_vpn)
+        self.assertTrue(wg.bindable)
+        down = Interface(name="wg1", kind="vpn", up=False, operstate="DOWN", flags=[], mac=None, mtu=1420,
+                         addresses=[Address("inet", "10.66.0.3", 32, None, "global")], default_route=False,
+                         gateways=[])
+        self.assertFalse(down.bindable)
 
     def test_default_route_and_gateways(self) -> None:
         wlan = self.by_name["wlan0"]
@@ -168,8 +180,8 @@ class ParseIpJsonTests(_SysfsTestCase):
         self.assertFalse(self.by_name["enp3s0"].bindable)
         # down, no address
         self.assertFalse(self.by_name["enp0s20u1"].bindable)
-        # virtual names and kinds are never bindable
-        self.assertFalse(self.by_name["tun0"].bindable)
+        # virtual names and kinds are never bindable; VPN tunnels are
+        self.assertTrue(self.by_name["tun0"].bindable)
         self.assertFalse(self.by_name["docker0"].bindable)
 
     def test_to_dict_is_json_safe(self) -> None:
@@ -245,12 +257,12 @@ class ParseIpJsonEdgeCaseTests(_SysfsTestCase):
 
 class IsVirtualNameTests(unittest.TestCase):
     def test_virtual_prefixes(self) -> None:
-        for name in ("lo", "veth0_1a2b3c4d", "br-1f2e3d4c", "docker0", "virbr0", "vmnet8", "vboxnet0", "tun0", "tap0"):
+        for name in ("lo", "veth0_1a2b3c4d", "br-1f2e3d4c", "docker0", "virbr0", "vmnet8", "vboxnet0"):
             with self.subTest(name=name):
                 self.assertTrue(is_virtual_name(name))
 
     def test_physical_names(self) -> None:
-        for name in ("eth0", "wlan0", "enp3s0", "wlp2s0", "wwan0", "enx00e04c680102", "bnep0"):
+        for name in ("eth0", "wlan0", "enp3s0", "wlp2s0", "wwan0", "enx00e04c680102", "bnep0", "tun0", "wg0"):
             with self.subTest(name=name):
                 self.assertFalse(is_virtual_name(name))
 
@@ -296,8 +308,13 @@ class ClassifyKindTests(_SysfsTestCase):
         (self._iface_dir("docker0") / "wireless").mkdir()
         self._device_under("tun0", "pci0000:00/0000:00:14.0/usb1/1-3")
         self.assertEqual(classify_kind("docker0", self.sys_net), "virtual")
-        self.assertEqual(classify_kind("tun0", self.sys_net), "virtual")
+        self.assertEqual(classify_kind("tun0", self.sys_net), "vpn")
         self.assertEqual(classify_kind("veth1a2b", self.sys_net), "virtual")
+
+    def test_vpn_by_prefix(self) -> None:
+        for name in ("tun0", "tap1", "wg0", "ppp0"):
+            with self.subTest(name=name):
+                self.assertEqual(classify_kind(name, self.sys_net), "vpn")
 
     def test_other(self) -> None:
         self._iface_dir("ib0")

@@ -15,12 +15,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-from intermux import apps, config, state, subnets
+from intermux import apps, config, dnsconf, state, subnets
 from intermux.apps import firefox
 from intermux.errors import (ConflictError, InterMuxError, NotFoundError, PermissionDeniedError,
                              ValidationError)
 from intermux.system import adopt as adopt_sys
-from intermux.system import commands, firewall, netinfo, netns, procs, routing
+from intermux.system import commands, firewall, netinfo, netns, procs, routing, shaping, traffic
 from intermux.system.session import UserInfo
 
 log = logging.getLogger("intermux.engine")
@@ -103,10 +103,19 @@ def build_launch_argv(namespace: str, user: UserInfo, env: Dict[str, str], app_p
 
 
 def bind(app_path: str, iface: str, *, user: UserInfo, env: Dict[str, str],
-         running_policy: str = "ask") -> Dict[str, Any]:
-    """Set up the namespace plumbing for iface and launch app_path inside it; records the binding in state."""
+         running_policy: str = "ask", dns: Any = dnsconf.KEEP,
+         keep_profile: Optional[str] = None) -> Dict[str, Any]:
+    """Set up the namespace plumbing for iface and launch app_path inside it; records the binding in state.
+
+    dns is dnsconf.KEEP (keep the namespace's servers; automatic for a new one), dnsconf.AUTO (automatic)
+    or a list of servers. keep_profile="separate" keeps a separate Firefox profile on restart."""
     if running_policy not in _RUNNING_POLICIES:
         raise ValidationError(f"unknown running policy: {running_policy}", code="invalid_request")
+    if dns not in (dnsconf.KEEP, dnsconf.AUTO):
+        try:
+            dns = dnsconf.check_servers(dns)
+        except ValueError as exc:
+            raise ValidationError(str(exc), code="invalid_request") from exc
     _reap_launched()
     if not os.path.isabs(user.home) or user.home == "/" or not os.path.isdir(user.home):
         raise ValidationError(f"the home directory {user.home} of user {user.username} does not exist; "
@@ -136,6 +145,13 @@ def bind(app_path: str, iface: str, *, user: UserInfo, env: Dict[str, str],
                                     code="still_running", data={"pids": survivors})
         else:
             profile_mode = "separate"
+    if keep_profile == "separate":
+        profile_mode = "separate"
+
+    if isinstance(dns, list):
+        st.dns[iface] = dns
+    elif dns == dnsconf.AUTO:
+        st.dns.pop(iface, None)
 
     if iface in st.subnets:
         subnet = ipaddress.IPv4Network(st.subnets[iface])
@@ -160,7 +176,7 @@ def _rollback_bind(st: state.State, iface: str, subnet: ipaddress.IPv4Network, n
         if st.bindings_for_iface(iface) or procs.pids_in_netns(ns):
             return
         _safe(_teardown_iface, iface, str(subnet))
-        st.subnets.pop(iface, None)
+        st.forget_iface(iface)
         if not st.bindings:
             st.ip_forward_prev = None
         state.save_state(st, config.STATE_FILE)
@@ -187,7 +203,9 @@ def _bind_plumbed(st: state.State, app_path: str, iface: str, interface: netinfo
     table = config.TABLE_BASE + index
     priority = config.PRIORITY_BASE + index
     routing.ensure_policy(subnet, iface, table, priority, gateway, host_v)
-    warnings = configure_namespace_dns(ns, ns_v, str(subnets.ns_ip(subnet)), namespace_dns_servers(interface))
+    warnings = configure_namespace_dns(ns, ns_v, str(subnets.ns_ip(subnet)),
+                                       st.dns.get(iface) or namespace_dns_servers(interface))
+    warnings += _apply_limits(iface, st.limits.get(iface))
     state.save_state(st, config.STATE_FILE)
 
     if handler.name == "firefox" and profile_mode == "default" and firefox.default_profile_dir(user.home) is None:
@@ -299,8 +317,127 @@ def status() -> List[Dict[str, Any]]:
             "running_pids": _binding_pids(st, b),
             "namespace_up": netns.namespace_exists(b.namespace),
             "nat_present": any(b.subnet in line.split() for line in nat_lines),
+            "dns": list(st.dns.get(b.iface, [])),
+            "limit": dict(st.limits.get(b.iface, {})),
+            "traffic": namespace_traffic(b.iface),
         })
     return result
+
+
+def namespace_traffic(iface: str) -> Optional[Dict[str, int]]:
+    """Bytes the namespace of iface downloaded and uploaded since it was created, from its host veth."""
+    host_v = netns.veth_names(iface)[0]
+    counters = traffic.read_counters([host_v]).get(host_v)
+    if counters is None:
+        return None
+    down, up = traffic.veth_sample(counters)
+    return {"down": down, "up": up}
+
+
+# ---------------------------------------------------------------------------
+# Per-namespace settings and control
+# ---------------------------------------------------------------------------
+
+def _require_namespace(st: state.State, iface: str) -> Tuple[ipaddress.IPv4Network, str]:
+    """The subnet and namespace of iface; NotFoundError when InterMux has no namespace for it."""
+    cidr = st.subnets.get(iface)
+    ns = netns.namespace_name(iface)
+    if cidr is None or not netns.namespace_exists(ns):
+        raise NotFoundError(f"InterMux has no namespace for {iface}; route an app through it first",
+                            code="no_namespace")
+    return ipaddress.IPv4Network(cidr), ns
+
+
+def _apply_limits(iface: str, limit: Optional[Dict[str, Optional[float]]]) -> List[str]:
+    """Shape the veth pair of iface's namespace; returns warnings instead of failing a bind."""
+    if not limit or not (limit.get("down") or limit.get("up")):
+        return []
+    host_v, ns_v = netns.veth_names(iface)
+    try:
+        shaping.set_limit(host_v, limit.get("down"))
+        shaping.set_limit(ns_v, limit.get("up"), namespace=netns.namespace_name(iface))
+    except InterMuxError as exc:
+        log.warning("bandwidth limit on %s failed: %s", iface, exc)
+        return [f"the bandwidth limit could not be applied: {exc.message}"]
+    return []
+
+
+def set_limit(iface: str, down: Optional[float], up: Optional[float]) -> Dict[str, Any]:
+    """Limit the download and upload of iface's namespace (Mbit/s; None removes that limit)."""
+    st = state.load_state(config.STATE_FILE)
+    _require_namespace(st, iface)
+    host_v, ns_v = netns.veth_names(iface)
+    shaping.set_limit(host_v, down)
+    shaping.set_limit(ns_v, up, namespace=netns.namespace_name(iface))
+    if down or up:
+        st.limits[iface] = {"down": down, "up": up}
+    else:
+        st.limits.pop(iface, None)
+    state.save_state(st, config.STATE_FILE)
+    return {"iface": iface, "down": down, "up": up}
+
+
+def set_dns(iface: str, dns: Any) -> Dict[str, Any]:
+    """Change the DNS servers of iface's namespace: dnsconf.AUTO or a list of servers.
+
+    resolv.conf is rewritten and stray DNS is redirected to the new servers, so apps that are already
+    running pick the change up (apps with their own DNS-over-HTTPS keep using that)."""
+    st = state.load_state(config.STATE_FILE)
+    subnet, ns = _require_namespace(st, iface)
+    if dns == dnsconf.AUTO:
+        st.dns.pop(iface, None)
+        servers = namespace_dns_servers(_find_interface(iface))
+    else:
+        try:
+            servers = dnsconf.check_servers(dns)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        st.dns[iface] = servers
+    _host_v, ns_v = netns.veth_names(iface)
+    warnings = configure_namespace_dns(ns, ns_v, str(subnets.ns_ip(subnet)), servers)
+    state.save_state(st, config.STATE_FILE)
+    return {"iface": iface, "servers": servers, "automatic": iface not in st.dns, "warnings": warnings}
+
+
+def restart_app(iface: str, app: str, *, user: UserInfo, env: Dict[str, str]) -> Dict[str, Any]:
+    """Stop the app's processes in iface's namespace and start it again there with the same profile."""
+    st = state.load_state(config.STATE_FILE)
+    binding = st.find_binding(iface, app)
+    if binding is None:
+        raise NotFoundError(f"no binding for {app} on {iface}")
+    stopped = stop_app(iface, app, uid=user.uid)
+    if stopped["still_running"]:
+        raise ConflictError("the application did not exit, so it was not restarted", code="still_running",
+                            data={"pids": stopped["still_running"]})
+    keep = "separate" if binding.profile_mode == "separate" else None
+    policy = "separate" if keep else "close"
+    return bind(app, iface, user=user, env=env, running_policy=policy, keep_profile=keep)
+
+
+def remove_namespace(iface: str, *, uid: int) -> Dict[str, Any]:
+    """Stop everything uid runs in iface's namespace (InterMux-started or not), then remove the namespace
+    with its routes, NAT rules and bindings. Processes of other users keep it alive and are reported."""
+    st = state.load_state(config.STATE_FILE)
+    cidr = st.subnets.get(iface)
+    ns = netns.namespace_name(iface)
+    if cidr is None and not st.bindings_for_iface(iface):
+        raise NotFoundError(f"InterMux has no namespace for {iface}", code="no_namespace")
+    table = procs.list_procs()
+    ino = procs.netns_inode(ns)
+    mine = [p.pid for p in table if ino is not None and p.netns == ino and p.uid == uid]
+    survivors = procs.terminate(procs.descendants(mine, uid=uid), grace=GRACE) if mine else []
+    left = procs.pids_in_netns(ns)
+    if left:
+        return {"iface": iface, "removed": False, "still_running": survivors or list(left)}
+    names = [b.app_name for b in st.bindings_for_iface(iface)]
+    st.bindings = [b for b in st.bindings if b.iface != iface]
+    if cidr is not None:
+        _teardown_iface(iface, cidr)
+    st.forget_iface(iface)
+    if not st.bindings:
+        st.ip_forward_prev = None
+    state.save_state(st, config.STATE_FILE)
+    return {"iface": iface, "removed": True, "apps": names, "still_running": []}
 
 
 def teardown_idle() -> Dict[str, Any]:
@@ -327,7 +464,7 @@ def teardown_idle() -> Dict[str, Any]:
         if iface in active or procs.pids_in_netns(netns.namespace_name(iface)):
             continue
         _teardown_iface(iface, cidr_for[iface])
-        st.subnets.pop(iface, None)
+        st.forget_iface(iface)
         torn.append(iface)
 
     if not st.bindings:
@@ -424,10 +561,13 @@ def reset(kill_apps: bool = False, uid: Optional[int] = None) -> Dict[str, Any]:
     # libvirt or a Tailscale exit node that also need forwarding.
     _safe(adopt_sys.sweep_leftovers)
 
+    kept_ifaces = {b.iface for b in kept_bindings}
     kept_state = state.State(
         bindings=kept_bindings,
         subnets={b.iface: b.subnet for b in kept_bindings},
         ip_forward_prev=st.ip_forward_prev if kept_bindings else None,
+        dns={k: v for k, v in st.dns.items() if k in kept_ifaces},
+        limits={k: v for k, v in st.limits.items() if k in kept_ifaces},
     )
     state.save_state(kept_state, config.STATE_FILE)
     return {"namespaces": [ns for ns in namespaces if ns not in busy], "veths": veths,
