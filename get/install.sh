@@ -362,7 +362,9 @@ install_deps() {
 # PyInstaller needs Python's shared library. Debian and Ubuntu ship it in a
 # separate libpython3.X package that python3 does not pull in.
 ensure_libpython() {
-    [ "$INSTALL_DEPS" -eq 1 ] && [ "$(pkg_manager)" = "apt-get" ] && have python3 || return 0
+    if [ "$INSTALL_DEPS" -ne 1 ] || [ "$(pkg_manager)" != "apt-get" ] || ! have python3; then
+        return 0
+    fi
     python3 - <<'PY' && return 0
 import os, sys, sysconfig as s
 name = s.get_config_var("INSTSONAME") or ""
@@ -398,8 +400,9 @@ fetch_prebuilt() {
     download "$_url.sha256" "$WORK_DIR/$ASSET.sha256" || die "Download failed: $_url.sha256"
     _want="$(cut -d' ' -f1 < "$WORK_DIR/$ASSET.sha256" | tr -d '\r\n')"
     _got="$(sha256_of "$WORK_DIR/$ASSET")"
-    [ -n "$_want" ] && [ "$_want" = "$_got" ] \
-        || die "Checksum mismatch for $ASSET (expected $_want, got $_got). Not installing."
+    if [ -z "$_want" ] || [ "$_want" != "$_got" ]; then
+        die "Checksum mismatch for $ASSET (expected $_want, got $_got). Not installing."
+    fi
     ok "Checksum verified ($_got)"
     ARCHIVE="$WORK_DIR/$ASSET"
 }
