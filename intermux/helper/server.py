@@ -81,9 +81,12 @@ def _run_batch(ops: Sequence[Dict[str, Any]], user: "session.UserInfo") -> list:
     results = []
     for op in ops:
         kind = op["op"]
-        log.info("batch %s %s via %s for uid %s", kind, op["app"], op["iface"], user.uid)
+        target = op.get("app") or "limit"
+        log.info("batch %s %s via %s for uid %s", kind, target, op["iface"], user.uid)
         try:
-            if kind == "bind":
+            if kind == "set_limit":
+                data = engine.set_limit(op["iface"], op["down"], op["up"])
+            elif kind == "bind":
                 data = engine.bind(
                     op["app"],
                     op["iface"],
@@ -96,10 +99,10 @@ def _run_batch(ops: Sequence[Dict[str, Any]], user: "session.UserInfo") -> list:
                 data = engine.adopt(op["iface"], op["app"], user=user)
             results.append({"ok": True, "data": data})
         except InterMuxError as exc:
-            log.warning("batch %s %s failed: %s", kind, op["app"], exc.message)
+            log.warning("batch %s %s failed: %s", kind, target, exc.message)
             results.append({"ok": False, "error": {"code": exc.code, "message": exc.message, "data": exc.data}})
         except Exception:  # noqa: BLE001 - one op's unexpected failure must not lose the other results
-            log.exception("batch %s %s failed unexpectedly", kind, op["app"])
+            log.exception("batch %s %s failed unexpectedly", kind, target)
             results.append({"ok": False, "error": {"code": "internal",
                                                    "message": "internal error; see the helper log", "data": None}})
     return results

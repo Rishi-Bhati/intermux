@@ -135,46 +135,6 @@ class TrafficGraph:
             c.create_oval(x - 3.2, y - 3.2, x + 3.2, y + 3.2, fill=colour, outline="")
 
 
-class Sparkline:
-    """A small line without axes, for stat tiles and app cards."""
-
-    def __init__(self, master: Any, background: str, width: int = 120, height: int = 28) -> None:
-        self.background = background
-        self.canvas = tk.Canvas(master, background=background, width=width, height=height,
-                                highlightthickness=0, borderwidth=0)
-        self._values: List[float] = []
-        self._scale = 1.0
-        self._colour = "#868B91"
-        self.canvas.bind("<Configure>", lambda _e: self.redraw())
-
-    def update(self, values: Sequence[float], scale: float, colour: str) -> None:
-        self._values = list(values)
-        self._scale = scale
-        self._colour = colour
-        self.redraw()
-
-    def redraw(self) -> None:
-        c = self.canvas
-        try:
-            width = c.winfo_width()
-            height = c.winfo_height()
-        except tk.TclError:
-            return
-        if width < 8 or height < 6:
-            return
-        c.delete("all")
-        points = series_points(self._values, width - 4, 3, height - 2, self._scale)
-        if len(points) > 1:
-            image = _gradient(c, width, height, self._colour, self.background)
-            c.create_image(0, 0, image=image, anchor="nw")
-            cover = [(0, 0)] + points + [(points[-1][0], 0)]
-            c.create_polygon(*[v for pt in cover for v in pt], fill=self.background, outline="")
-            c.create_rectangle(points[-1][0], 0, width, height, fill=self.background, outline="")
-            c.create_line(*[v for pt in points for v in pt], fill=self._colour, width=1.5)
-            x, y = points[-1]
-            c.create_oval(x - 2.5, y - 2.5, x + 2.5, y + 2.5, fill=self._colour, outline="")
-
-
 # ---------------------------------------------------------------------------
 # Glyphs
 # ---------------------------------------------------------------------------

@@ -14,9 +14,10 @@ from intermux.apps import desktop_entries
 from intermux.apps.desktop_entries import AppEntry
 from intermux.errors import InterMuxError
 from intermux.helper import client as helper_client
-from intermux.system import commands, deps, netinfo, netns, procs, traffic
+from intermux.system import commands, deps, netinfo, netns, procs, shaping, traffic
 from intermux.system import session as session_mod
-from intermux.ui import dialogs, graph, icons, monitor, theme
+from intermux.ui import connections, dialogs, graph, icons, monitor, theme
+from intermux.ui.tooltip import Tooltip, fit_text
 from intermux.ui.history import History, Item as HistoryItem
 from intermux.ui.worker import Worker
 
@@ -148,14 +149,6 @@ def ns_key(iface: str) -> str:
     return NS_PREFIX + iface
 
 
-def sum_series(histories: Sequence[Sequence[Tuple[float, float]]], index: int) -> List[float]:
-    """Element-wise sum of one direction (0 down, 1 up) over equally long histories. Pure."""
-    if not histories:
-        return []
-    length = min(len(h) for h in histories)
-    return [sum(h[len(h) - length + i][index] for h in histories) for i in range(length)]
-
-
 def routed_share(routed: float, total: float) -> str:
     """"42%" of total that went through InterMux, or "" when there is no traffic to compare. Pure."""
     if routed <= 0 or total <= 0:
@@ -214,14 +207,12 @@ KIND_LABELS = {
     "mobile": "Mobile", "vpn": "VPN", "virtual": "Virtual", "other": "Other",
 }
 NO_IFACE_TEXT = "No bindable interface found. Connect to a network and press Refresh."
-CARD_ICON = 32
 PENDING_ICON = 26
+TRAFFIC_HEIGHT = 230         # starting height of the Live traffic panel; drag the gap to resize
 TILE_ICON = 36
 DESIGN_SIZE = (1360, 900)
 MIN_SIZE = (1100, 640)
 SIDEBAR_WIDTH = 360
-NETWORK_MIN_HEIGHT = 200
-APPS_MIN_HEIGHT = 150
 ADOPT_PREFIX = "adopt:"
 
 
@@ -265,15 +256,23 @@ def pending_detail(item: Dict[str, Any], existing: Sequence[str]) -> str:
         dns_text = "keeps its DNS"
     else:
         dns_text = "automatic DNS"
-    return f"via {item['iface']} · {where} · {dns_text}"
+    text = f"via {item['iface']} · {where} · {dns_text}"
+    limit = item.get("limit") or {}
+    caps = [f"{arrow} {shaping.format_mbit(limit[key])}" for key, arrow in (("down", "↓"), ("up", "↑"))
+            if limit.get(key)]
+    if caps:
+        text += " · limit " + " ".join(caps)
+    return text
 
 
-def pids_text(pids: Sequence[int]) -> str:
-    """"1 process (1234)" or "4 processes (1234, 1240, +2)". Pure."""
-    if not pids:
-        return ""
-    shown = ", ".join(str(p) for p in list(pids)[:2]) + (f", +{len(pids) - 2}" if len(pids) > 2 else "")
-    return f"{len(pids)} process{'es' if len(pids) != 1 else ''} ({shown})"
+def limit_ops_for(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """set_limit batch ops for queued items that carry a speed limit, one per interface (last wins). Pure."""
+    chosen: Dict[str, Dict[str, Any]] = {}
+    for item in items:
+        if item.get("limit"):
+            chosen[item["iface"]] = {"op": "set_limit", "iface": item["iface"],
+                                     "down": item["limit"].get("down"), "up": item["limit"].get("up")}
+    return list(chosen.values())
 
 
 def queue_add(items: List[Dict[str, Any]], item: Dict[str, Any]) -> bool:
@@ -393,20 +392,6 @@ def _panel(parent: Any, eyebrow: str) -> Tuple[Any, Any, Any]:
     return panel, header, body
 
 
-def _pill(parent: Any, background: str) -> Any:
-    return tk.Label(parent, text="", font=theme.font("eyebrow"), padx=7, pady=1, background=background)
-
-
-def set_pill(pill: Any, kind: str) -> None:
-    """Style a status pill: "running"/"live" (green), "stopped"/"exited" (muted)."""
-    p = theme.current_palette()
-    if kind in ("running", "live"):
-        pill.configure(text=kind.upper(), background=graph.mix(p["surface"], p["success"], 0.16),
-                       foreground=p["success"])
-    else:
-        pill.configure(text=kind.upper(), background=p["surface_alt"], foreground=p["text_muted"])
-
-
 class _PendingRow:
     """One queued app in the sidebar: icon, name, "via <iface>" and a remove control."""
 
@@ -436,147 +421,6 @@ class _PendingRow:
         self.remove.bind("<Leave>", lambda _e: self.remove.configure(foreground=p["text_muted"]))
 
 
-class _AppCard:
-    """A routed app (a binding or an adoption) in the Routed apps panel. Updated in place on refresh.
-
-    Row one: icon, name and state on the left; the live traffic of its connection on the right.
-    Row two: which connection it uses and its verified public IP; the actions on the right.
-    """
-
-    def __init__(self, app: "InterMuxApp", parent: Any, key: str, adopted: bool) -> None:
-        p = theme.current_palette()
-        bg = p["surface"]
-        self.app = app
-        self.key = key
-        self.adopted = adopted
-        self.selected = False
-        self.icon_widget: Any = None
-        self.frame = tk.Frame(parent, background=bg, highlightthickness=1, highlightbackground=p["border"],
-                              highlightcolor=p["focus"], takefocus=0)
-        self.frame.columnconfigure(2, weight=1)
-        self.stripe = tk.Frame(self.frame, background=p["line_hi"], width=3)
-        self.stripe.grid(row=0, column=0, rowspan=3, sticky="ns")
-        self.icon_host = tk.Frame(self.frame, background=bg, width=CARD_ICON, height=CARD_ICON)
-        self.icon_host.grid(row=0, column=1, rowspan=2, padx=(12, 12), pady=12, sticky="n")
-        self.icon_host.grid_propagate(False)
-
-        title = tk.Frame(self.frame, background=bg)
-        title.grid(row=0, column=2, sticky="sw", pady=(11, 0))
-        self.name = tk.Label(title, text="", background=bg, foreground=p["text"], font=theme.font("section"))
-        self.name.pack(side="left")
-        self.pill = _pill(title, bg)
-        self.pill.pack(side="left", padx=(8, 0), pady=(2, 0))
-        self.kind = tk.Label(title, text="ADOPTED" if adopted else "", background=bg, foreground=p["text_muted"],
-                             font=theme.font("eyebrow"))
-        self.kind.pack(side="left", padx=(6, 0), pady=(2, 0))
-
-        via = tk.Frame(self.frame, background=bg)
-        via.grid(row=1, column=2, sticky="nw", pady=(3, 4))
-        self.via_glyph = tk.Canvas(via, width=16, height=16, background=bg, highlightthickness=0, borderwidth=0)
-        self.via_glyph.pack(side="left")
-        self.via = tk.Label(via, text="", background=bg, foreground=p["text_muted"], font=theme.font("mono"))
-        self.via.pack(side="left", padx=(5, 0))
-        self.ip = tk.Label(via, text="", background=bg, foreground=p["text"], font=theme.font("mono"))
-        self.ip.pack(side="left", padx=(10, 0))
-        self.extra = tk.Label(self.frame, text="", background=bg, foreground=p["text_muted"],
-                              font=theme.font("small"), anchor="w")
-        self.extra.grid(row=2, column=2, columnspan=2, sticky="ew", pady=(0, 10))
-
-        rate = tk.Frame(self.frame, background=bg)
-        rate.grid(row=0, column=3, sticky="se", padx=(8, 14), pady=(10, 0))
-        self.rate = tk.Label(rate, text="", background=bg, foreground=p["text"], font=theme.font("small"))
-        self.rate.pack(side="left", padx=(0, 10))
-        self.spark = graph.Sparkline(rate, bg, width=110, height=24)
-        self.spark.canvas.pack(side="left")
-
-        actions = tk.Frame(self.frame, background=bg)
-        actions.grid(row=1, column=3, sticky="ne", padx=(8, 12), pady=(6, 4))
-        if adopted:
-            self.buttons = [ttk.Button(actions, text="Release", style="Small.Secondary.TButton",
-                                       command=lambda: app._on_release_adoption(self.data))]
-        else:
-            self.buttons = [
-                ttk.Button(actions, text="Verify IP", style="Small.Secondary.TButton",
-                           command=lambda: self._act(app._on_verify)),
-                ttk.Button(actions, text="Restart", style="Small.Secondary.TButton",
-                           command=lambda: self._act(app._on_restart)),
-                ttk.Button(actions, text="Stop", style="Small.Secondary.TButton",
-                           command=lambda: self._act(app._on_stop)),
-                ttk.Button(actions, text="More ▾", style="Small.CardGhost.TButton"),
-            ]
-            # "More" opens the same menu as a right-click: log, move to another connection, force quit.
-            self.buttons[-1].bind("<ButtonRelease-1>", lambda e: (
-                None if self.buttons[-1].instate(["disabled"]) else app._show_app_menu(self.key, e)))
-        for index, button in enumerate(self.buttons):
-            button.grid(row=0, column=index, padx=(0 if index == 0 else 6, 0))
-        self.data: Dict[str, Any] = {}
-        for widget in (self.frame, self.icon_host, self.name, self.via, self.pill, self.ip, title, via, rate,
-                       self.rate, self.kind, self.stripe, self.via_glyph, self.spark.canvas, self.extra):
-            widget.bind("<Button-1>", lambda _e: app.select_binding(self.key))
-            widget.bind("<Button-3>", lambda e: app._show_app_menu(self.key, e))
-
-    def _act(self, handler: Any) -> None:
-        self.app.select_binding(self.key)
-        handler()
-
-    def set_icon(self, widget: Any) -> None:
-        if self.icon_widget is not None:
-            self.icon_widget.destroy()
-        self.icon_widget = widget
-        widget.place(relx=0.5, rely=0.5, anchor="center")
-        widget.bind("<Button-1>", lambda _e: self.app.select_binding(self.key))
-
-    def update(self, data: Dict[str, Any], public_ip: str, colour: str, kind: str) -> None:
-        p = theme.current_palette()
-        self.data = data
-        alive = data.get("alive", True) if self.adopted else data["running"]
-        self.name.configure(text=data["app_name"])
-        set_pill(self.pill, ("live" if alive else "exited") if self.adopted else ("running" if alive else "stopped"))
-        self.via.configure(text=f"via {data['iface']}")
-        self.via_glyph.delete("all")
-        graph.draw_kind_glyph(self.via_glyph, kind, 8, 8, 14, p["text_muted"], p["surface"])
-        self.ip.configure(text=f"IP {public_ip}" if public_ip else "")
-        self.stripe.configure(background=colour if alive else p["line_hi"])
-        self._pids = pids_text(data.get("pids") or []) if not self.adopted else ""
-
-    def set_traffic(self, history: Optional[Sequence[Tuple[float, float]]], shared: int,
-                    totals: Optional[Tuple[int, int]] = None) -> None:
-        p = theme.current_palette()
-        parts = [getattr(self, "_pids", "")]
-        if totals is not None:
-            parts.append(f"total ↓ {traffic.format_bytes(totals[0])} ↑ {traffic.format_bytes(totals[1])}")
-        text = "  ·  ".join(x for x in parts if x)
-        self.extra.configure(text=text)
-        if text:
-            self.extra.grid()
-        else:
-            self.extra.grid_remove()
-        if history is None:
-            self.rate.configure(text="counted on its connection", foreground=p["text_muted"])
-            self.spark.update([], 1.0, p["text_muted"])
-            return
-        down, up = history[-1]
-        suffix = f"  · shared by {shared}" if shared > 1 else ""
-        self.rate.configure(text=f"↓ {traffic.format_rate(down)}   ↑ {traffic.format_rate(up)}{suffix}",
-                            foreground=p["text"])
-        values = [d + u for d, u in history]
-        self.spark.update(values, traffic.nice_ceiling(max(values, default=0.0) * 1.1, floor=16 * 1024),
-                          p["success"])
-
-    def set_selected(self, selected: bool) -> None:
-        p = theme.current_palette()
-        self.selected = selected
-        self.frame.configure(highlightbackground=p["accent"] if selected else p["border"])
-
-    def set_enabled(self, enabled: bool, running: bool = True) -> None:
-        if self.adopted:
-            _set_enabled(self.buttons[0], enabled)
-            return
-        states = row_button_states(running, enabled)
-        for button, key in zip(self.buttons, ("verify", "restart", "stop", "log")):
-            _set_enabled(button, states[key])
-
-
 # ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
@@ -588,8 +432,13 @@ def initial_geometry(screen_w: int, screen_h: int) -> str:
     return f"{width}x{height}"
 
 
+def sash_colour(palette: Dict[str, str]) -> str:
+    """The resize handles between panels: a shade between the background and the panel border. Pure."""
+    return graph.mix(palette["bg"], palette["line_hi"], 0.35)
+
+
 class InterMuxApp:
-    """Main window: the live network view, routed apps, and a sidebar to route more apps."""
+    """Main window: connections with the apps routed through them, a form to route more, and live traffic."""
 
     def __init__(self, root: Any) -> None:
         self.root = root
@@ -601,8 +450,8 @@ class InterMuxApp:
         self._interfaces: List[Any] = []
         self._link_speeds: Dict[str, Optional[float]] = {}
         self._rows: Dict[str, Dict[str, Any]] = {}
-        self._cards: Dict[str, _AppCard] = {}
-        self._lanes: Dict[str, monitor.LaneRow] = {}
+        self._groups: Dict[str, connections.ConnectionGroup] = {}
+        self._traffic_rows: Dict[str, monitor.TrafficRow] = {}
         self._public_ips: Dict[str, Tuple[str, float]] = {}
         self._selected_iid: Optional[str] = None
         self._pending: List[Dict[str, Any]] = []
@@ -620,14 +469,19 @@ class InterMuxApp:
         root.title(f"InterMux {config.VERSION}")
         from intermux.ui.appicon import set_window_icon
         set_window_icon(root)
-        root.geometry(initial_geometry(root.winfo_screenwidth(), root.winfo_screenheight()))
         root.minsize(*MIN_SIZE)
+        root.geometry(initial_geometry(root.winfo_screenwidth(), root.winfo_screenheight()))
         self.app_var = tk.StringVar(root, value="")
         self.iface_var = tk.StringVar(root, value="")
         self.separate_var = tk.BooleanVar(root, value=False)
         self.dns_var = tk.StringVar(root, value=dialogs.AUTO_LABEL)
+        self.limit_down_var = tk.StringVar(root, value="")
+        self.limit_up_var = tk.StringVar(root, value="")
         self.session_var = tk.StringVar(root, value="Detecting session")
         self.status_var = tk.StringVar(root, value="")
+        self.actions = connections.Actions(
+            run=self._row_action, release=self._release_key, menu=self._show_app_menu,
+            add_app=self._on_route_here, dns=self._on_dns, limit=self._on_limit, group_menu=self._show_group_menu)
 
         self._build(root)
         self.app_var.trace_add("write", lambda *_: self._on_app_changed())
@@ -650,8 +504,8 @@ class InterMuxApp:
         root.rowconfigure(2, weight=1)
 
         header = tk.Frame(root, background=p["bg"])
-        header.grid(row=0, column=0, sticky="ew", padx=pad, pady=(16, 14))
-        graph.logo(header, 26, p["bg"]).pack(side="left")
+        header.grid(row=0, column=0, sticky="ew", padx=pad, pady=(14, 12))
+        graph.logo(header, 24, p["bg"]).pack(side="left")
         tk.Label(header, text="InterMux", background=p["bg"], foreground=p["text"],
                  font=theme.font("title")).pack(side="left", padx=(10, 0))
         tk.Label(header, text=f"v{config.VERSION}", background=p["bg"], foreground=p["text_muted"],
@@ -664,34 +518,28 @@ class InterMuxApp:
                                      foreground=p["text_muted"], font=theme.font("mono"), padx=7, pady=3)
         self.session_chip.pack(side="left")
         ttk.Button(header, text="Refresh", style="Ghost.TButton", command=self.refresh_all).pack(side="right")
-        ttk.Button(header, text="Report issue", style="Secondary.TButton", command=self._on_report).pack(
-            side="right", padx=(0, 8))
+        ttk.Button(header, text="Report issue", style="Ghost.TButton", command=self._on_report).pack(
+            side="right", padx=(0, 4))
 
         self.banner = ttk.Frame(root, padding=theme.SPACE_INNER, style="Banner.TFrame")
-        self.body = tk.Frame(root, background=p["bg"])
-        self.body.grid(row=2, column=0, sticky="nsew", padx=pad)
-        self.body.columnconfigure(0, weight=1)
-        self.body.columnconfigure(1, weight=0, minsize=SIDEBAR_WIDTH)
-        self.body.rowconfigure(0, weight=1)
 
-        main = tk.Frame(self.body, background=p["bg"])
-        self.main = main
-        main.grid(row=0, column=0, sticky="nsew", padx=(0, theme.SPACE_CARD_GAP))
-        main.columnconfigure(0, weight=1)
-        main.rowconfigure(1, weight=5, minsize=NETWORK_MIN_HEIGHT)
-        main.rowconfigure(2, weight=3, minsize=APPS_MIN_HEIGHT)
-        self._build_tiles(main)
-        self._build_network(main)
-        self._build_apps(main)
-
-        side = tk.Frame(self.body, background=p["bg"], width=SIDEBAR_WIDTH)
-        side.grid(row=0, column=1, sticky="nsew")
+        # Resizable layout: connections | form, and connections over live traffic. Drag the gaps.
+        sash = dict(background=sash_colour(p), sashwidth=8, sashrelief="flat", borderwidth=0,
+                    opaqueresize=True, showhandle=False)
+        self.hpane = tk.PanedWindow(root, orient="horizontal", sashcursor="sb_h_double_arrow", **sash)
+        self.hpane.grid(row=2, column=0, sticky="nsew", padx=pad)
+        self.vpane = tk.PanedWindow(self.hpane, orient="vertical", sashcursor="sb_v_double_arrow", **sash)
+        side = tk.Frame(self.hpane, background=p["bg"])
+        self.hpane.add(self.vpane, minsize=480, stretch="always")
+        self.hpane.add(side, minsize=self._sidebar_min(), width=self._sidebar_width(), stretch="never")
+        self._build_connections()
+        self._build_traffic()
         side.columnconfigure(0, weight=1)
         side.rowconfigure(0, weight=1)
         self._build_bind_card(side)
 
         footer = tk.Frame(root, background=p["bg"])
-        footer.grid(row=3, column=0, sticky="ew", padx=pad, pady=(12, 12))
+        footer.grid(row=3, column=0, sticky="ew", padx=pad, pady=(10, 12))
         self.status_dot = graph.status_dot(footer, p["text_muted"], p["bg"])
         self.status_dot.pack(side="left")
         # Buttons are packed first so the status text can never push them out of view.
@@ -701,76 +549,77 @@ class InterMuxApp:
         self.teardown_btn = ttk.Button(footer, text="Teardown idle", style="Small.Secondary.TButton",
                                        command=self._on_teardown)
         self.teardown_btn.pack(side="right", padx=(0, 8))
-        self.live_label = tk.Label(footer, text="", background=p["bg"], foreground=p["text_muted"],
-                                   font=theme.font("mono"))
-        self.live_label.pack(side="right", padx=(0, 16))
-        self.status_label = tk.Label(footer, textvariable=self.status_var, font=theme.font("body"), anchor="w",
+        self.status_label = tk.Label(footer, text="", font=theme.font("body"), anchor="w", width=1,
                                      background=p["bg"], foreground=p["text"])
-        self.status_label.pack(side="left", padx=(8, 0), fill="x", expand=True)
+        self.status_label.pack(side="left", padx=(8, 12), fill="x", expand=True)
+        self.status_tip = Tooltip(self.status_label)
         self._set_status("")
         self._refresh_app_tile()
         self._update_buttons()
+        root.after(80, self._place_sashes)
 
-    def _build_tiles(self, parent: Any) -> None:
-        p = self.palette
-        row = tk.Frame(parent, background=p["bg"])
-        row.grid(row=0, column=0, sticky="ew", pady=(0, theme.SPACE_CARD_GAP))
-        self.tiles = {
-            "down": monitor.StatTile(row, "Download", p["accent_fg"]),
-            "up": monitor.StatTile(row, "Upload", p["violet"]),
-            "routed": monitor.StatTile(row, "Via InterMux", p["success"]),
-            "apps": monitor.StatTile(row, "Routed apps", p["warning"], sparkline=False),
-        }
-        for index, tile in enumerate(self.tiles.values()):
-            row.columnconfigure(index, weight=1, uniform="tile")
-            tile.frame.grid(row=0, column=index, sticky="nsew", padx=(0 if index == 0 else 12, 0))
+    def _place_sashes(self) -> None:
+        """Give Live traffic about a third of the height, at most TRAFFIC_HEIGHT, once the window has a size."""
+        try:
+            total = self.vpane.winfo_height()
+            if total < 50:
+                self.root.after(80, self._place_sashes)
+                return
+            traffic_height = min(TRAFFIC_HEIGHT, max(110, total // 3))
+            self.vpane.sash_place(0, 0, total - traffic_height)
+        except tk.TclError:
+            pass
 
-    def _build_network(self, parent: Any) -> None:
-        p = self.palette
-        panel, header, body = _panel(parent, "Network")
-        panel.grid(row=1, column=0, sticky="nsew")
-        legend = tk.Frame(header, background=p["surface"])
-        legend.pack(side="right")
-        for text, colour in (("routed by intermux", p["success"]), ("not routed", p["accent_fg"]),
-                             ("upload", p["violet"])):
-            graph.status_dot(legend, colour, p["surface"], size=7).pack(side="left", padx=(12, 5))
-            tk.Label(legend, text=text, background=p["surface"], foreground=p["text_muted"],
-                     font=theme.font("eyebrow")).pack(side="left")
-        body.columnconfigure(0, weight=1)
-        body.rowconfigure(0, weight=1)
-        self.lane_scroll = theme.ScrollFrame(body, p["surface"], height=60)
-        self.lane_scroll.grid(row=0, column=0, sticky="nsew", pady=(0, 2))
-        self.lane_scroll.attach_wheel(self.root)
-        self.lanes_host = self.lane_scroll.inner
-        self.lanes_host.columnconfigure(0, weight=1)
-        self.lanes_empty = tk.Label(body, text="No network connections are up. Connect to a network and press "
-                                               "Refresh.", background=p["surface"], foreground=p["text_muted"],
-                                    font=theme.font("body"))
+    def _sidebar_width(self) -> int:
+        return max(SIDEBAR_WIDTH, theme.font("body").measure("Separate profile if already running") + 110)
 
-    def _build_apps(self, parent: Any) -> None:
+    def _sidebar_min(self) -> int:
+        return max(300, theme.font("body").measure("Separate profile if already running") + 70)
+
+    def _build_connections(self) -> None:
         p = self.palette
-        panel, header, body = _panel(parent, "Routed apps")
-        panel.grid(row=2, column=0, sticky="nsew", pady=(theme.SPACE_CARD_GAP, 0))
+        panel, header, body = _panel(self.vpane, "Connections")
+        self.vpane.add(panel, minsize=220, stretch="always")
+        ttk.Button(header, text="+ Add VPN", style="Small.Secondary.TButton", command=self._on_vpn).pack(
+            side="right")
         self.apps_count = tk.Label(header, text="", background=p["surface"], foreground=p["text_muted"],
                                    font=theme.font("mono"))
-        self.apps_count.pack(side="right", padx=(0, 6))
+        self.apps_count.pack(side="right", padx=(0, 12))
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
         self.scroll = theme.ScrollFrame(body, p["surface"], height=60)
-        self.scroll.grid(row=0, column=0, sticky="nsew", padx=(12, 2), pady=12)
+        self.scroll.grid(row=0, column=0, sticky="nsew", padx=(0, 2))
         self.scroll.attach_wheel(self.root)
-        self.rows_host = self.scroll.inner
-        self.rows_host.columnconfigure(0, weight=1)
-        self.empty_label = tk.Frame(body, background=p["surface"])
-        self.empty_label.columnconfigure(0, weight=1)
-        self.empty_label.rowconfigure(0, weight=1)
-        inner = tk.Frame(self.empty_label, background=p["surface"])
-        inner.grid(row=0, column=0)
-        tk.Label(inner, text="No apps are routed yet", background=p["surface"], foreground=p["text"],
-                 font=theme.font("section")).pack()
-        tk.Label(inner, text="Pick a connection and an app on the right, add it to the queue and press Assign.",
-                 background=p["surface"], foreground=p["text_muted"], font=theme.font("small")).pack(pady=(4, 0))
-        self._show_empty(self.empty_label, True)
+        self.groups_host = self.scroll.inner
+        self.groups_host.columnconfigure(0, weight=1)
+        self.rows_host = self.groups_host          # kept for code that scrolls rows into view
+        self.other_label = tk.Label(self.groups_host, text="", background=p["surface"],
+                                    foreground=p["text_muted"], font=theme.font("small"), anchor="w",
+                                    justify="left")
+        self.empty_label = tk.Label(body, text="No network connection is up. Connect to a network and press "
+                                               "Refresh.", background=p["surface"], foreground=p["text_muted"],
+                                    font=theme.font("body"))
+
+    def _build_traffic(self) -> None:
+        p = self.palette
+        panel, header, body = _panel(self.vpane, "Live traffic")
+        self.vpane.add(panel, minsize=110, height=TRAFFIC_HEIGHT, stretch="never")
+        legend = tk.Frame(header, background=p["surface"])
+        legend.pack(side="right")
+        for text, colour in (("routed", p["success"]), ("not routed", p["accent_fg"]), ("upload", p["violet"])):
+            graph.status_dot(legend, colour, p["surface"], size=7).pack(side="left", padx=(12, 5))
+            tk.Label(legend, text=text, background=p["surface"], foreground=p["text_muted"],
+                     font=theme.font("eyebrow")).pack(side="left")
+        self.traffic_summary = tk.Label(header, text="", background=p["surface"], foreground=p["text"],
+                                        font=theme.font("small"), anchor="w", width=1)
+        self.traffic_summary.pack(side="left", padx=(14, 8), fill="x", expand=True)
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        self.traffic_scroll = theme.ScrollFrame(body, p["surface"], height=40)
+        self.traffic_scroll.grid(row=0, column=0, sticky="nsew", padx=(0, 2))
+        self.traffic_scroll.attach_wheel(self.root)
+        self.traffic_host = self.traffic_scroll.inner
+        self.traffic_host.columnconfigure(0, weight=1)
 
     def _build_bind_card(self, parent: Any) -> None:
         p = self.palette
@@ -781,30 +630,31 @@ class InterMuxApp:
         outer.rowconfigure(0, weight=1)
         # The form and the queue scroll together, so a short window never hides queued apps;
         # the Assign row stays pinned below them.
-        self.side_scroll = theme.ScrollFrame(outer, bg, height=60, width=SIDEBAR_WIDTH - 24)
+        self.side_scroll = theme.ScrollFrame(outer, bg, height=60, width=200)
         self.side_scroll.grid(row=0, column=0, sticky="nsew", padx=(0, 2))
         self.side_scroll.attach_wheel(self.root)
         body = self.side_scroll.inner
         body.columnconfigure(0, weight=1)
         self._side_outer = outer
         inner = tk.Frame(body, background=bg)
-        inner.grid(row=0, column=0, sticky="ew", padx=(16, 12), pady=(10, 12))
+        inner.grid(row=0, column=0, sticky="ew", padx=(16, 12), pady=(12, 12))
         inner.columnconfigure(0, weight=1)
 
-        def label(text: str, row: int, top: int = 0) -> None:
-            tk.Label(inner, text=text, background=bg, foreground=p["text_muted"], font=theme.font("small"),
-                     anchor="w").grid(row=row, column=0, sticky="w", pady=(top, 5))
+        def label(text: str, row: int, top: int = 0, parent: Any = inner) -> None:
+            tk.Label(parent, text=text, background=bg, foreground=p["text_muted"], font=theme.font("small"),
+                     anchor="w").grid(row=row, column=0, columnspan=2, sticky="w", pady=(top, 5))
 
-        label("Connection", 0)
+        label("1. Connection", 0)
         self.iface_combo = ttk.Combobox(inner, textvariable=self.iface_var, state="readonly", values=[],
                                         font=theme.font("body"), height=10)
         self.iface_combo.grid(row=1, column=0, sticky="ew")
         self.iface_combo.bind("<<ComboboxSelected>>", lambda _e: self._update_buttons())
 
+        label("2. Application", 2, top=14)
         tile_bg = p["bg"]
         self.app_tile = tk.Frame(inner, background=tile_bg, highlightthickness=1,
                                  highlightbackground=p["line_hi"], highlightcolor=p["focus"], cursor="hand2")
-        self.app_tile.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        self.app_tile.grid(row=3, column=0, sticky="ew")
         self.app_tile.columnconfigure(1, weight=1)
         self.app_icon_host = tk.Frame(self.app_tile, background=tile_bg, width=TILE_ICON, height=TILE_ICON)
         self.app_icon_host.grid(row=0, column=0, rowspan=2, padx=10, pady=8)
@@ -816,37 +666,74 @@ class InterMuxApp:
         self.app_path_label = tk.Label(self.app_tile, text="", background=tile_bg,
                                        foreground=p["text_muted"], font=theme.font("small"), anchor="w", width=1)
         self.app_path_label.grid(row=1, column=1, sticky="new", pady=(0, 8))
+        self.app_path_tip = Tooltip(self.app_path_label)
         self.pick_btn = ttk.Button(self.app_tile, text="Choose", style="Small.Secondary.TButton",
                                    command=self._on_pick)
         self.pick_btn.grid(row=0, column=2, rowspan=2, padx=10)
         for widget in (self.app_tile, self.app_icon_host, self.app_name_label, self.app_path_label):
             widget.bind("<Button-1>", lambda _e: self._on_pick())
 
-        label("Or type a command, or pick a recent app", 4, top=10)
+        label("or type a command, or pick a recent one", 4, top=10)
         self.path_entry = ttk.Combobox(inner, textvariable=self.app_var, values=self._history_values(),
                                        font=theme.font("body"), height=12)
         self.path_entry.grid(row=5, column=0, sticky="ew")
         self.path_entry.bind("<<ComboboxSelected>>", lambda _e: self._on_history_pick())
 
-        label("DNS for this connection", 6, top=10)
-        self.dns_combo = ttk.Combobox(inner, textvariable=self.dns_var, values=dialogs.DNS_CHOICES,
+        # Options are folded away by default; the toggle names what is inside, so they are easy to find.
+        self.options_open = False
+        self.options_btn = ttk.Button(inner, text="", style="Small.CardGhost.TButton", command=self._toggle_options)
+        self.options_btn.grid(row=6, column=0, sticky="w", pady=(10, 0))
+        self.options = tk.Frame(inner, background=bg)
+        self.options.columnconfigure(0, weight=1, uniform="limit")
+        self.options.columnconfigure(1, weight=1, uniform="limit")
+        label("DNS", 0, parent=self.options)
+        self.dns_combo = ttk.Combobox(self.options, textvariable=self.dns_var, values=dialogs.DNS_CHOICES,
                                       font=theme.font("body"))
-        self.dns_combo.grid(row=7, column=0, sticky="ew")
+        self.dns_combo.grid(row=1, column=0, columnspan=2, sticky="ew")
+        label("Speed limit for this connection, Mbit/s (empty: none)", 2, top=10, parent=self.options)
+        down = tk.Frame(self.options, background=bg)
+        down.grid(row=3, column=0, sticky="ew", padx=(0, 4))
+        up = tk.Frame(self.options, background=bg)
+        up.grid(row=3, column=1, sticky="ew", padx=(4, 0))
+        for frame, arrow, var in ((down, "↓ down", self.limit_down_var), (up, "↑ up", self.limit_up_var)):
+            frame.columnconfigure(1, weight=1)
+            tk.Label(frame, text=arrow, background=bg, foreground=p["text_muted"], font=theme.font("small")).grid(
+                row=0, column=0, padx=(0, 6))
+            ttk.Entry(frame, textvariable=var, width=6).grid(row=0, column=1, sticky="ew")
+        ttk.Checkbutton(self.options, text="Separate profile if already running", variable=self.separate_var,
+                        style="Card.TCheckbutton").grid(row=4, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        self._sync_options()
 
-        ttk.Checkbutton(
-            inner, text="Separate profile if it is already running",
-            variable=self.separate_var, style="Card.TCheckbutton",
-        ).grid(row=8, column=0, sticky="w", pady=(10, 0))
         self.add_btn = ttk.Button(inner, text="Add to queue", style="Secondary.TButton", command=self._on_add)
-        self.add_btn.grid(row=9, column=0, sticky="ew", pady=(12, 0))
+        self.add_btn.grid(row=8, column=0, sticky="ew", pady=(14, 0))
         self._build_queue(body)
 
+    def _toggle_options(self) -> None:
+        self.options_open = not self.options_open
+        self._sync_options()
+
+    def _sync_options(self) -> None:
+        if self.options_open:
+            self.options.grid(row=7, column=0, sticky="ew", pady=(8, 0))
+            self.options_btn.configure(text="▾ Fewer options")
+        else:
+            self.options.grid_remove()
+            extras = []
+            if self.dns_var.get().strip() not in ("", dialogs.AUTO_LABEL):
+                extras.append("DNS set")
+            if self.limit_down_var.get().strip() or self.limit_up_var.get().strip():
+                extras.append("limit set")
+            if self.separate_var.get():
+                extras.append("separate profile")
+            suffix = f"  ({', '.join(extras)})" if extras else ""
+            self.options_btn.configure(text=f"▸ DNS, speed limit, profile{suffix}")
+
     def _build_queue(self, body: Any) -> None:
-        """The queue lives in the same panel, under the form: it grows into whatever height is left."""
+        """The queue lives in the same panel, under the form."""
         p = self.palette
         _rule(body).grid(row=1, column=0, sticky="ew")
         head = tk.Frame(body, background=p["surface"])
-        head.grid(row=2, column=0, sticky="ew", padx=16, pady=(10, 0))
+        head.grid(row=2, column=0, sticky="ew", padx=16, pady=(12, 0))
         tk.Label(head, text="QUEUE", background=p["surface"], foreground=p["text_muted"],
                  font=theme.font("eyebrow")).pack(side="left")
         self.queue_count = tk.Label(head, text="", background=p["surface"], foreground=p["text_muted"],
@@ -857,9 +744,11 @@ class InterMuxApp:
         self.pending_host.columnconfigure(0, weight=1)
         self.pending_empty = tk.Frame(self.pending_host, background=p["surface"])
         self.pending_empty.columnconfigure(0, weight=1)
-        tk.Label(self.pending_empty, text="Queued apps start together with one password prompt.",
-                 background=p["surface"], foreground=p["text_muted"], font=theme.font("small"),
-                 justify="left", anchor="w", wraplength=290).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.pending_hint = tk.Label(self.pending_empty, text="Queued apps start together with one password prompt.",
+                                     background=p["surface"], foreground=p["text_muted"], font=theme.font("small"),
+                                     justify="left", anchor="w", wraplength=260)
+        self.pending_hint.grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.pending_empty.bind("<Configure>", lambda e: self.pending_hint.configure(wraplength=max(e.width, 120)))
         self._show_empty(self.pending_empty, True)
         _rule(self._side_outer).grid(row=1, column=0, sticky="ew")
         buttons = tk.Frame(self._side_outer, background=p["surface"])
@@ -888,10 +777,17 @@ class InterMuxApp:
         _set_enabled(self.pick_btn, idle)
         _set_enabled(self.teardown_btn, idle)
         _set_enabled(self.reset_btn, idle)
-        for key, card in self._cards.items():
-            data = self._rows.get(key) or {}
-            card.set_enabled(idle, bool(data.get("running")))
+        for group in self._groups.values():
+            for key, row in group.rows.items():
+                data = self._card_data(key) or {}
+                states = row_button_states(bool(data.get("running")), idle)
+                states["idle"] = idle
+                row.set_enabled(states)
+            group.set_namespace(self._namespaces.get(group.name), idle)
         self.queue_count.configure(text=str(len(self._pending)) if self._pending else "")
+        self.add_btn.configure(style="Primary.TButton" if (has_iface and has_app and not self._pending)
+                               else "Secondary.TButton")
+
 
     # -- app tile ---------------------------------------------------------
 
@@ -943,15 +839,13 @@ class InterMuxApp:
             return
         self._desktop_info = result
         self._refresh_app_tile()
-        for key, card in self._cards.items():
-            self._set_card_icon(card, self._card_data(key))
+        for group in self._groups.values():
+            for key, row in group.rows.items():
+                data = self._card_data(key)
+                if data is not None:
+                    row.set_icon(self._icon_widget(row.icon_host, data["app"], data["app_name"],
+                                                   connections.APP_ICON, self.palette["surface_alt"]))
         self._render_pending()
-
-    def _set_card_icon(self, card: _AppCard, row: Optional[Dict[str, Any]]) -> None:
-        if row is None:
-            return
-        card.set_icon(self._icon_widget(card.icon_host, row["app"], row["app_name"], CARD_ICON,
-                                        self.palette["surface"]))
 
     # -- status and errors ----------------------------------------------
 
@@ -960,6 +854,8 @@ class InterMuxApp:
         if not text:
             text, kind = "Ready", "idle"
         self.status_var.set(text)
+        fit_text(self.status_label, text, theme.font("body"))
+        self.status_tip.text = text
         kind = kind or status_kind(text)
         colour = {"error": p["danger"], "success": p["success"], "warning": p["warning"]}.get(
             kind, p["text_muted"])
@@ -992,8 +888,7 @@ class InterMuxApp:
         self._apply_bindings(result["bindings"])
         self._apply_adoptions(result.get("adoptions", []))
         self._namespaces = dict(result.get("namespaces") or {})
-        self._render_cards()
-        self._render_lanes()
+        self._render_connections()
         self._update_buttons()
 
     def _on_environment(self, result: Any, error: Optional[BaseException]) -> None:
@@ -1053,54 +948,80 @@ class InterMuxApp:
         self._interfaces = list(interfaces)
         self._link_speeds = {i.name: traffic.link_speed_bytes(i.name) for i in interfaces}
 
-    # -- network view -------------------------------------------------------
+    # -- connections view ---------------------------------------------------
 
     def _bound_ifaces(self) -> List[str]:
         names = [row["iface"] for row in self._rows.values()] + [a["iface"] for a in self._adoptions]
         return list(dict.fromkeys(names))
 
-    def _render_lanes(self) -> None:
-        """Create, update or remove one lane per visible connection, then refresh their chips."""
-        wanted = monitor.visible_lanes(self._interfaces, self._bound_ifaces())
-        names = [iface.name for iface in wanted]
-        for name in list(self._lanes):
+    def _keys_for(self, iface: str) -> List[str]:
+        keys = [key for key, row in self._rows.items() if row["iface"] == iface]
+        keys += [ADOPT_PREFIX + a["id"] for a in self._adoptions if a["iface"] == iface]
+        return keys
+
+    def _render_connections(self) -> None:
+        """One group per connection that can carry apps (or already does); the rest on one muted line."""
+        visible = monitor.visible_lanes(self._interfaces, self._bound_ifaces())
+        bound = set(self._bound_ifaces())
+        groups = [i for i in visible if i.bindable or i.name in bound]
+        others = [i for i in visible if not (i.bindable or i.name in bound)]
+        names = [i.name for i in groups]
+        for name in list(self._groups):
             if name not in names:
-                self._lanes.pop(name).destroy()
-        for index, iface in enumerate(wanted):
-            lane = self._lanes.get(iface.name)
-            if lane is None:
-                lane = monitor.LaneRow(self.lanes_host, iface, self._on_route_here)
-                self._lanes[iface.name] = lane
+                self._groups.pop(name).destroy()
+        now = time.monotonic()
+        for index, iface in enumerate(groups):
+            group = self._groups.get(iface.name)
+            if group is None:
+                group = connections.ConnectionGroup(self.groups_host, iface, self.actions)
+                self._groups[iface.name] = group
             else:
-                lane.set_interface(iface)
-            lane.frame.grid(row=index * 2, column=0, sticky="ew")
-            if index < len(wanted) - 1:
-                lane.separator.grid(row=index * 2 + 1, column=0, sticky="ew")
-            else:
-                lane.separator.grid_remove()
-            lane.set_chips(self._chips_for(iface.name), self.select_binding, self._show_app_menu)
-            lane.set_namespace(self._namespaces.get(iface.name), self._show_lane_menu)
-        if wanted:
-            self.lanes_empty.place_forget()
+                group.set_interface(iface)
+            group.frame.grid(row=index * 2, column=0, sticky="ew")
+            group.separator.grid(row=index * 2 + 1, column=0, sticky="ew")
+            keys = self._keys_for(iface.name)
+            group.set_apps(keys, lambda parent, key: self._make_row(parent, key))
+            for key in keys:
+                data = self._card_data(key)
+                if data is None:
+                    continue
+                row = group.rows[key]
+                public_ip = "" if row.adopted else fresh_public_ip(self._public_ips.get(data["iface"]), now)
+                row._public_ip = public_ip  # type: ignore[attr-defined]
+                row.update(data, self.colours.colour(data["app"]), self._row_meta(key, data, public_ip))
+        if others:
+            text = "Can't route apps through: " + ",  ".join(
+                f"{monitor.lane_title(i)} {i.name} ({'no gateway' if i.up else 'disconnected'})" for i in others)
+            self.other_label.configure(text=text, wraplength=max(self.groups_host.winfo_width() - 40, 300))
+            self.other_label.grid(row=len(groups) * 2, column=0, sticky="w", padx=16, pady=(12, 14))
         else:
-            self.lanes_empty.place(relx=0.5, rely=0.5, anchor="center")
+            self.other_label.grid_remove()
+        if visible:
+            self.empty_label.place_forget()
+        else:
+            self.empty_label.place(relx=0.5, rely=0.5, anchor="center")
+        running = sum(1 for r in self._rows.values() if r["running"]) + sum(
+            1 for a in self._adoptions if a.get("alive", True))
+        total = len(self._rows) + len(self._adoptions)
+        self.apps_count.configure(text=f"{running} of {total} apps running" if total else "")
         self._render_traffic()
 
-    def _chips_for(self, iface: str) -> List[Dict[str, Any]]:
-        chips = []
-        for key, row in self._rows.items():
-            if row["iface"] == iface:
-                chips.append({"key": key, "name": row["app_name"], "colour": self.colours.colour(row["app"]),
-                              "running": bool(row["running"]), "note": "" if row["running"] else "stopped"})
-        for data in self._adoptions:
-            if data["iface"] == iface:
-                chips.append({"key": ADOPT_PREFIX + data["id"], "name": data["app_name"],
-                              "colour": self.colours.colour(data["app"]), "running": bool(data.get("alive", True)),
-                              "note": "adopted"})
-        return chips
+    def _make_row(self, parent: Any, key: str) -> connections.AppRow:
+        row = connections.AppRow(parent, key, key.startswith(ADOPT_PREFIX), self.actions)
+        data = self._card_data(key)
+        if data is not None:
+            row.set_icon(self._icon_widget(row.icon_host, data["app"], data["app_name"], connections.APP_ICON,
+                                           self.palette["surface_alt"]))
+        return row
+
+    def _row_meta(self, key: str, data: Dict[str, Any], public_ip: str) -> str:
+        adopted = key.startswith(ADOPT_PREFIX)
+        name = ns_key(data["iface"])
+        rate = None if adopted or name not in self.tracker.names() else self.tracker.rate(name)
+        return connections.app_meta(data, rate, public_ip, adopted)
 
     def _on_route_here(self, iface: str) -> None:
-        """"+ Route an app here" on a lane: choose that connection in the sidebar, then pick an app."""
+        """"+ Add app" on a connection: choose that connection in the form, then pick an app."""
         label = next((lbl for lbl, name in self._iface_map.items() if name == iface), None)
         if label is None:
             self._set_status(f"{iface} cannot be used for routing right now.", "warning")
@@ -1112,6 +1033,11 @@ class InterMuxApp:
         else:
             self._set_status(f"Connection set to {iface}. Choose the app to route.")
             self._on_pick()
+
+    def _on_vpn(self) -> None:
+        from intermux.ui.vpn import VpnDialog
+
+        VpnDialog(self.root, self.worker, on_change=self.refresh_all)
 
     def _traffic_tick(self) -> None:
         try:
@@ -1142,8 +1068,12 @@ class InterMuxApp:
         if visible:
             self._render_traffic()
 
+    def _lane_tone(self, iface: Any, routed: int) -> Tuple[str, str]:
+        down, up = self.tracker.rate(iface.name)
+        return monitor.lane_state(bool(iface.up), bool(iface.bindable), routed, down, up,
+                                  self._link_speeds.get(iface.name))
+
     def _render_traffic(self) -> None:
-        p = self.palette
         routed_counts: Dict[str, int] = {}
         for row in self._rows.values():
             if row["running"]:
@@ -1151,50 +1081,45 @@ class InterMuxApp:
         for data in self._adoptions:
             if data.get("alive", True):
                 routed_counts[data["iface"]] = routed_counts.get(data["iface"], 0) + 1
-        for name, lane in self._lanes.items():
-            key = ns_key(name)
-            routed = self.tracker.rate(key) if key in self.tracker.names() else None
-            lane.set_traffic(self.tracker.history(name), routed, routed_counts.get(name, 0),
-                             self._link_speeds.get(name))
+        visible = monitor.visible_lanes(self._interfaces, self._bound_ifaces())
+        by_name = {i.name: i for i in visible}
 
-        physical = [name for name in self._lanes if not monitor.is_vpn_name(name)]
-        down_series = sum_series([self.tracker.history(n) for n in physical], 0)
-        up_series = sum_series([self.tracker.history(n) for n in physical], 1)
-        routed_names = [n for n in self.tracker.names() if n.startswith(NS_PREFIX)]
-        routed_series = [d + u for d, u in zip(sum_series([self.tracker.history(n) for n in routed_names], 0),
-                                               sum_series([self.tracker.history(n) for n in routed_names], 1))]
-        down = down_series[-1] if down_series else 0.0
-        up = up_series[-1] if up_series else 0.0
-        routed_now = routed_series[-1] if routed_series else 0.0
-        number, unit = traffic.split_rate(down)
-        self.tiles["down"].set(number, unit, f"{len(physical)} link" + ("" if len(physical) == 1 else "s"),
-                               down_series)
-        number, unit = traffic.split_rate(up)
-        self.tiles["up"].set(number, unit, "all apps", up_series)
-        number, unit = traffic.split_rate(routed_now)
-        share = routed_share(routed_now, down + up)
-        self.tiles["routed"].set(number, unit, f"{share} of total" if share else "", routed_series)
-        running = sum(1 for r in self._rows.values() if r["running"]) + sum(
-            1 for a in self._adoptions if a.get("alive", True))
-        total = len(self._rows) + len(self._adoptions)
-        lanes_used = len({r["iface"] for r in self._rows.values()} | {a["iface"] for a in self._adoptions})
-        self.tiles["apps"].set(str(running), f"of {total} running" if total else "running",
-                               f"{lanes_used} link" + ("" if lanes_used == 1 else "s") if total else "")
-        shared: Dict[str, int] = {}
-        for row in self._rows.values():
-            shared[row["iface"]] = shared.get(row["iface"], 0) + 1
-        for key, card in self._cards.items():
-            data = self._card_data(key)
-            if data is None:
-                continue
-            if card.adopted:
-                card.set_traffic(None, 0)
+        for name, group in self._groups.items():
+            iface = by_name.get(name, group.iface)
+            tone, words = self._lane_tone(iface, routed_counts.get(name, 0))
+            group.set_state(tone, words, self.tracker.rate(name))
+            for key, row in group.rows.items():
+                data = self._card_data(key)
+                if data is not None:
+                    row.update(data, self.colours.colour(data["app"]),
+                               self._row_meta(key, data, getattr(row, "_public_ip", "")))
+
+        names = [i.name for i in visible]
+        for name in list(self._traffic_rows):
+            if name not in names:
+                self._traffic_rows.pop(name).destroy()
+        for index, iface in enumerate(visible):
+            row = self._traffic_rows.get(iface.name)
+            if row is None:
+                row = monitor.TrafficRow(self.traffic_host, iface)
+                self._traffic_rows[iface.name] = row
             else:
-                name = ns_key(data["iface"])
-                card.set_traffic(self.tracker.history(name) if name in self.tracker.names() else
-                                 [(0.0, 0.0)] * self.tracker.size, shared.get(data["iface"], 1),
-                                 self.tracker.totals(name))
-        self.live_label.configure(text=f"live · {time.strftime('%H:%M:%S')}")
+                row.set_interface(iface)
+            row.frame.grid(row=index * 2, column=0, sticky="ew")
+            if index < len(visible) - 1:
+                row.separator.grid(row=index * 2 + 1, column=0, sticky="ew")
+            else:
+                row.separator.grid_remove()
+            tone, _words = self._lane_tone(iface, routed_counts.get(iface.name, 0))
+            row.set_traffic(self.tracker.history(iface.name), tone, self._link_speeds.get(iface.name))
+
+        physical = [i.name for i in visible if graph.kind_for(i) != "vpn"]
+        down = sum(self.tracker.rate(n)[0] for n in physical)
+        up = sum(self.tracker.rate(n)[1] for n in physical)
+        routed = sum(sum(self.tracker.rate(n)) for n in self.tracker.names() if n.startswith(NS_PREFIX))
+        share = routed_share(routed, down + up)
+        fit_text(self.traffic_summary, f"↓ {traffic.format_rate(down)}   ↑ {traffic.format_rate(up)}"
+                 + (f"   ·   {share} through InterMux" if share else ""), theme.font("small"))
 
     # -- bindings -----------------------------------------------------------
 
@@ -1215,47 +1140,30 @@ class InterMuxApp:
     def _apply_adoptions(self, rows: Sequence[Dict[str, Any]]) -> None:
         self._adoptions = [dict(r) for r in rows]
 
-    def _render_cards(self) -> None:
-        """Bindings first, then adoptions; cards are kept and updated in place."""
-        keys = list(self._rows) + [ADOPT_PREFIX + a["id"] for a in self._adoptions]
-        for key in list(self._cards):
-            if key not in keys:
-                self._cards.pop(key).frame.destroy()
-        now = time.monotonic()
-        kinds = {iface.name: graph.kind_for(iface) for iface in self._interfaces}
-        for index, key in enumerate(keys):
-            data = self._card_data(key)
-            if data is None:
-                continue
-            card = self._cards.get(key)
-            if card is None:
-                card = _AppCard(self, self.rows_host, key, adopted=key.startswith(ADOPT_PREFIX))
-                self._cards[key] = card
-                card.update(data, "", self.colours.colour(data["app"]), kinds.get(data["iface"], "other"))
-                self._set_card_icon(card, data)
-            public_ip = "" if card.adopted else fresh_public_ip(self._public_ips.get(data["iface"]), now)
-            card.update(data, public_ip, self.colours.colour(data["app"]), kinds.get(data["iface"], "other"))
-            card.frame.grid(row=index, column=0, sticky="ew", pady=(0, 8))
-        if self._selected_iid not in self._cards:
-            self._selected_iid = None
-        for key, card in self._cards.items():
-            card.set_selected(key == self._selected_iid)
-        self._show_empty(self.empty_label, not keys)
-        # With nothing routed the apps panel only needs room for its message; the network view takes the rest.
-        self.main.rowconfigure(2, weight=3 if keys else 0)
-        running = sum(1 for r in self._rows.values() if r["running"])
-        self.apps_count.configure(text=f"{running} running · {len(keys)} total" if keys else "")
+    def _row_action(self, key: str, action: str) -> None:
+        self._selected_iid = key
+        handler = {"restart": self._on_restart, "stop": self._on_stop, "verify": self._on_verify,
+                   "log": self._on_open_log, "force": self._on_force_quit}[action]
+        handler()
+
+    def _release_key(self, key: str) -> None:
+        data = self._card_data(key)
+        if data is not None:
+            self._on_release_adoption(data)
+
+    def _menu(self) -> Any:
+        p = self.palette
+        return tk.Menu(self.root, tearoff=False, background=p["surface_alt"], foreground=p["text"],
+                       activebackground=p["accent"], activeforeground=p["accent_text"],
+                       disabledforeground=p["line_hi"], borderwidth=1, relief="flat")
 
     def _show_app_menu(self, key: str, event: Any) -> None:
-        """Right-click on a chip or card: the same actions as the card's buttons."""
-        self.select_binding(key)
+        """••• on an app row, or a right-click: every action for that app."""
+        self._selected_iid = key
         data = self._card_data(key)
         if data is None:
             return
-        p = self.palette
-        menu = tk.Menu(self.root, tearoff=False, background=p["surface_alt"], foreground=p["text"],
-                       activebackground=p["accent"], activeforeground=p["accent_text"],
-                       disabledforeground=p["line_hi"], borderwidth=1, relief="flat")
+        menu = self._menu()
         idle = self._busy == 0
         if key.startswith(ADOPT_PREFIX):
             menu.add_command(label=f"Release {data['app_name']}", state="normal" if idle else "disabled",
@@ -1269,13 +1177,11 @@ class InterMuxApp:
             menu.add_command(label="Stop", command=self._on_stop, state="normal" if states["stop"] else "disabled")
             menu.add_command(label="Open log", command=self._on_open_log,
                              state="normal" if states["log"] else "disabled")
-            move = tk.Menu(menu, tearoff=False, background=p["surface_alt"], foreground=p["text"],
-                           activebackground=p["accent"], activeforeground=p["accent_text"],
-                           disabledforeground=p["line_hi"])
+            move = self._menu()
             targets = [(label, name) for label, name in self._iface_map.items() if name != data["iface"]]
             for label, name in targets:
                 move.add_command(label=label, command=lambda n=name: self._on_move(n))
-            menu.add_cascade(label="Move to (restarts it)", menu=move,
+            menu.add_cascade(label="Move to another connection", menu=move,
                              state="normal" if idle and targets else "disabled")
             menu.add_separator()
             menu.add_command(label="Force quit", command=self._on_force_quit,
@@ -1307,12 +1213,12 @@ class InterMuxApp:
             self._set_status(f"Stopped routing {name}; it uses the default route again.")
 
     def select_binding(self, iid: str) -> None:
-        self._selected_iid = iid if iid in self._cards else None
-        for key, card in self._cards.items():
-            card.set_selected(key == self._selected_iid)
-        card = self._cards.get(iid)
-        if card is not None:
-            self._scroll_into_view(card.frame)
+        self._selected_iid = iid if self._card_data(iid) is not None else None
+        for group in self._groups.values():
+            row = group.rows.get(iid)
+            if row is not None:
+                row.flash()
+                self._scroll_into_view(group.frame)
 
     def _scroll_into_view(self, widget: Any) -> None:
         try:
@@ -1383,12 +1289,23 @@ class InterMuxApp:
             dns_value = dialogs.dns_choice_value(self.dns_var.get())
         except ValueError as exc:
             self._set_status(f"Could not use the DNS servers: {exc}", "error")
+            self.options_open = True
+            self._sync_options()
+            return
+        try:
+            down = dialogs.parse_limit(self.limit_down_var.get())
+            up = dialogs.parse_limit(self.limit_up_var.get())
+        except ValueError as exc:
+            self._set_status(f"Could not use the speed limit: {exc}", "error")
+            self.options_open = True
+            self._sync_options()
             return
         item = {"iface": iface, "app": app_path, "name": name,
                 "policy": "separate" if self.separate_var.get() else "ask",
                 # "Automatic" keeps what an existing namespace uses; a new one picks servers automatically.
                 "dns": dnsconf.KEEP if dns_value == dnsconf.AUTO else dns_value,
-                "dns_text": "" if dns_value == dnsconf.AUTO else self.dns_var.get().strip()}
+                "dns_text": "" if dns_value == dnsconf.AUTO else self.dns_var.get().strip(),
+                "limit": {"down": down, "up": up} if (down or up) else None}
         if queue_add(self._pending, item):
             self._set_status(f"Added {name} via {iface} to pending.")
         else:
@@ -1396,6 +1313,7 @@ class InterMuxApp:
         self.app_var.set("")
         self._picked_entry = None
         self._render_pending()
+        self._sync_options()
         self._update_buttons()
 
     def _remove_pending(self, item: Dict[str, Any]) -> None:
@@ -1470,14 +1388,15 @@ class InterMuxApp:
             self._assigning = False
             self._set_status("Assign cancelled.")
             return
+        limit_ops = limit_ops_for([item for item, _ in plan])
         self._run_mutation(
             f"Assigning {len(plan)} app(s) (one password prompt)",
             _batch_task,
-            [op for _, op in plan],
-            on_done=partial(self._on_batch_done, plan),
+            [op for _, op in plan] + limit_ops,
+            on_done=partial(self._on_batch_done, plan, limit_ops),
         )
 
-    def _on_batch_done(self, plan: List[Tuple[Dict[str, Any], Dict[str, Any]]],
+    def _on_batch_done(self, plan: List[Tuple[Dict[str, Any], Dict[str, Any]]], limit_ops: List[Dict[str, Any]],
                        results: Any, error: Optional[BaseException]) -> None:
         self._assigning = False
         if error is not None:
@@ -1486,7 +1405,13 @@ class InterMuxApp:
             return
         done: List[str] = []
         failed: List[str] = []
-        for (item, _op), result in zip(plan, results or []):
+        results = list(results or [])
+        for op, result in zip(limit_ops, results[len(plan):]):
+            if not (isinstance(result, dict) and result.get("ok")):
+                err = result.get("error") if isinstance(result, dict) else None
+                err = err if isinstance(err, dict) else {}
+                failed.append(f"speed limit on {op['iface']} ({err.get('message') or 'failed'})")
+        for (item, _op), result in zip(plan, results[:len(plan)]):
             name = item.get("name") or os.path.basename(item["app"])
             if isinstance(result, dict) and result.get("ok"):
                 if item in self._pending:
@@ -1562,23 +1487,17 @@ class InterMuxApp:
         self._selected_iid = None
         self._set_status(f"Moved {name} to {to}.", "success")
 
-    def _show_lane_menu(self, iface: str, event: Any) -> None:
-        """The settings of a connection's namespace: limit, DNS, reconnect, remove."""
-        p = self.palette
-        info = self._namespaces.get(iface) or {}
+    def _show_group_menu(self, iface: str, event: Any) -> None:
+        """••• on a connection: speed limit, DNS, re-add routes, remove its namespace."""
         idle = self._busy == 0
         state_ = "normal" if idle else "disabled"
-        menu = tk.Menu(self.root, tearoff=False, background=p["surface_alt"], foreground=p["text"],
-                       activebackground=p["accent"], activeforeground=p["accent_text"],
-                       disabledforeground=p["line_hi"], borderwidth=1, relief="flat")
-        menu.add_command(label="Limit bandwidth…", state=state_, command=lambda: self._on_limit(iface))
+        menu = self._menu()
+        menu.add_command(label="Speed limit…", state=state_, command=lambda: self._on_limit(iface))
         menu.add_command(label="DNS servers…", state=state_, command=lambda: self._on_dns(iface))
         menu.add_command(label="Re-add routes", state=state_, command=self._on_reconnect)
         menu.add_separator()
-        menu.add_command(label="Remove namespace…", state=state_, command=lambda: self._on_remove_namespace(iface))
-        if not info:
-            for index in (0, 1, 4):
-                menu.entryconfigure(index, state="disabled")
+        menu.add_command(label="Stop all apps and remove…", state=state_,
+                         command=lambda: self._on_remove_namespace(iface))
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:

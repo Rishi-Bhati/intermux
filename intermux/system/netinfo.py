@@ -76,11 +76,32 @@ def is_vpn_name(name: str) -> bool:
     return name.startswith(tuple(VPN_PREFIXES))
 
 
+_ARPHRD_PPP = "512"
+
+
+def _is_tunnel_device(dev: Path, name: str) -> bool:
+    """A VPN tunnel by its sysfs entry, whatever its name: tun/tap, WireGuard or PPP.
+
+    Tailscale is a tun device too, but routing an app into it needs an exit node, so it is left out."""
+    if name.startswith("tailscale"):
+        return False
+    if _exists(dev / "tun_flags"):
+        return True
+    return "DEVTYPE=wireguard" in _read(dev / "uevent").split() or _read(dev / "type").strip() == _ARPHRD_PPP
+
+
+def _read(path: Path) -> str:
+    try:
+        return path.read_text()
+    except OSError:
+        return ""
+
+
 def classify_kind(name: str, sys_class_net: Path = Path("/sys/class/net")) -> str:
     """Classify an interface by its name and its sysfs entry."""
     if is_virtual_name(name):
         return "virtual"
-    if is_vpn_name(name):
+    if is_vpn_name(name) or _is_tunnel_device(Path(sys_class_net) / name, name):
         return "vpn"
     dev = Path(sys_class_net) / name
     if _exists(dev / "wireless") or _exists(dev / "phy80211"):

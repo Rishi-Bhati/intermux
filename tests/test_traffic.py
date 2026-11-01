@@ -133,9 +133,7 @@ class MonitorHelperTests(unittest.TestCase):
 
 
 class AppHelperTests(unittest.TestCase):
-    def test_sum_series_and_share(self):
-        self.assertEqual(appmod.sum_series([[(1, 2), (3, 4)], [(10, 20), (30, 40)]], 0), [11, 33])
-        self.assertEqual(appmod.sum_series([], 1), [])
+    def test_routed_share(self):
         self.assertEqual(appmod.routed_share(25, 100), "25%")
         self.assertEqual(appmod.routed_share(0.1, 100), "<1%")
         self.assertEqual(appmod.routed_share(0, 100), "")
@@ -157,20 +155,13 @@ class Phase2HelperTests(unittest.TestCase):
         item["dns"] = ["1.1.1.1", "1.0.0.1"]
         self.assertEqual(appmod.pending_detail(item, ["wlan0"]), "via wlan0 · existing namespace · DNS Cloudflare")
 
-    def test_pids_text(self):
-        self.assertEqual(appmod.pids_text([]), "")
-        self.assertEqual(appmod.pids_text([7]), "1 process (7)")
-        self.assertEqual(appmod.pids_text([1, 2, 3, 4]), "4 processes (1, 2, +2)")
-
     def test_namespace_settings_and_badges(self):
         from intermux import state
         st = state.State(subnets={"wlan0": "10.200.1.0/24", "eth0": "10.200.2.0/24"},
                          dns={"wlan0": ["9.9.9.9", "149.112.112.112"]}, limits={"wlan0": {"down": 20.0, "up": 0.5}})
         info = appmod.namespace_settings(st)
         self.assertEqual(info["eth0"], {"dns": [], "limit": {}})
-        self.assertEqual(monitor.namespace_badges(info["wlan0"]), "DNS Quad9  ·  limit ↓ 20 Mbit/s ↑ 500 kbit/s")
-        self.assertEqual(monitor.namespace_badges(info["eth0"]), "")
-        self.assertEqual(monitor.namespace_badges(None), "")
+        self.assertEqual(info["wlan0"]["dns"], ["9.9.9.9", "149.112.112.112"])
 
     def test_tracker_totals(self):
         t = traffic.RateTracker()

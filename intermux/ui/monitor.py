@@ -6,9 +6,8 @@ going right now, whether it is coping, the apps riding on it as coloured chips, 
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from intermux import dnsconf
 from intermux.system import traffic
 from intermux.ui import graph, theme
 
@@ -26,8 +25,7 @@ KIND_NAMES = {
 VPN_PREFIXES = ("tun", "tap", "wg", "ppp", "tailscale", "nordlynx", "proton")
 KIND_ORDER = ("ethernet", "wifi", "usb", "mobile", "bluetooth", "vpn", "other")
 SATURATED = 0.9      # share of the link speed at which a lane turns red
-GRAPH_HEIGHT = 60
-ID_WIDTH = 196
+GRAPH_HEIGHT = 56
 
 
 # ---------------------------------------------------------------------------
@@ -112,26 +110,6 @@ class ColourBook:
         return self._given[key]
 
 
-def namespace_badges(info: Optional[Dict[str, Any]]) -> str:
-    """"DNS Cloudflare · ↓ 20 Mbit/s ↑ 5 Mbit/s" for a namespace with hand-picked settings, else "". Pure."""
-    if not info:
-        return ""
-    from intermux.system import shaping
-
-    parts = []
-    if info.get("dns"):
-        parts.append(f"DNS {dnsconf.describe(info['dns'])}")
-    limit = info.get("limit") or {}
-    caps = []
-    if limit.get("down"):
-        caps.append(f"↓ {shaping.format_mbit(limit['down'])}")
-    if limit.get("up"):
-        caps.append(f"↑ {shaping.format_mbit(limit['up'])}")
-    if caps:
-        parts.append("limit " + " ".join(caps))
-    return "  ·  ".join(parts)
-
-
 def graph_scale(history: Sequence[Tuple[float, float]]) -> float:
     """A round ceiling over both directions of a lane's history. Pure."""
     peak = max((max(d, u) for d, u in history), default=0.0)
@@ -142,239 +120,54 @@ def graph_scale(history: Sequence[Tuple[float, float]]) -> float:
 # Widgets
 # ---------------------------------------------------------------------------
 
-def _hline(parent: Any, colour: str) -> Any:
-    return tk.Frame(parent, background=colour, height=1, highlightthickness=0, borderwidth=0)
+class TrafficRow:
+    """One connection in the Traffic panel: its name and live speed, and a two-minute graph."""
 
-
-class Chip:
-    """An app on a lane: a coloured mark, the app name, and a click target."""
-
-    def __init__(self, parent: Any, key: str, name: str, colour: str, running: bool,
-                 on_click: Callable[[str], None], on_menu: Optional[Callable[[str, Any], None]] = None,
-                 note: str = "") -> None:
-        p = theme.current_palette()
-        face = p["surface_alt"]
-        self.key = key
-        self.frame = tk.Frame(parent, background=face, highlightthickness=1, highlightbackground=p["line_hi"],
-                              cursor="hand2")
-        mark = tk.Canvas(self.frame, width=10, height=10, background=face, highlightthickness=0, borderwidth=0)
-        mark.create_rectangle(1, 1, 9, 9, fill=colour if running else p["line_hi"], outline="")
-        mark.pack(side="left", padx=(8, 6), pady=6)
-        text = name + (f"  {note}" if note else "")
-        label = tk.Label(self.frame, text=text, background=face, font=theme.font("small"),
-                         foreground=p["text"] if running else p["text_muted"])
-        label.pack(side="left", padx=(0, 9))
-        for widget in (self.frame, mark, label):
-            widget.bind("<Button-1>", lambda _e: on_click(key))
-            if on_menu is not None:
-                widget.bind("<Button-3>", lambda e: on_menu(key, e))
-
-
-class LaneRow:
-    """One connection: identity, live rate and state on the left; app chips and a graph on the right."""
-
-    def __init__(self, parent: Any, iface: Any, on_route: Callable[[str], None]) -> None:
+    def __init__(self, parent: Any, iface: Any) -> None:
         p = theme.current_palette()
         self.p = p
-        self.name = iface.name
         bg = p["surface"]
-        self.frame = tk.Frame(parent, background=bg, highlightthickness=0, borderwidth=0)
+        self.name = iface.name
+        self.iface = iface
+        self.frame = tk.Frame(parent, background=bg)
         self.frame.columnconfigure(1, weight=1)
-        self.frame.rowconfigure(0, weight=1)
-
-        ident = tk.Frame(self.frame, background=bg)
-        ident.grid(row=0, column=0, sticky="nsw", padx=(18, 12), pady=(12, 10))
-        ident.columnconfigure(1, weight=1)
-        tk.Frame(ident, background=bg, width=ID_WIDTH, height=1).grid(row=9, column=0, columnspan=2, sticky="w")
-        self.glyph_canvas = tk.Canvas(ident, width=22, height=22, background=bg, highlightthickness=0,
-                                      borderwidth=0)
-        self.glyph_canvas.grid(row=0, column=0, sticky="w")
-        self.title = tk.Label(ident, text="", background=bg, foreground=p["text"], font=theme.font("section"),
+        label_width = theme.font("small").measure("↓ 999 KB/s    ↑ 999 KB/s") + 8
+        left = tk.Frame(self.frame, background=bg)
+        left.grid(row=0, column=0, sticky="nw", padx=(16, 12), pady=(8, 6))
+        left.columnconfigure(1, weight=1)
+        tk.Frame(left, background=bg, width=label_width, height=1).grid(row=3, column=0, columnspan=2)
+        self.dot = graph.status_dot(left, p["text_muted"], bg)
+        self.dot.grid(row=0, column=0, sticky="w")
+        self.title = tk.Label(left, text="", background=bg, foreground=p["text"], font=theme.font("label"),
                               anchor="w")
-        self.title.grid(row=0, column=1, sticky="w", padx=(8, 0))
-        self.detail = tk.Label(ident, text="", background=bg, foreground=p["text_muted"], font=theme.font("mono"),
-                               anchor="w")
-        self.detail.grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
-
-        stat = tk.Frame(ident, background=bg)
-        stat.grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        self.rate = tk.Label(stat, text="0", background=bg, foreground=p["text"], font=theme.font("stat"))
-        self.rate.pack(side="left")
-        self.unit = tk.Label(stat, text="B/s", background=bg, foreground=p["text_muted"], font=theme.font("small"))
-        self.unit.pack(side="left", padx=(4, 0), pady=(8, 0))
-        self.up = tk.Label(stat, text="", background=bg, foreground=p["violet"], font=theme.font("small"))
-        self.up.pack(side="left", padx=(10, 0), pady=(8, 0))
-
-        state = tk.Frame(ident, background=bg)
-        state.grid(row=3, column=0, columnspan=2, sticky="w", pady=(4, 0))
-        self.dot = graph.status_dot(state, p["text_muted"], bg)
-        self.dot.pack(side="left")
-        self.state = tk.Label(state, text="", background=bg, foreground=p["text_muted"], font=theme.font("small"))
-        self.state.pack(side="left", padx=(6, 0))
-        self.badges = tk.Label(ident, text="", background=bg, foreground=p["text_muted"], font=theme.font("small"),
-                               justify="left", anchor="w")
-        self.badges.grid(row=4, column=0, columnspan=2, sticky="w", pady=(2, 0))
-
-        main = tk.Frame(self.frame, background=bg)
-        main.grid(row=0, column=1, sticky="nsew", padx=(0, 18), pady=(10, 10))
-        main.columnconfigure(0, weight=1)
-        main.rowconfigure(1, weight=1)
-        strip = tk.Frame(main, background=bg)
-        strip.grid(row=0, column=0, sticky="ew")
-        strip.columnconfigure(0, weight=1)
-        self.chips_host = tk.Frame(strip, background=bg)
-        self.chips_host.grid(row=0, column=0, sticky="w")
-        self.route_btn = ttk.Button(strip, text="+ Route an app here", style="Small.Link.TButton",
-                                    command=lambda: on_route(self.name))
-        self.route_btn.grid(row=0, column=2, sticky="e")
-        self.menu_btn = ttk.Button(strip, text="Settings ▾", style="Small.CardGhost.TButton")
-        self.menu_btn.grid(row=0, column=3, sticky="e", padx=(4, 0))
-        self.menu_btn.grid_remove()
-        self._on_menu: Optional[Callable[[str, Any], None]] = None
-        self.menu_btn.bind("<ButtonRelease-1>", self._open_menu)
-        self.graph = graph.TrafficGraph(main, bg, height=GRAPH_HEIGHT)
-        self.graph.canvas.grid(row=1, column=0, sticky="nsew", pady=(4, 0))
-
-        self.separator = _hline(parent, p["border"])
-        self._chip_key: Tuple[Any, ...] = ()
-        self._kind = ""
-        self.chips: List[Chip] = []
+        self.title.grid(row=0, column=1, sticky="w", padx=(6, 0))
+        self.down = tk.Label(left, text="", background=bg, foreground=p["text"], font=theme.font("small"), anchor="w")
+        self.down.grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        self.up = tk.Label(left, text="", background=bg, foreground=p["violet"], font=theme.font("small"), anchor="w")
+        self.up.grid(row=2, column=0, columnspan=2, sticky="w")
+        self.graph = graph.TrafficGraph(self.frame, bg, height=GRAPH_HEIGHT)
+        self.graph.canvas.grid(row=0, column=1, sticky="nsew", padx=(0, 16), pady=(4, 6))
+        self.separator = tk.Frame(parent, background=p["border"], height=1)
         self.set_interface(iface)
 
     def set_interface(self, iface: Any) -> None:
-        kind = graph.kind_for(iface)
-        self.title.configure(text=lane_title(iface))
-        self.detail.configure(text=lane_detail(iface))
-        if getattr(iface, "bindable", False):
-            self.route_btn.grid()
-        else:
-            self.route_btn.grid_remove()
-        self._iface = iface
-        self._kind = kind
+        self.iface = iface
+        self.title.configure(text=f"{lane_title(iface)}  ·  {iface.name}")
 
-    def _open_menu(self, event: Any) -> None:
-        if self._on_menu is not None and not self.menu_btn.instate(["disabled"]):
-            self._on_menu(self.name, event)
-
-    def set_namespace(self, info: Optional[Dict[str, Any]], on_menu: Callable[[str, Any], None]) -> None:
-        """Show the namespace's DNS and limit next to the chips, and its settings menu, when one exists."""
-        self._on_menu = on_menu
-        text = namespace_badges(info).replace("  ·  ", "\n")
-        self.badges.configure(text=text)
-        if text:
-            self.badges.grid()
-        else:
-            self.badges.grid_remove()
-        if info is None:
-            self.menu_btn.grid_remove()
-        else:
-            self.menu_btn.grid()
-
-    def set_chips(self, apps: Sequence[Dict[str, Any]], on_click: Callable[[str], None],
-                  on_menu: Optional[Callable[[str, Any], None]] = None) -> None:
-        """apps: dicts with key, name, colour, running, note. Rebuilt only when something changed."""
-        key = tuple((a["key"], a["name"], a["colour"], a["running"], a.get("note", "")) for a in apps)
-        if key == self._chip_key:
-            return
-        self._chip_key = key
-        for child in self.chips_host.winfo_children():
-            child.destroy()
-        self.chips = []
-        p = self.p
-        if not apps:
-            slot = tk.Canvas(self.chips_host, width=28, height=26, background=p["surface"], highlightthickness=0,
-                             borderwidth=0)
-            slot.create_rectangle(1, 1, 27, 25, outline=p["line_hi"], dash=(3, 3))
-            slot.pack(side="left")
-            tk.Label(self.chips_host, text="No apps routed here", background=p["surface"],
-                     foreground=p["text_muted"], font=theme.font("small")).pack(side="left", padx=(8, 0))
-            return
-        for app in apps:
-            chip = Chip(self.chips_host, app["key"], app["name"], app["colour"], app["running"], on_click, on_menu,
-                        app.get("note", ""))
-            chip.frame.pack(side="left", padx=(0, 6))
-            self.chips.append(chip)
-
-    def set_traffic(self, history: Sequence[Tuple[float, float]], routed_rate: Optional[Tuple[float, float]],
-                    routed_count: int, link_speed: Optional[float]) -> None:
+    def set_traffic(self, history: Sequence[Tuple[float, float]], tone: str, link_speed: Optional[float]) -> None:
         p = self.p
         down, up = history[-1] if history else (0.0, 0.0)
-        tone, words = lane_state(bool(getattr(self._iface, "up", False)), bool(getattr(self._iface, "bindable", False)),
-                                 routed_count, down, up, link_speed)
         colour = tone_colour(tone, p)
-        number, unit = traffic.split_rate(down)
-        self.rate.configure(text=number)
-        self.unit.configure(text=f"{unit} ↓")
-        self.up.configure(text=f"↑ {traffic.format_rate(up)}")
-        if routed_rate is not None and routed_count and tone == "ok":
-            words = f"{words} · {traffic.format_rate(routed_rate[0] + routed_rate[1])}"
-        self.state.configure(text=words, foreground=colour if tone in ("ok", "hot") else p["text_muted"])
         graph.set_dot(self.dot, colour)
-        self.glyph_canvas.delete("all")
-        graph.draw_kind_glyph(self.glyph_canvas, self._kind, 11, 11, 20, colour if tone != "off" else p["text_muted"],
-                              p["surface"])
+        self.down.configure(text=f"↓ {traffic.format_rate(down)}")
+        self.up.configure(text=f"↑ {traffic.format_rate(up)}")
         scale = graph_scale(history)
         if link_speed and scale > link_speed:
             scale = link_speed
-        line = colour if tone != "idle" else p["text_muted"]
+        line = colour if tone not in ("idle", "off") else p["text_muted"]
         self.graph.update([d for d, _ in history], [u for _, u in history], scale, line,
                           traffic.scale_label(scale))
 
     def destroy(self) -> None:
         self.frame.destroy()
         self.separator.destroy()
-
-
-class StatTile:
-    """A headline number with a label, a short note and an optional sparkline along the bottom."""
-
-    def __init__(self, parent: Any, label: str, accent: str, sparkline: bool = True) -> None:
-        p = theme.current_palette()
-        bg = p["surface"]
-        self.accent = accent
-        self.frame = tk.Frame(parent, background=bg, highlightthickness=1, highlightbackground=p["border"])
-        self.frame.columnconfigure(1, weight=1)
-        head = tk.Frame(self.frame, background=bg)
-        head.grid(row=0, column=0, columnspan=2, sticky="ew", padx=16, pady=(12, 0))
-        self.mark = graph.status_dot(head, accent, bg, size=7)
-        self.mark.pack(side="left", pady=(1, 0))
-        tk.Label(head, text=label.upper(), background=bg, foreground=p["text_muted"],
-                 font=theme.font("eyebrow")).pack(side="left", padx=(7, 0))
-        value = tk.Frame(self.frame, background=bg)
-        value.grid(row=1, column=0, sticky="w", padx=(16, 8), pady=(2, 0))
-        self.value = tk.Label(value, text="0", background=bg, foreground=p["text"], font=theme.font("stat"))
-        self.value.pack(side="left")
-        self.unit = tk.Label(value, text="", background=bg, foreground=p["text_muted"], font=theme.font("small"))
-        self.unit.pack(side="left", padx=(4, 0), pady=(8, 0))
-        self.note = tk.Label(self.frame, text="", background=bg, foreground=p["text_muted"],
-                             font=theme.font("small"), anchor="e")
-        self.note.grid(row=1, column=1, sticky="se", padx=(0, 16), pady=(0, 5))
-        self._value_box = value
-        self.frame.bind("<Configure>", lambda _e: self._fit_note(), add="+")
-        self.spark: Optional[graph.Sparkline] = None
-        if sparkline:
-            self.spark = graph.Sparkline(self.frame, bg, width=120, height=26)
-            self.spark.canvas.grid(row=2, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 12))
-        else:
-            self.extra = tk.Frame(self.frame, background=bg, height=26)
-            self.extra.grid(row=2, column=0, columnspan=2, sticky="ew", padx=16, pady=(4, 12))
-
-    def _fit_note(self) -> None:
-        """Hide the note when the tile is too narrow to show it next to the number."""
-        try:
-            need = self._value_box.winfo_reqwidth() + self.note.winfo_reqwidth() + 16 + 8 + 16
-            if self.note.cget("text") and self.frame.winfo_width() >= need:
-                self.note.grid()
-            else:
-                self.note.grid_remove()
-        except tk.TclError:
-            pass
-
-    def set(self, value: str, unit: str, note: str, series: Optional[Sequence[float]] = None) -> None:
-        self.value.configure(text=value)
-        self.unit.configure(text=unit)
-        self.note.configure(text=note)
-        self._fit_note()
-        if self.spark is not None and series is not None:
-            peak = max(series, default=0.0)
-            self.spark.update(series, traffic.nice_ceiling(peak * 1.1, floor=16 * 1024), self.accent)

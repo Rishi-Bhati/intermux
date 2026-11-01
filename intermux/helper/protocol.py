@@ -186,8 +186,11 @@ def _validate_spec(specs: Dict[str, Tuple[Callable[[str, Any], Any], Any]], labe
     return clean
 
 
+BATCH_OPS = ("bind", "adopt", "set_limit")
+
+
 def _v_ops(name: str, value: Any) -> list:
-    """Validate the ops of a batch: each op is a bind or adopt with the single action's rules."""
+    """Validate the ops of a batch: each op is a bind, adopt or set_limit with the single action's rules."""
     if not isinstance(value, list) or not 1 <= len(value) <= MAX_BATCH_OPS:
         raise ValidationError(f"{name} must be a list of 1 to {MAX_BATCH_OPS} operations")
     clean = []
@@ -195,7 +198,7 @@ def _v_ops(name: str, value: Any) -> list:
         if not isinstance(op, dict):
             raise ValidationError("each operation must be an object")
         kind = op.get("op")
-        if not isinstance(kind, str) or kind not in ("bind", "adopt"):
+        if not isinstance(kind, str) or kind not in BATCH_OPS:
             raise ValidationError("unknown operation in batch")
         fields = {k: v for k, v in op.items() if k != "op"}
         checked = _validate_spec(_PARAM_SPECS[kind], f"batch {kind}", fields)

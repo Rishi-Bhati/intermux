@@ -156,16 +156,13 @@ Start InterMux from your application menu, or run `intermux` in a terminal (no c
 
 | Element | What it does |
 |---------|--------------|
-| **Stat tiles** | Total download and upload, the traffic going through InterMux and its share, and how many routed apps are running. |
-| **Network** | One lane per connection: its speed right now, a two-minute graph (green while InterMux routes apps over it), its state, and the apps on it as coloured chips. Click a chip to find the app below; right-click it for its actions. |
-| **+ Route an app here** | Picks that connection in the sidebar and opens the application picker. |
-| **Settings** (on a lane) | Limit bandwidth, change DNS servers, re-add routes, or remove the namespace and everything in it. The lane shows its DNS and limit when they are set by hand. |
-| **Routed apps** | One card per bound or adopted app: its connection, state, verified public IP, live traffic of its namespace, process count and traffic total. |
-| **Verify IP / Restart / Stop** | Show the public IP seen through that connection, restart the app in place with the same profile, or stop it. |
-| **More** | Open the log, move the app to another connection (it restarts there), or force-quit it. |
+| **Connections** | The main view. One group per connection (Ethernet, Wi-Fi, tethering, VPN) with the apps routed through it. Each app has Restart, Stop and a ••• menu (verify public IP, open log, move to another connection, force quit); right-click works too. |
+| **+ Add app** | On a connection: picks it in the form and opens the application picker. |
+| **DNS / Speed limit** | On a connection that has routed apps: change its DNS servers or cap its download and upload speed. Its ••• menu also re-adds routes or stops all its apps and removes it. |
+| **+ Add VPN** | Connect, disconnect or import (WireGuard `.conf`, OpenVPN `.ovpn`) VPN connections through NetworkManager. A VPN connected here only carries the apps you route through it; the rest of the system keeps its normal route. |
+| **Live traffic** | Download and upload graphs per connection, and how much goes through InterMux. Drag the gap above it to make it bigger or smaller; the gap between the left side and the form resizes too. |
+| **Route an app** | Choose the connection and the application (from the picker, by name or path, or a recent one). "DNS, speed limit, profile" opens the options. **Add to queue**, then **Assign** applies the whole queue with one password prompt. |
 | **Release** | On a routed (adopted) app, stops routing it. |
-| **Route an app** (sidebar) | Choose the connection, the application (from the picker, by name or path, or from recently routed apps) and DNS, then **Add to queue**. |
-| **Assign** | Apply every queued app. This is the step that asks for your password. |
 | **Teardown idle** | Removes the plumbing of bindings that have no running application. |
 | **Reset everything** | Removes everything InterMux created. It asks whether to also stop the applications inside InterMux namespaces. |
 | **Report issue** | Opens the bug report dialog (see [Troubleshooting](#troubleshooting)). |
