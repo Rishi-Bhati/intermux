@@ -22,7 +22,7 @@ async function copyText(text: string) {
   }
 }
 
-export default function InstallCommand({ command }: { command: string }) {
+export default function InstallCommand({ command, label = "Copy install command" }: { command: string; label?: string }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -47,7 +47,7 @@ export default function InstallCommand({ command }: { command: string }) {
         className={styles.copy}
         onClick={onCopy}
         data-copied={copied || undefined}
-        aria-label="Copy install command"
+        aria-label={label}
       >
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           {copied ? (

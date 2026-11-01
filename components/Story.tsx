@@ -21,7 +21,7 @@ const blocks: Block[] = [
     side: "left",
     title: "First, with InterMux off.",
     body: [
-      "This is a normal computer. Ethernet is the main connection, so every app is squeezed onto it, while Wi-Fi and your phone's tethering are connected but sit idle. A big download makes your video call lag.",
+      "Every app squeezes onto Ethernet while Wi-Fi and your phone sit idle. One big download, and your call lags.",
     ],
     action: { label: "Turn InterMux on", turnOn: true },
   },
@@ -29,7 +29,7 @@ const blocks: Block[] = [
     side: "left",
     title: "Now, with InterMux on.",
     body: [
-      "Each app uses the connection you gave it. Downloads keep Ethernet to themselves, the browser moves to Wi-Fi, and the call moves to your phone's tethering. Apps that are already open can be moved too.",
+      "Each app gets its own lane. Downloads keep Ethernet, the browser takes Wi-Fi, the call moves to your phone.",
     ],
     action: { label: "Turn InterMux off", turnOn: false },
   },
@@ -37,12 +37,12 @@ const blocks: Block[] = [
     side: "right",
     title: "One command builds each lane.",
     body: [
-      "InterMux starts the app inside its own ",
+      "Each app runs in its own ",
       {
         term: "isolated network",
         tip: "A Linux network namespace: its own interfaces, routes and DNS, kept apart from the rest of your system.",
       },
-      " and connects that network to the interface you chose. The app still runs as you; only the setup needs ",
+      " wired to the interface you chose. Only the setup needs ",
       {
         term: "root",
         tip: "A small helper makes the network changes after one polkit password prompt. The app itself never gets root.",

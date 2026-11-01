@@ -127,3 +127,96 @@ button {
     scroll-behavior: auto !important;
   }
 }
+
+/* Buttons shared by the hero, the install section and the closing call to action. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 20px;
+  border: 1px solid var(--line-hi);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease, filter 0.2s ease, transform 0.15s ease;
+}
+
+.btn:hover {
+  background: var(--panel-hi);
+  border-color: #464a4f;
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 8px 28px -10px rgba(58, 90, 255, 0.75);
+}
+
+.btn-primary:hover {
+  background: var(--accent);
+  border-color: transparent;
+  filter: brightness(1.1);
+}
+
+.btn small {
+  font-weight: 500;
+  font-size: 12.5px;
+  opacity: 0.72;
+}
+
+.btn .count {
+  padding-left: 10px;
+  margin-left: 2px;
+  border-left: 1px solid var(--line-hi);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* Section headings below the story share one look. */
+.eyebrow {
+  display: inline-block;
+  margin-bottom: 14px;
+  font-family: var(--font-code);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.section-title {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.section-lede {
+  margin: 18px 0 0;
+  max-width: 56ch;
+  font-size: clamp(1rem, 1.3vw, 1.125rem);
+  line-height: 1.55;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+section[id] {
+  scroll-margin-top: 24px;
+}

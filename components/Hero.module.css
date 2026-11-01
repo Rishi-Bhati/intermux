@@ -86,7 +86,7 @@
 
 
 .lede {
-  margin: 22px 0 36px;
+  margin: 22px 0 32px;
   max-width: 44ch;
   font-size: clamp(1rem, 1.3vw, 1.125rem);
   line-height: 1.55;
@@ -130,3 +130,34 @@
   }
 }
 
+
+.stars {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 8px;
+  margin-left: 2px;
+  border-left: 1px solid var(--line);
+  font-variant-numeric: tabular-nums;
+}
+
+.ctas {
+  margin-bottom: 28px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+@media (max-width: 720px) {
+  .section {
+    display: none !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .ctas {
+    width: 100%;
+    flex-direction: column;
+  }
+}

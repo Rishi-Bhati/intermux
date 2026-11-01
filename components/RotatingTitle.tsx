@@ -11,7 +11,7 @@ const TITLES: Array<[string, string]> = [
   ["Policy routing,", "without the homework."],
 ];
 
-const INTERVAL_MS = 6000;
+const INTERVAL_MS = 3000;
 
 /** The hero headline. It cycles through a few lines; the heading text for screen readers stays fixed. */
 export default function RotatingTitle() {

@@ -1,0 +1,90 @@
+.section {
+  max-width: 1400px;
+  margin-inline: auto;
+  padding: clamp(88px, 14vh, 140px) var(--pad-x);
+  border-top: 1px solid var(--line);
+}
+
+/* A ruled table of cells instead of floating cards: the lines are drawn by the gap over a line-coloured background. */
+.grid {
+  list-style: none;
+  margin: clamp(40px, 6vh, 64px) 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: clamp(24px, 3vw, 36px);
+  background: var(--bg);
+  transition: background-color 0.25s ease;
+}
+
+.item:hover {
+  background: var(--panel);
+}
+
+.icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: 22px;
+  border-radius: var(--radius);
+  color: var(--accent);
+  background: rgba(58, 90, 255, 0.1);
+  border: 1px solid rgba(58, 90, 255, 0.28);
+  transition: transform 0.3s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.item:hover .icon {
+  transform: translateY(-2px);
+}
+
+.item h3 {
+  margin: 0 0 18px;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.015em;
+}
+
+.item p {
+  margin: 0 0 22px;
+  max-width: 42ch;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.tag {
+  align-self: flex-start;
+  margin-top: auto;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-hi);
+  border: 1px solid var(--line);
+  font-family: var(--font-code);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+@media (max-width: 1000px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

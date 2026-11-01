@@ -1,17 +1,57 @@
 .closing {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 32px;
-  padding: clamp(96px, 16vh, 160px) var(--pad-x) clamp(96px, 16vh, 160px);
+  gap: 28px;
+  padding: clamp(96px, 16vh, 160px) var(--pad-x);
   border-top: 1px solid var(--line);
   text-align: center;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* A soft blue light behind the mark, the only place the page glows. */
+.glow {
+  position: absolute;
+  z-index: -1;
+  left: 50%;
+  top: 0;
+  width: min(900px, 120vw);
+  height: 420px;
+  transform: translate(-50%, -45%);
+  background: radial-gradient(closest-side, rgba(58, 90, 255, 0.22), transparent);
+  pointer-events: none;
 }
 
 .title {
   margin: 0;
-  font-size: clamp(2rem, 4vw, 3.25rem);
+  font-size: clamp(2rem, 4.6vw, 3.75rem);
   font-weight: 600;
   line-height: 1.05;
   letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.lede {
+  margin: -8px 0 4px;
+  max-width: 48ch;
+  font-size: clamp(1rem, 1.3vw, 1.125rem);
+  line-height: 1.55;
+  color: var(--muted);
+  text-wrap: balance;
+}
+
+.ctas {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+@media (max-width: 480px) {
+  .ctas {
+    width: 100%;
+    flex-direction: column;
+  }
 }

@@ -2,7 +2,7 @@
   display: flex;
   align-items: stretch;
   width: 100%;
-  max-width: 600px;
+  max-width: 820px;
   margin-inline: auto;
   background: var(--panel);
   border: 1px solid var(--line);
