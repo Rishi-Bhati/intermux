@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" fill="none">
+  <title>InterMux</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#16181A"/>
+      <stop offset="1" stop-color="#0c0d0e"/>
+    </linearGradient>
+  </defs>
+  <rect x="0.5" y="0.5" width="63" height="63" rx="13.5" fill="url(#bg)" stroke="#2A2D31"/>
+  <g transform="translate(32 32) scale(0.9) translate(-32 -32)">
+  <path d="M12 52V12M52 52V12" stroke="#868b91" stroke-width="8" stroke-linecap="round"/>
+  <path d="M12 12L32 36L52 12" stroke="#3a5aff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="12" cy="12" r="8" fill="#3a5aff"/>
+  <circle cx="52" cy="12" r="8" fill="#3a5aff"/>
+  <circle cx="32" cy="36" r="9.5" fill="#3a5aff"/>
+  <rect x="4" y="44" width="16" height="16" rx="3.5" fill="#e9eaeb"/>
+  <rect x="44" y="44" width="16" height="16" rx="3.5" fill="#e9eaeb"/>
+  </g>
+</svg>

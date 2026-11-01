@@ -1,0 +1,90 @@
+.box {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  max-width: 820px;
+  margin-inline: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.box:hover {
+  border-color: var(--line-hi);
+  background: var(--panel-hi);
+}
+
+.prompt {
+  display: flex;
+  align-items: center;
+  padding: 0 4px 0 16px;
+  font-family: var(--font-code);
+  font-size: 14px;
+  color: var(--accent);
+  user-select: none;
+}
+
+.command {
+  flex: 1;
+  min-width: 0;
+  padding: 16px 12px;
+  font-family: var(--font-code);
+  font-size: 13.5px;
+  line-height: 1.4;
+  color: var(--text);
+  white-space: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.command::-webkit-scrollbar {
+  display: none;
+}
+
+.copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px;
+  padding: 0 14px;
+  min-width: 92px;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.2s ease, transform 0.15s ease;
+}
+
+.copy:hover {
+  filter: brightness(1.08);
+}
+
+.copy:active {
+  transform: translateY(1px);
+}
+
+.copy:focus-visible {
+  outline-offset: 2px;
+}
+
+.copy[data-copied] {
+  background: var(--text);
+}
+
+@media (max-width: 480px) {
+  .command {
+    font-size: 12px;
+  }
+  .copy span {
+    display: none;
+  }
+  .copy {
+    min-width: 44px;
+    padding: 0 12px;
+  }
+}

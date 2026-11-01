@@ -1,0 +1,39 @@
+.mesh {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  /* The mesh sits in the upper half and fades out before the globe begins. */
+  mask-image: linear-gradient(to bottom, #000 0%, #000 35%, transparent 70%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 35%, transparent 70%);
+}
+
+.links line {
+  stroke: #fff;
+  stroke-opacity: 0.05;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.dot {
+  fill: #fff;
+  fill-opacity: 0.2;
+}
+
+.pulse {
+  fill: var(--accent);
+  fill-opacity: 0.15;
+  animation: breathe 7s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    fill-opacity: 0.12;
+  }
+  50% {
+    fill-opacity: 0.75;
+  }
+}

@@ -1,0 +1,160 @@
+.flow {
+  --step: 0.62s;
+  --loop: 5.2s;
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  padding: 18px 18px;
+  min-height: 0;
+}
+
+.node {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  color: var(--c, var(--muted));
+  background: var(--panel);
+  border: 1px solid var(--line-hi);
+  border-radius: var(--radius);
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1;
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.caption {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.code {
+  flex: none;
+  padding: 4px 9px;
+  font-family: var(--font-code);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel-hi);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+/* The line the packet travels down: centred behind the icons. */
+.rail {
+  position: absolute;
+  z-index: 0;
+  left: calc(18px + 20px - 0.5px);
+  top: 18px;
+  bottom: 18px;
+  width: 1px;
+  background: linear-gradient(to bottom, transparent, var(--line-hi) 12%, var(--line-hi) 88%, transparent);
+}
+
+.packet {
+  position: absolute;
+  left: -2.5px;
+  top: 0;
+  width: 6px;
+  height: 22px;
+  border-radius: 3px;
+  background: linear-gradient(to bottom, transparent, var(--cyan), var(--violet), var(--amber), var(--green));
+  opacity: 0;
+}
+
+.flow[data-active] .packet {
+  animation: travel var(--loop) cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.flow[data-active] .icon {
+  animation: light var(--loop) ease-out infinite;
+  animation-delay: calc(var(--i) * var(--step) + 0.75s);
+}
+
+@keyframes travel {
+  0% {
+    opacity: 0;
+    top: 0;
+  }
+  4% {
+    opacity: 1;
+  }
+  64% {
+    opacity: 1;
+    top: calc(100% - 22px);
+  }
+  72%,
+  100% {
+    opacity: 0;
+    top: calc(100% - 22px);
+  }
+}
+
+@keyframes light {
+  0% {
+    color: var(--c, var(--accent));
+    border-color: var(--c, var(--accent));
+  }
+  16%,
+  100% {
+    color: var(--c, var(--muted));
+    border-color: var(--line-hi);
+  }
+}
+
+.lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lock svg {
+  flex: none;
+  color: var(--accent);
+}
+
+@media (max-width: 600px) {
+  .caption {
+    display: none;
+  }
+  .node {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .code {
+    margin-left: 56px;
+    font-size: 11px;
+  }
+  .text {
+    flex-basis: calc(100% - 56px);
+  }
+  .flow {
+    padding-block: 14px;
+  }
+  .rail {
+    top: 14px;
+    bottom: 14px;
+  }
+}

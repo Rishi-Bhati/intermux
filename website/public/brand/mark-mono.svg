@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" width="64" height="64">
+  <title>InterMux</title>
+  <path d="M12 52V12M52 52V12" stroke="currentColor" opacity="0.55" stroke-width="8" stroke-linecap="round"/>
+  <path d="M12 12L32 36L52 12" stroke="currentColor" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="12" cy="12" r="8" fill="currentColor"/>
+  <circle cx="52" cy="12" r="8" fill="currentColor"/>
+  <circle cx="32" cy="36" r="9.5" fill="currentColor"/>
+  <rect x="4" y="44" width="16" height="16" rx="3.5" fill="currentColor"/>
+  <rect x="44" y="44" width="16" height="16" rx="3.5" fill="currentColor"/>
+</svg>

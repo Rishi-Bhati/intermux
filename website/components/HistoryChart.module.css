@@ -1,0 +1,106 @@
+.wrap {
+  position: relative;
+  width: 100%;
+}
+
+.svg {
+  display: block;
+  overflow: visible;
+  touch-action: pan-y;
+}
+
+.grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.yLabel,
+.xLabel,
+.flag text {
+  font-family: var(--font-body);
+  font-size: 11px;
+  fill: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.yLabel {
+  text-anchor: end;
+  dominant-baseline: central;
+}
+
+.xLabel {
+  text-anchor: middle;
+}
+
+.line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.75;
+  stroke-linejoin: round;
+}
+
+/* Releases: a thin line with a small flag and the version. */
+.flag line {
+  stroke: var(--line-hi);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+  transition: stroke 0.2s ease;
+}
+
+.flag rect {
+  fill: var(--muted);
+  transition: fill 0.2s ease;
+}
+
+.flag[data-near] line {
+  stroke: var(--text);
+}
+
+.flag[data-near] rect {
+  fill: var(--accent);
+}
+
+.flag text {
+  fill: var(--text);
+}
+
+.cursor line {
+  stroke: var(--text);
+  stroke-opacity: 0.5;
+  stroke-width: 1;
+}
+
+.cursor circle {
+  fill: var(--accent);
+  stroke: var(--panel);
+  stroke-width: 2;
+}
+
+.tip {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 11px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  background: var(--panel-hi);
+  border: 1px solid var(--line-hi);
+  border-radius: var(--radius);
+  pointer-events: none;
+}
+
+.tip strong {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.tip em {
+  margin-top: 3px;
+  font-style: normal;
+  color: var(--accent);
+}
