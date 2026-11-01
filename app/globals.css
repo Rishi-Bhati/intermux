@@ -1,40 +1,86 @@
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0c0d0e;
+  --panel: #121315;
+  --panel-hi: #17191b;
+  --line: #1f2123;
+  --line-hi: #33363a;
+  --text: #e9eaeb;
+  --muted: #868b91;
+  --accent: #3a5aff;
+  --accent-ink: #ffffff;
+
+  /* Supporting colours. Green means InterMux is on and routing; the rest tell apps and steps apart. */
+  --green: #3fd69a;
+  --red: #ff8585;
+  --amber: #ffb547;
+  --violet: #a78bfa;
+  --cyan: #38c8f0;
+  --pink: #f472b6;
+
+  --radius: 4px;
+  --radius-sm: 3px;
+
+  --font-body: var(--font-sans), system-ui, sans-serif;
+  --font-code: var(--font-mono), ui-monospace, "SF Mono", Menlo, monospace;
+
+  --pad-x: clamp(20px, 4.5vw, 64px);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 html {
-  height: 100%;
-}
-
-html,
-body {
-  max-width: 100vw;
-  overflow-x: hidden;
+  color-scheme: dark;
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-* {
-  box-sizing: border-box;
-  padding: 0;
   margin: 0;
+  min-height: 100svh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Fine film grain, like the texture the palette was taken from. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0.07;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* A very quiet grid behind everything below the hero. */
+.grid-texture {
+  position: relative;
+  isolation: isolate;
+}
+
+.grid-texture::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.032) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
+  background-size: 56px 56px;
+  background-position: center top;
+  /* It eases in from the hero instead of starting with a hard edge. */
+  mask-image: linear-gradient(to bottom, transparent 0, #000 220px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 220px);
 }
 
 a {
@@ -42,8 +88,42 @@ a {
   text-decoration: none;
 }
 
-@media (prefers-color-scheme: dark) {
-  html {
-    color-scheme: dark;
+button {
+  font: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
 }

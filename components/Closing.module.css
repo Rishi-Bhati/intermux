@@ -1,0 +1,17 @@
+.closing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  padding: clamp(96px, 16vh, 160px) var(--pad-x) clamp(96px, 16vh, 160px);
+  border-top: 1px solid var(--line);
+  text-align: center;
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+}

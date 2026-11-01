@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 282 64" fill="none" width="282" height="64">
+  <title>InterMux</title>
+  <g>
+  <path d="M12 52V12M52 52V12" stroke="#868b91" stroke-width="8" stroke-linecap="round"/>
+  <path d="M12 12L32 36L52 12" stroke="#3a5aff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="12" cy="12" r="8" fill="#3a5aff"/>
+  <circle cx="52" cy="12" r="8" fill="#3a5aff"/>
+  <circle cx="32" cy="36" r="9.5" fill="#3a5aff"/>
+  <rect x="4" y="44" width="16" height="16" rx="3.5" fill="#e9eaeb"/>
+  <rect x="44" y="44" width="16" height="16" rx="3.5" fill="#e9eaeb"/>
+  </g>
+  <path d="M76 16H81.5V48H76Z" fill="#e9eaeb"/>
+  <path d="M88.5 48V26H99.5A11 11 0 0 1 110.5 37V48H105V37A5.5 5.5 0 0 0 94 37V48Z" fill="#e9eaeb"/>
+  <path d="M119.5 20V39A9 9 0 0 0 128.5 48H133V42.5H128.5A3.5 3.5 0 0 1 125 39V20Z" fill="#e9eaeb"/>
+  <path d="M116 26H133V31.5H116Z" fill="#e9eaeb"/>
+  <path d="M160 37A11 11 0 1 0 156.64 44.91L152.82 40.96A5.5 5.5 0 1 1 154.5 37Z" fill="#e9eaeb"/>
+  <path d="M138 36H160V41H138Z" fill="#e9eaeb"/>
+  <path d="M165 48V26H176A11 11 0 0 1 183.36 28.83L179.68 32.91A5.5 5.5 0 0 0 170.5 37V48Z" fill="#e9eaeb"/>
+  <path d="M191.5 48V16H197V48Z " fill="#e9eaeb"/>
+  <path d="M220 16H225.5V48H220Z " fill="#e9eaeb"/>
+  <path d="M191.5 16H198.3L208.5 32.03L218.7 16H225.5L208.5 42.71Z" fill="#e9eaeb"/>
+  <path d="M231 48V26H242A11 11 0 0 1 253 37V48H247.5V37A5.5 5.5 0 0 0 236.5 37V48Z" fill="#e9eaeb" transform="rotate(180 242 37)"/>
+  <path d="M257 26H264L280 48H273Z " fill="#3a5aff"/>
+  <path d="M273 26H280L264 48H257Z" fill="#3a5aff"/>
+</svg>

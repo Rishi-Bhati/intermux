@@ -1,0 +1,132 @@
+.hero {
+  position: relative;
+  min-height: 100svh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.nav,
+.body,
+.facts {
+  position: relative;
+  z-index: 2;
+}
+
+/* Navigation */
+.nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px var(--pad-x);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+  font-size: 17px;
+  letter-spacing: -0.01em;
+}
+
+.brand svg {
+  transition: transform 0.4s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.brand:hover svg {
+  transform: translateY(-1px) scale(1.08);
+}
+
+.links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.links a {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  color: var(--muted);
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.links a:hover {
+  color: var(--text);
+  background: var(--panel-hi);
+}
+
+.github {
+  border: 1px solid var(--line);
+}
+
+/* Centered content */
+.body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px var(--pad-x) 14svh;
+  animation: rise 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+
+.lede {
+  margin: 22px 0 36px;
+  max-width: 44ch;
+  font-size: clamp(1rem, 1.3vw, 1.125rem);
+  line-height: 1.55;
+  color: var(--muted);
+  text-wrap: balance;
+}
+
+/* Facts strip */
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px 0;
+  margin-inline: var(--pad-x);
+  padding-block: 20px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.facts span {
+  padding-right: 20px;
+  margin-right: 20px;
+  border-right: 1px solid var(--line);
+  line-height: 1;
+}
+
+.facts span:last-child {
+  border-right: 0;
+  margin-right: 0;
+  padding-right: 0;
+}
+
+@media (max-width: 480px) {
+  .github {
+    border-color: transparent;
+  }
+  .facts span {
+    padding-right: 14px;
+    margin-right: 14px;
+  }
+}
+

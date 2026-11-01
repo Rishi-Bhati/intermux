@@ -1,0 +1,429 @@
+.story {
+  position: relative;
+  border-top: 1px solid var(--line);
+}
+
+.inner {
+  --gap: 64px; /* the space on each side of the centre line */
+  max-width: 1400px;
+  margin-inline: auto;
+  padding-inline: var(--pad-x);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+}
+
+.text {
+  --bh: 82svh;
+  --pad: 18svh;
+  --last: 50svh; /* half the height of the last part, which is as tall as the screen */
+  position: relative;
+  grid-column: 1 / -1;
+  padding-bottom: var(--pad);
+}
+
+/* One part = some text on one side of the centre line and the diagram pinned on the other. */
+.part {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+}
+
+.copy {
+  min-width: 0;
+}
+
+/* Extra room after the last block so the pinned monitor stays put for a good while before it scrolls away.
+   It has to sit inside the copy column, not as padding on the part: a sticky element only stays pinned
+   within its container's content box, so padding there just scrolls past as empty space after the monitor has gone. */
+.rail + .part .copy {
+  padding-bottom: 55svh;
+}
+
+/* The next part slides up under the end of this one, so the monitor stays pinned until the next text
+   is right below it and pushes it off, without making the line between them any longer. */
+.rail + .part {
+  margin-bottom: -45svh;
+}
+
+/* Keep the pinned monitor (and its switch) above the next part where the two overlap. */
+.rail + .part .visual {
+  z-index: 1;
+}
+
+.rail {
+  position: absolute;
+  left: calc(50% - 1px);
+  top: calc(var(--bh) / 2);
+  bottom: calc(var(--last) + var(--pad));
+  width: 1px;
+  background: var(--line-hi);
+}
+
+.railFill {
+  position: absolute;
+  inset: 0;
+  background: var(--accent);
+  transform: scaleY(var(--rp, 0));
+  transform-origin: top;
+}
+
+.block {
+  position: relative;
+  min-height: var(--bh);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  opacity: 0.32;
+  transition: opacity 0.5s ease;
+}
+
+/* Left of the line: right-aligned, reading toward it. */
+.part:last-child .block {
+  min-height: 100svh;
+}
+
+.block[data-side="left"] {
+  align-items: flex-end;
+  padding-right: var(--gap);
+  text-align: right;
+}
+
+/* Right of the line: left-aligned, reading away from it. */
+.block[data-side="right"] {
+  align-items: flex-start;
+  padding-left: var(--gap);
+  text-align: left;
+}
+
+.block[data-active] {
+  opacity: 1;
+}
+
+/* A marker on the rail for each block; it lights once the reader has reached it. */
+.block::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 8px;
+  margin-top: -4px;
+  background: var(--bg);
+  border: 1px solid var(--line-hi);
+  border-radius: 2px;
+  transition: background-color 0.4s ease, border-color 0.4s ease;
+}
+
+.block[data-side="left"]::before {
+  right: -3.5px;
+}
+
+.block[data-side="right"]::before {
+  left: -4.5px;
+}
+
+.block[data-active]::before,
+.block[data-passed]::before {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.block[data-side="left"] .body {
+  margin-left: auto;
+}
+
+.title {
+  margin: 0;
+  font-size: clamp(2rem, 3.4vw, 3.1rem);
+  font-weight: 600;
+  line-height: 1.06;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.body {
+  --p: 1;
+  margin: 22px 0 0;
+  max-width: 40ch;
+  font-size: 1.125rem;
+  line-height: 1.65;
+  color: var(--text);
+}
+
+/* Each word fades up from dim to full as the paragraph is read. */
+.word {
+  opacity: clamp(0.2, calc(0.2 + (var(--p) * (var(--n) + 4) - var(--i)) * 0.2), 1);
+}
+
+.term {
+  position: relative;
+  padding: 0;
+  font: inherit;
+  color: var(--text);
+  background: none;
+  border: 0;
+  border-bottom: 1px dashed var(--accent);
+  cursor: help;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.term:hover,
+.term:focus-visible {
+  color: var(--accent);
+}
+
+.term:focus-visible {
+  outline-offset: 2px;
+}
+
+.block[data-side="right"] .tip {
+  left: 0;
+  right: auto;
+}
+
+.tip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 12px);
+  z-index: 6;
+  width: min(300px, 78vw);
+  padding: 12px 14px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--panel-hi);
+  border: 1px solid var(--line-hi);
+  border-radius: var(--radius);
+  box-shadow: 0 16px 40px -12px rgba(0, 0, 0, 0.8);
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.word:hover .tip,
+.word:focus-within .tip {
+  opacity: 1;
+  transform: none;
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 30px;
+  padding: 9px 14px 9px 10px;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line-hi);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.action:hover {
+  border-color: var(--accent);
+  background: var(--panel-hi);
+}
+
+/* A tiny switch glyph that matches the real one. */
+.actionIcon {
+  position: relative;
+  width: 26px;
+  height: 14px;
+  background: var(--bg);
+  border: 1px solid var(--line-hi);
+  border-radius: 3px;
+}
+
+.actionIcon::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--muted);
+  transition: transform 0.3s cubic-bezier(0.3, 0.8, 0.2, 1), background-color 0.3s ease;
+}
+
+/* The glyph shows whether InterMux is on right now, like the real switch beside the monitor. */
+.actionIcon[data-on]::after {
+  transform: translateX(11px);
+  background: var(--green);
+}
+
+/* On hover it previews what the button will do. */
+.action:hover .actionIcon[data-target="on"]::after {
+  transform: translateX(11px);
+  background: var(--green);
+}
+
+.action:hover .actionIcon[data-target="off"]::after {
+  transform: none;
+  background: var(--muted);
+}
+
+/* Each diagram stays pinned while its text scrolls past, then leaves with its part. */
+.visual {
+  position: sticky;
+  top: 0;
+  height: 100svh;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 14px;
+}
+
+.visual[data-side="right"] {
+  grid-column: 2;
+  grid-row: 1;
+  padding-left: var(--gap);
+  align-items: flex-start;
+}
+
+.visual[data-side="left"] {
+  grid-column: 1;
+  grid-row: 1;
+  padding-right: var(--gap);
+  align-items: flex-end;
+}
+
+.copy {
+  grid-row: 1;
+}
+
+/* The text takes whichever column the diagram does not. */
+.rail + .part .copy {
+  grid-column: 1;
+}
+
+.part:last-child .copy {
+  grid-column: 2;
+}
+
+.panel {
+  position: relative;
+  width: 100%;
+  max-width: 600px;
+  height: min(520px, 64svh);
+  min-height: 420px;
+  background: var(--panel);
+  border: 1px solid var(--line-hi);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.8);
+}
+
+.visual > :last-child {
+  max-width: 600px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .word {
+    opacity: 1;
+  }
+}
+
+/* Narrow screens: the diagram pins to the top and the text scrolls beneath it. */
+@media (max-width: 1100px) {
+  .inner {
+    --gap: 0px;
+    max-width: none;
+    display: block;
+  }
+
+  .text {
+    --bh: 44svh;
+    --pad: 24svh;
+    --last: calc(var(--bh) / 2);
+  }
+
+  /* Stacked: each diagram pins to the top and its text scrolls beneath it. */
+  .part {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .visual,
+  .visual[data-side] {
+    order: -1;
+    z-index: 5;
+    height: auto;
+    padding: 14px 0 12px;
+    align-items: stretch;
+    background: var(--bg);
+  }
+
+  .visual::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    height: 28px;
+    background: linear-gradient(to bottom, var(--bg), transparent);
+    pointer-events: none;
+  }
+
+  .panel {
+    height: clamp(380px, 50svh, 440px);
+    min-height: 0;
+  }
+
+  .part:last-child .block {
+    min-height: var(--bh);
+  }
+
+  .rail + .part .copy {
+    padding-bottom: 25svh;
+  }
+
+  .rail + .part {
+    margin-bottom: 0;
+  }
+
+  /* The text reads left to right, with the line in the margin. */
+  .rail {
+    left: -12px;
+  }
+
+  .block,
+  .block[data-side] {
+    padding-inline: 0;
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  .block[data-side]::before {
+    right: auto;
+    left: -15.5px;
+  }
+
+  .block[data-side] .body {
+    margin-left: 0;
+  }
+
+  .block[data-side] .tip {
+    right: auto;
+    left: 0;
+  }
+
+  .title {
+    font-size: clamp(1.6rem, 6vw, 2.1rem);
+  }
+
+  .body {
+    margin-top: 12px;
+    font-size: 1rem;
+    line-height: 1.55;
+  }
+
+  .action {
+    margin-top: 18px;
+  }
+}
