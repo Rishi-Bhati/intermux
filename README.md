@@ -69,7 +69,7 @@ Names are taken from the files in `packaging/` and from the hints printed by `in
 
 | Distribution | Runtime packages | Optional | Extra for building from source |
 |--------------|------------------|----------|--------------------------------|
-| Arch | `iproute2 iptables polkit util-linux procps-ng xdg-utils` | `nftables curl` | `tk` (and `python-pyinstaller` for the PKGBUILD) |
+| Arch | `iproute2 iptables polkit util-linux procps-ng xdg-utils` | `nftables curl` | `tk` (and `pyinstaller` from the AUR for the PKGBUILD) |
 | Debian / Ubuntu | `iproute2 iptables pkexec` (or `policykit-1`) `util-linux procps xdg-utils` | `nftables curl` | `python3-tk python3-venv` |
 | Fedora | `iproute iptables-nft polkit util-linux procps-ng xdg-utils` | `nftables curl` | `python3-tkinter` |
 | openSUSE | `iproute2 iptables procps util-linux polkit xdg-utils` | `nftables curl` | `python3-tk` |
@@ -77,6 +77,23 @@ Names are taken from the files in `packaging/` and from the hints printed by `in
 There is no openSUSE package recipe in `packaging/`; the openSUSE names come from `install.sh`.
 
 ## Installation
+
+### Quick install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh
+```
+
+Run it as your normal user; it asks for your password through `sudo`. It installs any missing system tools with your package manager, downloads the newest release, checks its SHA-256 and installs it. On systems the pre-built bundle does not support (aarch64, glibc older than 2.35, musl) it builds from the tagged source instead. Run the same command again to update. Options go after `sh -s --`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh -s -- --uninstall
+curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh -s -- --version 2.0.1
+```
+
+`--from-source` forces a source build and `--no-deps` skips installing system packages. Without curl, use `wget -qO- <same URL> | sh`. See [`get/README.md`](get/README.md) for details, including the Windows installer.
+
+The steps below do the same thing by hand.
 
 The bundle is installed system-wide under `/usr/lib/intermux`, with a launcher at `/usr/bin/intermux`, a polkit policy, a desktop entry and the `intermux-watch.service` systemd unit.
 
@@ -111,13 +128,14 @@ Recipes exist in the repository, but they are starting points that have not been
 
 | Distribution | Location | Notes |
 |--------------|----------|-------|
-| Arch | `packaging/arch/PKGBUILD` | The maintainer field is a TODO and `sha256sums` is `SKIP`; set the real checksum (`updpkgsums`) first. |
+| Arch | `packaging/arch/PKGBUILD` | Builds with `makepkg`; needs `pyinstaller` from the AUR. Not published to the AUR yet. Update `sha256sums` (`updpkgsums`) for each release. |
 | Debian / Ubuntu | `packaging/debian/` | Standard `debian/` directory (control, rules, postinst). |
 | Fedora | `packaging/fedora/intermux.spec` | Needs `python3-pyinstaller` at build time, so it is only buildable from a COPR or private repository that provides it. |
 
 ### Uninstall
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh -s -- --uninstall
 sudo ./uninstall.sh          # from the source or release directory
 sudo ./uninstall.sh --force  # remove files even if the reset step fails
 ```
@@ -234,6 +252,7 @@ intermux/
   helper/      protocol, root helper server, unprivileged client
   system/      namespaces, firewall, routing, running-app adoption, deps, safe file operations
   ui/          Tk GUI (app, picker, theme, worker, report dialog)
+get/           one-line installers (install.sh for Linux, install.ps1 for Windows)
 packaging/
   linux/       polkit policy, desktop entry, icon, metainfo, systemd unit and preset
   arch/ debian/ fedora/   distribution packaging starting points

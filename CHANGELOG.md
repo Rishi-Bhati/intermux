@@ -7,6 +7,10 @@ Earlier releases are described in [release_notes.md](release_notes.md).
 
 ## [Unreleased]
 
+### Added
+
+- **One-line installer.** `curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh` installs missing system tools, downloads and verifies the newest Linux release, and installs it; it builds from source where the pre-built bundle does not run. `--uninstall`, `--version`, `--from-source` and `--no-deps` are supported. `get/install.ps1` does the same for the Windows edition (`irm ... | iex`).
+
 ### Fixed
 
 - **Opening the browser.** "Open reporting portal", "Open folder" and "Open log" now start the desktop opener detached and with the system's own library path, so packaged builds can open the browser and the GUI no longer reports a failure while a newly started browser is still running. `gio open` is tried when `xdg-open` fails.

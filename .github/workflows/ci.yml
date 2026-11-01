@@ -65,6 +65,9 @@ jobs:
           bash -n install.sh
           bash -n uninstall.sh
           sh -n packaging/debian/postinst
+          sh -n get/install.sh
+          # The one-line installer is piped into sh, so it must stay POSIX (dash on Debian/Ubuntu).
+          shellcheck -s sh get/install.sh
 
       - name: Desktop entry
         run: desktop-file-validate packaging/linux/intermux.desktop
