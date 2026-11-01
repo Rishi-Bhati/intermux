@@ -9,6 +9,17 @@ Earlier releases are described in [release_notes.md](release_notes.md).
 
 ### Added
 
+- **New main window.** Redesigned after the website, around routing apps: a Connections view groups the apps under the connection they use, with their controls and each connection's DNS and speed limit. Live traffic graphs (per connection, and the share going through InterMux) sit in their own panel below. Panels are resizable, and long text is shortened with a tooltip instead of being cut off.
+- **VPN tunnels.** `tun`, `tap`, `wg` and `ppp` interfaces, and any tunnel recognised by device type, can be bound. The namespace route goes straight into the tunnel, so one app can use the VPN while the system keeps its normal route.
+- **Add VPN.** Connect, disconnect and import (WireGuard `.conf`, OpenVPN `.ovpn`) VPN connections through NetworkManager from the app. A VPN connected this way never becomes the system's default route.
+- **DNS per interface.** Automatic, a preset (Cloudflare, Google, Quad9) or up to four IPv4 servers, chosen when routing an app (`bind --dns`, the form's options) or changed later (`intermux dns`, the connection's DNS button). Running apps pick the change up.
+- **Speed limits per interface.** Download and upload limits in Mbit/s with `tc`, set when routing an app (same Assign, one password prompt) or later (`intermux limit`, the connection's Speed limit button).
+- **Restart and move.** Restart an app in its namespace with the same profile (`intermux restart`), or move it to another interface (`intermux move`); neither closes a copy you run outside InterMux.
+- **Remove a namespace.** Stop everything in an interface namespace and remove it with its routes and rules (`intermux remove`).
+- **Reconnect.** `intermux reconnect` re-adds routes on demand, as the watcher does on its own.
+- **Recent apps.** The GUI remembers the last 20 routed apps with their connection and DNS.
+- **Status.** `intermux status` lists the DNS, speed limit and traffic since creation of each interface namespace.
+- **Window icon.** The GUI window uses the InterMux icon.
 - **One-line installer.** `curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh` installs missing system tools, downloads and verifies the newest Linux release, and installs it; it builds from source where the pre-built bundle does not run. `--uninstall`, `--version`, `--from-source` and `--no-deps` are supported. `get/install.ps1` does the same for the Windows edition (`irm ... | iex`).
 
 ### Fixed
