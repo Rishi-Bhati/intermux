@@ -32,7 +32,7 @@ except ImportError:  # reported by main()
 log = logging.getLogger("intermux.ui")
 
 AUTO_REFRESH_MS = 4000
-OPEN_LOG_TIMEOUT = 10.0
+OPEN_LOG_TIMEOUT = 5.0
 PUBLIC_IP_TTL = 300.0  # a verified public IP is shown for five minutes, then cleared
 
 # Widgets that take typed text: shortcut keys such as Delete must not act while one has focus.
@@ -1107,7 +1107,7 @@ class InterMuxApp:
             self._set_status("No log file is recorded for this binding.")
             return
         self.worker.submit(
-            commands.run, ["xdg-open", row["log_path"]], timeout=OPEN_LOG_TIMEOUT,
+            commands.open_with_desktop, row["log_path"], timeout=OPEN_LOG_TIMEOUT,
             on_done=self._on_open_log_done,
         )
 

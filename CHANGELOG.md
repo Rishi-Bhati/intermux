@@ -7,6 +7,14 @@ Earlier releases are described in [release_notes.md](release_notes.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Opening the browser.** "Open reporting portal", "Open folder" and "Open log" now start the desktop opener detached and with the system's own library path, so packaged builds can open the browser and the GUI no longer reports a failure while a newly started browser is still running. `gio open` is tried when `xdg-open` fails.
+
+### Changed
+
+- **Reporting portal link.** The Report issue window shows the portal link as a clickable link that can be selected and copied, with a Copy link button and a right-click menu.
+
 ## [2.0.1] — 2026-10-13
 
 ### Fixed

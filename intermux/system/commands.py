@@ -7,8 +7,9 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
-from typing import Any, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from intermux.errors import SystemCommandError
 
@@ -92,6 +93,66 @@ def run(argv: Sequence[str], *, timeout: float = 30.0, input_text: Optional[str]
         else:
             log.warning("command failed (%d): %s: %s", result.returncode, args,
                         result.stderr.strip())
+    return result
+
+
+def desktop_env(environ: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
+    """Return environ (default os.environ) as it was before a PyInstaller bundle changed it.
+
+    A frozen build points LD_LIBRARY_PATH (and Tcl/Tk paths) at its own bundled libraries.
+    Desktop openers and browsers started with that environment load the bundle's older
+    libraries and fail, so the original value is restored and bundle-only keys are dropped.
+    """
+    env = dict(os.environ if environ is None else environ)
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    if not getattr(sys, "frozen", False) and not bundle_dir:
+        return env
+    original = env.pop("LD_LIBRARY_PATH_ORIG", None)
+    if original:
+        env["LD_LIBRARY_PATH"] = original
+    else:
+        env.pop("LD_LIBRARY_PATH", None)
+    for key in list(env):
+        if key.startswith("_PYI") or (bundle_dir and bundle_dir in env[key]):
+            del env[key]
+    return env
+
+
+DESKTOP_OPENERS = (("xdg-open",), ("gio", "open"))
+
+
+def open_with_desktop(target: str, *, timeout: float = 5.0) -> CmdResult:
+    """Open a URL, file or folder with the desktop's default handler, without blocking on it.
+
+    The opener runs detached with no pipes: a browser it starts can outlive it and would
+    otherwise hold captured pipes open until the timeout. An opener still running after
+    `timeout` is taken as having handed the target over. Falls back to `gio open`.
+    """
+    if not isinstance(target, str) or not target:
+        raise ValueError("target must be a non-empty str")
+    env = desktop_env()
+    result = CmdResult([DESKTOP_OPENERS[0][0], target], NOT_FOUND_RETURNCODE, "",
+                       "no desktop opener found (install xdg-utils)")
+    for opener in DESKTOP_OPENERS:
+        path = which(opener[0])
+        if path is None:
+            continue
+        args = [path, *opener[1:], target]
+        log.debug("open: %s", args)
+        try:
+            proc = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, env=env, start_new_session=True)
+        except OSError as exc:
+            result = CmdResult(args, 126, "", f"cannot execute {args[0]}: {exc}")
+            continue
+        try:
+            returncode = proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return CmdResult(args, 0, "", "")
+        if returncode == 0:
+            return CmdResult(args, 0, "", "")
+        result = CmdResult(args, returncode, "", f"{opener[0]} exited with status {returncode}")
+        log.warning("opener failed (%d): %s", returncode, args)
     return result
 
 

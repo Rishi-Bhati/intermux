@@ -148,5 +148,81 @@ class WhichTests(unittest.TestCase):
                 self.assertIsNone(commands.which("intermux-fake-tool"))
 
 
+class DesktopEnvTests(unittest.TestCase):
+    def test_unfrozen_environment_is_copied_unchanged(self):
+        env = {"LD_LIBRARY_PATH": "/opt/lib", "HOME": "/home/u"}
+        with mock.patch.object(sys, "frozen", False, create=True):
+            self.assertEqual(commands.desktop_env(env), env)
+
+    def test_frozen_bundle_paths_are_removed_and_original_restored(self):
+        env = {"LD_LIBRARY_PATH": "/usr/lib/intermux/_internal", "LD_LIBRARY_PATH_ORIG": "/opt/lib",
+               "TCL_LIBRARY": "/usr/lib/intermux/_internal/_tcl_data", "_PYI_APPLICATION_HOME_DIR": "x",
+               "HOME": "/home/u"}
+        with mock.patch.object(sys, "frozen", True, create=True), \
+             mock.patch.object(sys, "_MEIPASS", "/usr/lib/intermux/_internal", create=True):
+            out = commands.desktop_env(env)
+        self.assertEqual(out, {"LD_LIBRARY_PATH": "/opt/lib", "HOME": "/home/u"})
+
+    def test_frozen_without_original_drops_library_path(self):
+        env = {"LD_LIBRARY_PATH": "/tmp/_MEI123", "HOME": "/home/u"}
+        with mock.patch.object(sys, "frozen", True, create=True), \
+             mock.patch.object(sys, "_MEIPASS", "/tmp/_MEI123", create=True):
+            self.assertEqual(commands.desktop_env(env), {"HOME": "/home/u"})
+
+
+class OpenWithDesktopTests(unittest.TestCase):
+    def _opener(self, directory, name, body):
+        path = os.path.join(directory, name)
+        with open(path, "w") as fh:
+            fh.write("#!/bin/sh\n" + body + "\n")
+        os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC)
+        return path
+
+    def _patched_which(self, mapping):
+        return mock.patch.object(commands, "which", side_effect=lambda name: mapping.get(name))
+
+    def test_does_not_wait_for_a_long_lived_child(self):
+        # A browser started by xdg-open keeps running; the opener must still return promptly.
+        with tempfile.TemporaryDirectory() as d:
+            opener = self._opener(d, "xdg-open", "sleep 30 &\nexit 0")
+            with self._patched_which({"xdg-open": opener}):
+                import time
+                start = time.monotonic()
+                res = commands.open_with_desktop("https://example.invalid/", timeout=5.0)
+                self.assertLess(time.monotonic() - start, 3.0)
+        self.assertTrue(res.ok)
+
+    def test_falls_back_to_gio_when_xdg_open_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad = self._opener(d, "xdg-open", "exit 4")
+            good = self._opener(d, "gio", '[ "$1" = open ] || exit 9')
+            with self._patched_which({"xdg-open": bad, "gio": good}), \
+                 self.assertLogs(LOGGER, logging.WARNING):
+                res = commands.open_with_desktop("/tmp")
+        self.assertTrue(res.ok)
+        self.assertEqual(res.argv, [good, "open", "/tmp"])
+
+    def test_reports_failure_when_every_opener_fails(self):
+        with tempfile.TemporaryDirectory() as d:
+            bad = self._opener(d, "xdg-open", "exit 4")
+            with self._patched_which({"xdg-open": bad}), self.assertLogs(LOGGER, logging.WARNING):
+                res = commands.open_with_desktop("/tmp")
+        self.assertEqual(res.returncode, 4)
+        self.assertIn("exited with status 4", res.stderr)
+
+    def test_no_opener_installed(self):
+        with self._patched_which({}):
+            res = commands.open_with_desktop("/tmp")
+        self.assertEqual(res.returncode, commands.NOT_FOUND_RETURNCODE)
+        self.assertIn("xdg-utils", res.stderr)
+
+    def test_running_opener_counts_as_handed_over(self):
+        with tempfile.TemporaryDirectory() as d:
+            slow = self._opener(d, "xdg-open", "exec sleep 5")
+            with self._patched_which({"xdg-open": slow}):
+                res = commands.open_with_desktop("/tmp", timeout=0.3)
+        self.assertTrue(res.ok)
+
+
 if __name__ == "__main__":
     unittest.main()
