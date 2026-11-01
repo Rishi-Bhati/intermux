@@ -618,6 +618,8 @@ class InterMuxApp:
         self.history = History()
 
         root.title(f"InterMux {config.VERSION}")
+        from intermux.ui.appicon import set_window_icon
+        set_window_icon(root)
         root.geometry(initial_geometry(root.winfo_screenwidth(), root.winfo_screenheight()))
         root.minsize(*MIN_SIZE)
         self.app_var = tk.StringVar(root, value="")
