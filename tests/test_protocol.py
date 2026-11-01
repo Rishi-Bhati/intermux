@@ -140,6 +140,7 @@ class ValidRequestTests(unittest.TestCase):
             "restart_app": {"iface": "eth0", "app": "/usr/bin/x"},
             "remove_namespace": {"iface": "eth0"},
             "reconnect": {},
+            "move_app": {"iface": "wlan0", "app": "/usr/bin/x", "to": "eth0"},
         }
         self.assertEqual(set(examples), set(ACTIONS))
         for action, params in examples.items():

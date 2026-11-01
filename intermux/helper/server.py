@@ -67,7 +67,7 @@ def _resolve_user(environ: Mapping[str, str]) -> "session.UserInfo":
     return session.user_for_uid(uid)
 
 
-_USER_ACTIONS = ("bind", "stop_app", "kill_app", "adopt", "batch", "restart_app", "remove_namespace")
+_USER_ACTIONS = ("bind", "stop_app", "kill_app", "adopt", "batch", "restart_app", "remove_namespace", "move_app")
 
 
 def _require_user(user: Optional["session.UserInfo"]) -> "session.UserInfo":
@@ -150,6 +150,9 @@ def _dispatch(action: str, params: Dict[str, Any], user: Optional["session.UserI
             return engine.remove_namespace(params["iface"], uid=user.uid)
         if action == "reconnect":
             return engine.refresh_routes()
+        if action == "move_app":
+            return engine.move_app(params["iface"], params["app"], params["to"], user=user,
+                                   env=_sanitize_bind_env(params["env"], user))
     raise ValidationError("unknown action")
 
 

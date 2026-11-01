@@ -371,10 +371,10 @@ class ScrollFrame(tk.Frame if tk is not None else object):  # type: ignore[misc]
     """A frame whose `inner` child scrolls vertically inside a Canvas with a ttk scrollbar."""
 
     def __init__(self, master: Any, background: str, on_view: Optional[Callable[[], None]] = None,
-                 height: Optional[int] = None) -> None:
+                 height: Optional[int] = None, width: Optional[int] = None) -> None:
         super().__init__(master, background=background, highlightthickness=0, borderwidth=0)
         self._on_view = on_view
-        extra = {"height": height} if height is not None else {}
+        extra = {k: v for k, v in (("height", height), ("width", width)) if v is not None}
         self.canvas = tk.Canvas(self, background=background, highlightthickness=0, borderwidth=0,
                                 yscrollincrement=20, **extra)
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self._yview)

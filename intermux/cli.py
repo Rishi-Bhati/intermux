@@ -69,6 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--iface", required=True, metavar="IF", help="interface whose namespace to remove")
     p.add_argument("--yes", action="store_true", help="do not ask for confirmation")
 
+    p = sub.add_parser("move", help="move a bound application to another interface (it restarts)")
+    p.add_argument("--app", required=True, metavar="APP", help="command name or path of the application")
+    p.add_argument("--iface", required=True, metavar="IF", help="interface it is bound to now")
+    p.add_argument("--to", required=True, metavar="IF", help="interface to move it to")
+
     sub.add_parser("reconnect", help="re-add the routes of namespaces whose interface is back (e.g. a VPN)")
 
     p = sub.add_parser("stop", help="stop the application bound to an interface")
@@ -529,6 +534,18 @@ def _cmd_remove(args: argparse.Namespace) -> int:
     return 1
 
 
+def _cmd_move(args: argparse.Namespace) -> int:
+    from intermux.helper import client as helper_client
+    from intermux.system import session
+
+    app_path = _resolve_app(args.app, args.iface)
+    env = session.build_app_env(session.detect_session())
+    _info(f"moving {os.path.basename(app_path)} from {args.iface} to {args.to}")
+    data = helper_client.call("move_app", {"iface": args.iface, "app": app_path, "to": args.to, "env": env}) or {}
+    _report_bind(data)
+    return 0
+
+
 def _cmd_reconnect(args: argparse.Namespace) -> int:
     from intermux.helper import client as helper_client
 
@@ -646,4 +663,5 @@ _HANDLERS: Dict[str, Handler] = {
     "restart": _cmd_restart,
     "remove": _cmd_remove,
     "reconnect": _cmd_reconnect,
+    "move": _cmd_move,
 }

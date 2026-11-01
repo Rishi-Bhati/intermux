@@ -13,7 +13,7 @@ from intermux.system import shaping
 PROTOCOL_VERSION = 1
 ACTIONS = ("status", "bind", "stop_app", "kill_app", "teardown_idle", "reset", "verify",
            "adopt", "release_adoption", "batch", "set_dns", "set_limit", "restart_app", "remove_namespace",
-           "reconnect")
+           "reconnect", "move_app")
 RUNNING_POLICIES = ("ask", "close", "separate")
 IFACE_RE = r"^[A-Za-z0-9_.:@-]{1,15}$"
 
@@ -92,7 +92,8 @@ def _v_dns(name: str, value: Any, allow_keep: bool = True) -> Any:
     if isinstance(value, str):
         if value == dnsconf.AUTO or (allow_keep and value == dnsconf.KEEP):
             return value
-        raise ValidationError(f"{name} must be \"auto\"{', \"keep\"' if allow_keep else ''} or a list of servers")
+        choices = '"auto", "keep"' if allow_keep else '"auto"'
+        raise ValidationError(f"{name} must be {choices} or a list of servers")
     try:
         return dnsconf.check_servers(value)
     except ValueError as exc:
@@ -160,6 +161,12 @@ _PARAM_SPECS: Dict[str, Dict[str, Tuple[Callable[[str, Any], Any], Any]]] = {
         "iface": (_v_iface, _REQUIRED),
     },
     "reconnect": {},
+    "move_app": {
+        "iface": (_v_iface, _REQUIRED),
+        "app": (_v_app, _REQUIRED),
+        "to": (_v_iface, _REQUIRED),
+        "env": (_v_env, {}),
+    },
 }
 
 

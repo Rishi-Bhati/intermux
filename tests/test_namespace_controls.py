@@ -210,6 +210,37 @@ class RestartTests(_EngineCase):
             engine.restart_app("wlan0", "/usr/bin/other", user=USER, env={})
 
 
+class MoveAppTests(_EngineCase):
+    def _target(self, bindable=True):
+        return mock.Mock(bindable=bindable)
+
+    def test_move_rebinds_and_tears_down_empty_namespace(self):
+        def fake_bind(app, iface, **kw):
+            self.st.bindings.append(_binding(iface=iface))
+            self.st.subnets[iface] = "10.200.8.0/24"
+            return {"pid": 3}
+        with mock.patch.object(engine, "_find_interface", return_value=self._target()), \
+                mock.patch.object(engine, "stop_app", return_value={"stopped": [1], "still_running": []}), \
+                mock.patch.object(engine, "bind", side_effect=fake_bind) as bind, \
+                mock.patch.object(engine.procs, "pids_in_netns", return_value=[]), \
+                mock.patch.object(engine, "_teardown_iface") as td:
+            out = engine.move_app("wlan0", "/usr/bin/x", "eth0", user=USER, env={})
+        self.assertEqual(bind.call_args[0][:2], ("/usr/bin/x", "eth0"))
+        td.assert_called_once_with("wlan0", "10.200.7.0/24")
+        self.assertEqual([b.iface for b in self.st.bindings], ["eth0"])
+        self.assertNotIn("wlan0", self.st.subnets)
+        self.assertEqual(out["moved_from"], "wlan0")
+
+    def test_move_refuses_unbindable_target_and_same_iface(self):
+        with mock.patch.object(engine, "_find_interface", return_value=self._target(False)), \
+                mock.patch.object(engine, "stop_app") as stop:
+            with self.assertRaises(ConflictError):
+                engine.move_app("wlan0", "/usr/bin/x", "eth0", user=USER, env={})
+        stop.assert_not_called()
+        with self.assertRaises(ValidationError):
+            engine.move_app("wlan0", "/usr/bin/x", "wlan0", user=USER, env={})
+
+
 class ServerDispatchTests(unittest.TestCase):
     def test_new_actions_reach_the_engine(self):
         from intermux.helper import server
@@ -220,6 +251,7 @@ class ServerDispatchTests(unittest.TestCase):
             "remove_namespace": ({"iface": "wlan0"}, "remove_namespace"),
             "reconnect": ({}, "refresh_routes"),
             "restart_app": ({"iface": "wlan0", "app": "/usr/bin/x", "env": {}}, "restart_app"),
+            "move_app": ({"iface": "wlan0", "app": "/usr/bin/x", "to": "eth0", "env": {}}, "move_app"),
         }
         for action, (params, target) in calls.items():
             with self.subTest(action=action), \

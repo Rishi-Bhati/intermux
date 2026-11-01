@@ -142,7 +142,7 @@ class AppHelperTests(unittest.TestCase):
 
     def test_initial_geometry_fits_the_screen(self):
         self.assertEqual(appmod.initial_geometry(1920, 1080), "1360x900")
-        self.assertEqual(appmod.initial_geometry(1366, 768), "1286x700")
+        self.assertEqual(appmod.initial_geometry(1366, 768), "1286x688")
 
 
 if __name__ == "__main__":

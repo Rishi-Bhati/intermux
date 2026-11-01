@@ -414,6 +414,37 @@ def restart_app(iface: str, app: str, *, user: UserInfo, env: Dict[str, str]) ->
     return bind(app, iface, user=user, env=env, running_policy=policy, keep_profile=keep)
 
 
+def move_app(iface: str, app: str, to: str, *, user: UserInfo, env: Dict[str, str]) -> Dict[str, Any]:
+    """Move a bound app to another interface: stop it in iface's namespace and start it in to's.
+
+    The app restarts (a namespace's routing belongs to its interface). The old binding is dropped, and the
+    old namespace is torn down when nothing else uses it."""
+    if to == iface:
+        raise ValidationError("the app already uses that interface")
+    st = state.load_state(config.STATE_FILE)
+    binding = st.find_binding(iface, app)
+    if binding is None:
+        raise NotFoundError(f"no binding for {app} on {iface}")
+    target = _find_interface(to)
+    if not target.bindable:
+        raise ConflictError(f"interface {to} cannot be bound (needs an up IPv4 address and a way out)",
+                            code="not_bindable")
+    stopped = stop_app(iface, app, uid=user.uid)
+    if stopped["still_running"]:
+        raise ConflictError("the application did not exit, so it was not moved", code="still_running",
+                            data={"pids": stopped["still_running"]})
+    keep = "separate" if binding.profile_mode == "separate" else None
+    result = bind(app, to, user=user, env=env, running_policy="separate" if keep else "close", keep_profile=keep)
+    st = state.load_state(config.STATE_FILE)
+    st.bindings = [b for b in st.bindings if not (b.iface == iface and b.app == app)]
+    cidr = st.subnets.get(iface)
+    if cidr is not None and not st.bindings_for_iface(iface) and not procs.pids_in_netns(binding.namespace):
+        _safe(_teardown_iface, iface, cidr)
+        st.forget_iface(iface)
+    state.save_state(st, config.STATE_FILE)
+    return dict(result, moved_from=iface)
+
+
 def remove_namespace(iface: str, *, uid: int) -> Dict[str, Any]:
     """Stop everything uid runs in iface's namespace (InterMux-started or not), then remove the namespace
     with its routes, NAT rules and bindings. Processes of other users keep it alive and are reported."""

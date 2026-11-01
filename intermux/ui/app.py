@@ -104,6 +104,10 @@ def _restart_call(iface: str, app: str, env: Dict[str, str]) -> Any:
     return helper_client.call("restart_app", {"iface": iface, "app": app, "env": env})
 
 
+def _move_call(iface: str, app: str, to: str, env: Dict[str, str]) -> Any:
+    return helper_client.call("move_app", {"iface": iface, "app": app, "to": to, "env": env})
+
+
 def _environment_task() -> Tuple[Any, List[deps.Dependency]]:
     """Detect the desktop session and missing required tools."""
     session = session_mod.detect_session(probe=True)
@@ -214,7 +218,7 @@ CARD_ICON = 32
 PENDING_ICON = 26
 TILE_ICON = 36
 DESIGN_SIZE = (1360, 900)
-MIN_SIZE = (1120, 700)
+MIN_SIZE = (1100, 640)
 SIDEBAR_WIDTH = 360
 NETWORK_MIN_HEIGHT = 200
 APPS_MIN_HEIGHT = 150
@@ -421,7 +425,8 @@ class _PendingRow:
                              font=theme.font("label"), anchor="w")
         self.name.grid(row=0, column=1, sticky="sw", pady=(8, 0))
         self.via = tk.Label(self.frame, text=pending_detail(item, list(app._namespaces)), background=bg,
-                            foreground=p["text_muted"], font=theme.font("small"), anchor="w")
+                            foreground=p["text_muted"], font=theme.font("small"), anchor="w", justify="left",
+                            wraplength=SIDEBAR_WIDTH - 120)
         self.via.grid(row=1, column=1, sticky="nw", pady=(0, 8))
         self.remove = tk.Label(self.frame, text="✕", background=bg, foreground=p["text_muted"],
                                font=theme.font("small"), cursor="hand2", padx=10)
@@ -497,11 +502,11 @@ class _AppCard:
                            command=lambda: self._act(app._on_restart)),
                 ttk.Button(actions, text="Stop", style="Small.Secondary.TButton",
                            command=lambda: self._act(app._on_stop)),
-                ttk.Button(actions, text="Log", style="Small.Secondary.TButton",
-                           command=lambda: self._act(app._on_open_log)),
-                ttk.Button(actions, text="Force quit", style="Small.CardDanger.TButton",
-                           command=lambda: self._act(app._on_force_quit)),
+                ttk.Button(actions, text="More ▾", style="Small.CardGhost.TButton"),
             ]
+            # "More" opens the same menu as a right-click: log, move to another connection, force quit.
+            self.buttons[-1].bind("<ButtonRelease-1>", lambda e: (
+                None if self.buttons[-1].instate(["disabled"]) else app._show_app_menu(self.key, e)))
         for index, button in enumerate(self.buttons):
             button.grid(row=0, column=index, padx=(0 if index == 0 else 6, 0))
         self.data: Dict[str, Any] = {}
@@ -568,7 +573,7 @@ class _AppCard:
             _set_enabled(self.buttons[0], enabled)
             return
         states = row_button_states(running, enabled)
-        for button, key in zip(self.buttons, ("verify", "restart", "stop", "log", "force")):
+        for button, key in zip(self.buttons, ("verify", "restart", "stop", "log")):
             _set_enabled(button, states[key])
 
 
@@ -680,9 +685,8 @@ class InterMuxApp:
         side = tk.Frame(self.body, background=p["bg"], width=SIDEBAR_WIDTH)
         side.grid(row=0, column=1, sticky="nsew")
         side.columnconfigure(0, weight=1)
-        side.rowconfigure(1, weight=1)
+        side.rowconfigure(0, weight=1)
         self._build_bind_card(side)
-        self._build_queue(side)
 
         footer = tk.Frame(root, background=p["bg"])
         footer.grid(row=3, column=0, sticky="ew", padx=pad, pady=(12, 12))
@@ -769,10 +773,20 @@ class InterMuxApp:
     def _build_bind_card(self, parent: Any) -> None:
         p = self.palette
         bg = p["surface"]
-        panel, _header, body = _panel(parent, "Route an app")
-        panel.grid(row=0, column=0, sticky="ew")
+        panel, _header, outer = _panel(parent, "Route an app")
+        panel.grid(row=0, column=0, sticky="nsew")
+        outer.columnconfigure(0, weight=1)
+        outer.rowconfigure(0, weight=1)
+        # The form and the queue scroll together, so a short window never hides queued apps;
+        # the Assign row stays pinned below them.
+        self.side_scroll = theme.ScrollFrame(outer, bg, height=60, width=SIDEBAR_WIDTH - 24)
+        self.side_scroll.grid(row=0, column=0, sticky="nsew", padx=(0, 2))
+        self.side_scroll.attach_wheel(self.root)
+        body = self.side_scroll.inner
+        body.columnconfigure(0, weight=1)
+        self._side_outer = outer
         inner = tk.Frame(body, background=bg)
-        inner.pack(fill="x", padx=16, pady=(12, 16))
+        inner.grid(row=0, column=0, sticky="ew", padx=(16, 12), pady=(10, 12))
         inner.columnconfigure(0, weight=1)
 
         def label(text: str, row: int, top: int = 0) -> None:
@@ -785,11 +799,10 @@ class InterMuxApp:
         self.iface_combo.grid(row=1, column=0, sticky="ew")
         self.iface_combo.bind("<<ComboboxSelected>>", lambda _e: self._update_buttons())
 
-        label("Application", 2, top=12)
         tile_bg = p["bg"]
         self.app_tile = tk.Frame(inner, background=tile_bg, highlightthickness=1,
                                  highlightbackground=p["line_hi"], highlightcolor=p["focus"], cursor="hand2")
-        self.app_tile.grid(row=3, column=0, sticky="ew")
+        self.app_tile.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         self.app_tile.columnconfigure(1, weight=1)
         self.app_icon_host = tk.Frame(self.app_tile, background=tile_bg, width=TILE_ICON, height=TILE_ICON)
         self.app_icon_host.grid(row=0, column=0, rowspan=2, padx=10, pady=8)
@@ -807,13 +820,13 @@ class InterMuxApp:
         for widget in (self.app_tile, self.app_icon_host, self.app_name_label, self.app_path_label):
             widget.bind("<Button-1>", lambda _e: self._on_pick())
 
-        label("Or type a command or path (recent apps in the list)", 4, top=12)
+        label("Or type a command, or pick a recent app", 4, top=10)
         self.path_entry = ttk.Combobox(inner, textvariable=self.app_var, values=self._history_values(),
                                        font=theme.font("body"), height=12)
         self.path_entry.grid(row=5, column=0, sticky="ew")
         self.path_entry.bind("<<ComboboxSelected>>", lambda _e: self._on_history_pick())
 
-        label("DNS for this connection", 6, top=12)
+        label("DNS for this connection", 6, top=10)
         self.dns_combo = ttk.Combobox(inner, textvariable=self.dns_var, values=dialogs.DNS_CHOICES,
                                       font=theme.font("body"))
         self.dns_combo.grid(row=7, column=0, sticky="ew")
@@ -821,37 +834,34 @@ class InterMuxApp:
         ttk.Checkbutton(
             inner, text="Separate profile if it is already running",
             variable=self.separate_var, style="Card.TCheckbutton",
-        ).grid(row=8, column=0, sticky="w", pady=(12, 0))
-        self.add_btn = ttk.Button(inner, text="Add to queue", style="Primary.TButton", command=self._on_add)
-        self.add_btn.grid(row=9, column=0, sticky="ew", pady=(14, 0))
+        ).grid(row=8, column=0, sticky="w", pady=(10, 0))
+        self.add_btn = ttk.Button(inner, text="Add to queue", style="Secondary.TButton", command=self._on_add)
+        self.add_btn.grid(row=9, column=0, sticky="ew", pady=(12, 0))
+        self._build_queue(body)
 
-    def _build_queue(self, parent: Any) -> None:
+    def _build_queue(self, body: Any) -> None:
+        """The queue lives in the same panel, under the form: it grows into whatever height is left."""
         p = self.palette
-        panel, header, body = _panel(parent, "Queue")
-        panel.grid(row=1, column=0, sticky="nsew", pady=(theme.SPACE_CARD_GAP, 0))
-        self.queue_count = tk.Label(header, text="", background=p["surface"], foreground=p["text_muted"],
+        _rule(body).grid(row=1, column=0, sticky="ew")
+        head = tk.Frame(body, background=p["surface"])
+        head.grid(row=2, column=0, sticky="ew", padx=16, pady=(10, 0))
+        tk.Label(head, text="QUEUE", background=p["surface"], foreground=p["text_muted"],
+                 font=theme.font("eyebrow")).pack(side="left")
+        self.queue_count = tk.Label(head, text="", background=p["surface"], foreground=p["text_muted"],
                                     font=theme.font("mono"))
-        self.queue_count.pack(side="right", padx=(0, 6))
-        body.columnconfigure(0, weight=1)
-        body.rowconfigure(0, weight=1)
-        holder = tk.Frame(body, background=p["surface"])
-        holder.grid(row=0, column=0, sticky="nsew", padx=(12, 2), pady=(12, 0))
-        holder.columnconfigure(0, weight=1)
-        holder.rowconfigure(0, weight=1)
-        self.pending_scroll = theme.ScrollFrame(holder, p["surface"], height=60)
-        self.pending_scroll.grid(row=0, column=0, sticky="nsew")
-        self.pending_scroll.attach_wheel(self.root)
-        self.pending_host = self.pending_scroll.inner
+        self.queue_count.pack(side="right")
+        self.pending_host = tk.Frame(body, background=p["surface"])
+        self.pending_host.grid(row=3, column=0, sticky="ew", padx=(16, 12), pady=(8, 8))
         self.pending_host.columnconfigure(0, weight=1)
-        self.pending_empty = tk.Frame(holder, background=p["surface"])
+        self.pending_empty = tk.Frame(self.pending_host, background=p["surface"])
         self.pending_empty.columnconfigure(0, weight=1)
-        self.pending_empty.rowconfigure(0, weight=1)
-        tk.Label(self.pending_empty, text="Queued apps start together\nwith one password prompt.",
+        tk.Label(self.pending_empty, text="Queued apps start together with one password prompt.",
                  background=p["surface"], foreground=p["text_muted"], font=theme.font("small"),
-                 justify="center").grid(row=0, column=0)
+                 justify="left", anchor="w", wraplength=290).grid(row=0, column=0, sticky="w", pady=(0, 4))
         self._show_empty(self.pending_empty, True)
-        buttons = tk.Frame(body, background=p["surface"])
-        buttons.grid(row=1, column=0, sticky="ew", padx=16, pady=(10, 16))
+        _rule(self._side_outer).grid(row=1, column=0, sticky="ew")
+        buttons = tk.Frame(self._side_outer, background=p["surface"])
+        buttons.grid(row=2, column=0, sticky="ew", padx=16, pady=(12, 14))
         buttons.columnconfigure(0, weight=1)
         self.assign_btn = ttk.Button(buttons, text="Assign", style="Primary.TButton", command=self._on_assign)
         self.assign_btn.grid(row=0, column=0, sticky="ew")
@@ -1257,6 +1267,14 @@ class InterMuxApp:
             menu.add_command(label="Stop", command=self._on_stop, state="normal" if states["stop"] else "disabled")
             menu.add_command(label="Open log", command=self._on_open_log,
                              state="normal" if states["log"] else "disabled")
+            move = tk.Menu(menu, tearoff=False, background=p["surface_alt"], foreground=p["text"],
+                           activebackground=p["accent"], activeforeground=p["accent_text"],
+                           disabledforeground=p["line_hi"])
+            targets = [(label, name) for label, name in self._iface_map.items() if name != data["iface"]]
+            for label, name in targets:
+                move.add_command(label=label, command=lambda n=name: self._on_move(n))
+            menu.add_cascade(label="Move to (restarts it)", menu=move,
+                             state="normal" if idle and targets else "disabled")
             menu.add_separator()
             menu.add_command(label="Force quit", command=self._on_force_quit,
                              state="normal" if states["force"] else "disabled")
@@ -1524,6 +1542,23 @@ class InterMuxApp:
         warnings = result.get("warnings", []) if isinstance(result, dict) else []
         self._set_status(f"Restarted {name}." + (f" Warning: {warnings[0]}" if warnings else ""),
                          "warning" if warnings else "success")
+
+    def _on_move(self, to: str) -> None:
+        row = self._selected_row()
+        if row is None:
+            return
+        self._run_mutation(
+            f"Moving {row['app_name']} from {row['iface']} to {to}",
+            _env_task, partial(_move_call, row["iface"], row["app"], to),
+            on_done=partial(self._on_move_done, row["app_name"], to),
+        )
+
+    def _on_move_done(self, name: str, to: str, result: Any, error: Optional[BaseException]) -> None:
+        if error is not None:
+            self._fail("Move failed", error)
+            return
+        self._selected_iid = None
+        self._set_status(f"Moved {name} to {to}.", "success")
 
     def _show_lane_menu(self, iface: str, event: Any) -> None:
         """The settings of a connection's namespace: limit, DNS, reconnect, remove."""
