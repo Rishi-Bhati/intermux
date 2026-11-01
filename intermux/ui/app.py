@@ -14,9 +14,9 @@ from intermux.apps import desktop_entries
 from intermux.apps.desktop_entries import AppEntry
 from intermux.errors import InterMuxError
 from intermux.helper import client as helper_client
-from intermux.system import commands, deps, netinfo, procs
+from intermux.system import commands, deps, netinfo, netns, procs, traffic
 from intermux.system import session as session_mod
-from intermux.ui import icons, theme
+from intermux.ui import graph, icons, monitor, theme
 from intermux.ui.worker import Worker
 
 try:
@@ -32,6 +32,7 @@ except ImportError:  # reported by main()
 log = logging.getLogger("intermux.ui")
 
 AUTO_REFRESH_MS = 4000
+TRAFFIC_MS = 1000           # traffic counters are sampled once a second
 OPEN_LOG_TIMEOUT = 5.0
 PUBLIC_IP_TTL = 300.0  # a verified public IP is shown for five minutes, then cleared
 
@@ -115,6 +116,30 @@ def _iid(iface: str, app: str) -> str:
     return f"{iface}|{app}"
 
 
+NS_PREFIX = "ns:"
+
+
+def ns_key(iface: str) -> str:
+    """Tracker key of the namespace bound to iface (its traffic is counted on the host veth)."""
+    return NS_PREFIX + iface
+
+
+def sum_series(histories: Sequence[Sequence[Tuple[float, float]]], index: int) -> List[float]:
+    """Element-wise sum of one direction (0 down, 1 up) over equally long histories. Pure."""
+    if not histories:
+        return []
+    length = min(len(h) for h in histories)
+    return [sum(h[len(h) - length + i][index] for h in histories) for i in range(length)]
+
+
+def routed_share(routed: float, total: float) -> str:
+    """"42%" of total that went through InterMux, or "" when there is no traffic to compare. Pure."""
+    if routed <= 0 or total <= 0:
+        return ""
+    share = min(routed / total, 1.0) * 100
+    return "<1%" if share < 1 else f"{share:.0f}%"
+
+
 def safe_focus(root: Any) -> Any:
     """focus_get() that returns None instead of raising (Tk raises KeyError for combobox popdowns)."""
     try:
@@ -165,9 +190,15 @@ KIND_LABELS = {
     "mobile": "Mobile", "virtual": "Virtual", "other": "Other",
 }
 NO_IFACE_TEXT = "No bindable interface found. Connect to a network and press Refresh."
-ROW_ICON = 32
-TILE_ICON = 48
-BINDINGS_MIN_HEIGHT = 260  # the Bindings card never shrinks below this
+CARD_ICON = 32
+PENDING_ICON = 26
+TILE_ICON = 36
+DESIGN_SIZE = (1360, 900)
+MIN_SIZE = (1120, 700)
+SIDEBAR_WIDTH = 360
+NETWORK_MIN_HEIGHT = 200
+APPS_MIN_HEIGHT = 150
+ADOPT_PREFIX = "adopt:"
 
 
 def status_kind(text: str) -> str:
@@ -291,98 +322,150 @@ def _card(parent: Any) -> Any:
                     highlightbackground=p["border"], highlightcolor=p["border"], borderwidth=0)
 
 
+def _rule(parent: Any) -> Any:
+    """A one-pixel divider line."""
+    return tk.Frame(parent, background=theme.current_palette()["border"], height=1, borderwidth=0,
+                    highlightthickness=0)
+
+
+def _panel(parent: Any, eyebrow: str) -> Tuple[Any, Any, Any]:
+    """A website-style panel: a slim header with an uppercase label, a divider, then the body.
+
+    Returns (panel, header, body). Widgets added to the header's right side should pack with side="right".
+    """
+    p = theme.current_palette()
+    panel = _card(parent)
+    panel.columnconfigure(0, weight=1)
+    panel.rowconfigure(2, weight=1)
+    header = tk.Frame(panel, background=p["surface"], height=42)
+    header.grid(row=0, column=0, sticky="ew", padx=(16, 10))
+    header.pack_propagate(False)
+    tk.Label(header, text=eyebrow.upper(), background=p["surface"], foreground=p["text_muted"],
+             font=theme.font("eyebrow")).pack(side="left")
+    _rule(panel).grid(row=1, column=0, sticky="ew")
+    body = tk.Frame(panel, background=p["surface"])
+    body.grid(row=2, column=0, sticky="nsew")
+    return panel, header, body
+
+
+def _pill(parent: Any, background: str) -> Any:
+    return tk.Label(parent, text="", font=theme.font("eyebrow"), padx=7, pady=1, background=background)
+
+
+def set_pill(pill: Any, kind: str) -> None:
+    """Style a status pill: "running"/"live" (green), "stopped"/"exited" (muted)."""
+    p = theme.current_palette()
+    if kind in ("running", "live"):
+        pill.configure(text=kind.upper(), background=graph.mix(p["surface"], p["success"], 0.16),
+                       foreground=p["success"])
+    else:
+        pill.configure(text=kind.upper(), background=p["surface_alt"], foreground=p["text_muted"])
+
+
 class _PendingRow:
-    """One row in the Pending section: icon, name, "via <iface>" and a remove control."""
+    """One queued app in the sidebar: icon, name, "via <iface>" and a remove control."""
 
     def __init__(self, app: "InterMuxApp", parent: Any, item: Dict[str, Any]) -> None:
         p = theme.current_palette()
-        self.frame = tk.Frame(parent, background=p["surface"], highlightthickness=1,
-                              highlightbackground=p["border"], takefocus=0)
+        bg = p["surface_alt"]
+        self.frame = tk.Frame(parent, background=bg, highlightthickness=1, highlightbackground=p["border"],
+                              takefocus=0)
         self.frame.columnconfigure(1, weight=1)
-        host = tk.Frame(self.frame, background=p["surface"], width=ROW_ICON, height=ROW_ICON)
-        host.grid(row=0, column=0, rowspan=2, padx=theme.SPACE_INNER, pady=theme.SPACE_INNER)
+        host = tk.Frame(self.frame, background=bg, width=PENDING_ICON, height=PENDING_ICON)
+        host.grid(row=0, column=0, rowspan=2, padx=(10, 10), pady=8)
         host.grid_propagate(False)
-        icon = app._icon_widget(host, item["app"], item["name"], ROW_ICON, p["surface"])
+        icon = app._icon_widget(host, item["app"], item["name"], PENDING_ICON, bg)
         icon.place(relx=0.5, rely=0.5, anchor="center")
-        self.name = ttk.Label(self.frame, text=item["name"], style="Card.TLabel", font=theme.font("section"))
-        self.name.grid(row=0, column=1, sticky="sw", pady=(theme.SPACE_INNER, 0))
-        self.via = ttk.Label(self.frame, text=f"via {item['iface']}", style="CardSmall.TLabel")
-        self.via.grid(row=1, column=1, sticky="nw", pady=(0, theme.SPACE_INNER))
-        self.remove = ttk.Button(self.frame, text="Remove", style="Small.CardGhost.TButton",
-                                 command=lambda: app._remove_pending(item))
-        self.remove.grid(row=0, column=2, rowspan=2, padx=theme.SPACE_INNER)
+        self.name = tk.Label(self.frame, text=item["name"], background=bg, foreground=p["text"],
+                             font=theme.font("label"), anchor="w")
+        self.name.grid(row=0, column=1, sticky="sw", pady=(8, 0))
+        self.via = tk.Label(self.frame, text=f"via {item['iface']}", background=bg, foreground=p["text_muted"],
+                            font=theme.font("mono"), anchor="w")
+        self.via.grid(row=1, column=1, sticky="nw", pady=(0, 8))
+        self.remove = tk.Label(self.frame, text="✕", background=bg, foreground=p["text_muted"],
+                               font=theme.font("small"), cursor="hand2", padx=10)
+        self.remove.grid(row=0, column=2, rowspan=2, sticky="ns")
+        self.remove.bind("<Button-1>", lambda _e: app._remove_pending(item))
+        self.remove.bind("<Enter>", lambda _e: self.remove.configure(foreground=p["danger"]))
+        self.remove.bind("<Leave>", lambda _e: self.remove.configure(foreground=p["text_muted"]))
 
 
-class _AdoptRow:
-    """One adopted app in the Active section: name, "Live" badge, interface and a Release button."""
+class _AppCard:
+    """A routed app (a binding or an adoption) in the Routed apps panel. Updated in place on refresh.
 
-    def __init__(self, app: "InterMuxApp", parent: Any, data: Dict[str, Any]) -> None:
+    Row one: icon, name and state on the left; the live traffic of its connection on the right.
+    Row two: which connection it uses and its verified public IP; the actions on the right.
+    """
+
+    def __init__(self, app: "InterMuxApp", parent: Any, key: str, adopted: bool) -> None:
         p = theme.current_palette()
-        self.frame = tk.Frame(parent, background=p["surface"], highlightthickness=1,
-                              highlightbackground=p["border"], takefocus=0)
-        self.frame.columnconfigure(0, weight=1)
-        self.name = ttk.Label(self.frame, text="", style="Card.TLabel", font=theme.font("section"))
-        self.name.grid(row=0, column=0, sticky="sw", padx=theme.SPACE_INNER, pady=(theme.SPACE_INNER, 0))
-        self.pill = tk.Label(self.frame, text="", font=theme.font("small"), padx=10, pady=2)
-        self.pill.grid(row=0, column=1, sticky="e", padx=theme.SPACE_INNER, pady=(theme.SPACE_INNER, 0))
-        self.via = ttk.Label(self.frame, text="", style="CardSmall.TLabel")
-        self.via.grid(row=1, column=0, sticky="nw", padx=theme.SPACE_INNER, pady=(0, theme.SPACE_INNER))
-        self.release = ttk.Button(self.frame, text="Release", style="Small.Secondary.TButton",
-                                  command=lambda: app._on_release_adoption(self.data))
-        self.release.grid(row=1, column=1, sticky="e", padx=theme.SPACE_INNER, pady=(0, theme.SPACE_INNER))
-        self.data = data
-        self.update(data)
-
-    def update(self, data: Dict[str, Any]) -> None:
-        p = theme.current_palette()
-        self.data = data
-        self.name.configure(text=data["app_name"])
-        self.via.configure(text=f"via {data['iface']} (adopted)")
-        if data.get("alive", True):
-            self.pill.configure(text="Live", background=p["success"], foreground=p["bg"])
-        else:
-            self.pill.configure(text="exited", background=p["surface_alt"], foreground=p["text_muted"])
-
-
-class _BindingRow:
-    """One row card in the Active section. Updated in place on every refresh."""
-
-    def __init__(self, app: "InterMuxApp", parent: Any, iid: str) -> None:
-        p = theme.current_palette()
+        bg = p["surface"]
         self.app = app
-        self.iid = iid
+        self.key = key
+        self.adopted = adopted
         self.selected = False
         self.icon_widget: Any = None
-        self.frame = tk.Frame(parent, background=p["surface"], highlightthickness=1,
-                              highlightbackground=p["border"], highlightcolor=p["focus"], takefocus=0)
-        self.frame.columnconfigure(1, weight=1)
-        self.icon_host = tk.Frame(self.frame, background=p["surface"], width=ROW_ICON, height=ROW_ICON)
-        self.icon_host.grid(row=0, column=0, rowspan=2, padx=(theme.SPACE_INNER, theme.SPACE_INNER),
-                            pady=theme.SPACE_INNER, sticky="n")
+        self.frame = tk.Frame(parent, background=bg, highlightthickness=1, highlightbackground=p["border"],
+                              highlightcolor=p["focus"], takefocus=0)
+        self.frame.columnconfigure(2, weight=1)
+        self.stripe = tk.Frame(self.frame, background=p["line_hi"], width=3)
+        self.stripe.grid(row=0, column=0, rowspan=2, sticky="ns")
+        self.icon_host = tk.Frame(self.frame, background=bg, width=CARD_ICON, height=CARD_ICON)
+        self.icon_host.grid(row=0, column=1, rowspan=2, padx=(12, 12), pady=12, sticky="n")
         self.icon_host.grid_propagate(False)
-        self.name = ttk.Label(self.frame, text="", style="Card.TLabel", font=theme.font("section"))
-        self.name.grid(row=0, column=1, sticky="sw", pady=(theme.SPACE_INNER, 0))
-        self.pill = tk.Label(self.frame, text="", font=theme.font("small"), padx=10, pady=2)
-        self.pill.grid(row=0, column=2, sticky="e", padx=theme.SPACE_INNER, pady=(theme.SPACE_INNER, 0))
-        self.via = ttk.Label(self.frame, text="", style="CardSmall.TLabel")
-        self.via.grid(row=1, column=1, sticky="nw")
-        self.ip = ttk.Label(self.frame, text="", style="CardMuted.TLabel")
-        self.ip.grid(row=1, column=2, sticky="e", padx=theme.SPACE_INNER)
-        actions = tk.Frame(self.frame, background=p["surface"])
-        actions.grid(row=2, column=1, columnspan=2, sticky="w", pady=(6, theme.SPACE_INNER))
-        self.buttons = [
-            ttk.Button(actions, text="Verify", style="Small.Secondary.TButton", command=lambda: self._act(app._on_verify)),
-            ttk.Button(actions, text="Stop", style="Small.Secondary.TButton", command=lambda: self._act(app._on_stop)),
-            ttk.Button(actions, text="Log", style="Small.Secondary.TButton", command=lambda: self._act(app._on_open_log)),
-            ttk.Button(actions, text="Force quit", style="Small.CardGhost.TButton", command=lambda: self._act(app._on_force_quit)),
-        ]
+
+        title = tk.Frame(self.frame, background=bg)
+        title.grid(row=0, column=2, sticky="sw", pady=(11, 0))
+        self.name = tk.Label(title, text="", background=bg, foreground=p["text"], font=theme.font("section"))
+        self.name.pack(side="left")
+        self.pill = _pill(title, bg)
+        self.pill.pack(side="left", padx=(8, 0), pady=(2, 0))
+        self.kind = tk.Label(title, text="ADOPTED" if adopted else "", background=bg, foreground=p["text_muted"],
+                             font=theme.font("eyebrow"))
+        self.kind.pack(side="left", padx=(6, 0), pady=(2, 0))
+
+        via = tk.Frame(self.frame, background=bg)
+        via.grid(row=1, column=2, sticky="nw", pady=(3, 11))
+        self.via_glyph = tk.Canvas(via, width=16, height=16, background=bg, highlightthickness=0, borderwidth=0)
+        self.via_glyph.pack(side="left")
+        self.via = tk.Label(via, text="", background=bg, foreground=p["text_muted"], font=theme.font("mono"))
+        self.via.pack(side="left", padx=(5, 0))
+        self.ip = tk.Label(via, text="", background=bg, foreground=p["text"], font=theme.font("mono"))
+        self.ip.pack(side="left", padx=(10, 0))
+
+        rate = tk.Frame(self.frame, background=bg)
+        rate.grid(row=0, column=3, sticky="se", padx=(8, 14), pady=(10, 0))
+        self.rate = tk.Label(rate, text="", background=bg, foreground=p["text"], font=theme.font("small"))
+        self.rate.pack(side="left", padx=(0, 10))
+        self.spark = graph.Sparkline(rate, bg, width=110, height=24)
+        self.spark.canvas.pack(side="left")
+
+        actions = tk.Frame(self.frame, background=bg)
+        actions.grid(row=1, column=3, sticky="ne", padx=(8, 12), pady=(6, 10))
+        if adopted:
+            self.buttons = [ttk.Button(actions, text="Release", style="Small.Secondary.TButton",
+                                       command=lambda: app._on_release_adoption(self.data))]
+        else:
+            self.buttons = [
+                ttk.Button(actions, text="Verify IP", style="Small.Secondary.TButton",
+                           command=lambda: self._act(app._on_verify)),
+                ttk.Button(actions, text="Stop", style="Small.Secondary.TButton",
+                           command=lambda: self._act(app._on_stop)),
+                ttk.Button(actions, text="Log", style="Small.Secondary.TButton",
+                           command=lambda: self._act(app._on_open_log)),
+                ttk.Button(actions, text="Force quit", style="Small.CardDanger.TButton",
+                           command=lambda: self._act(app._on_force_quit)),
+            ]
         for index, button in enumerate(self.buttons):
             button.grid(row=0, column=index, padx=(0 if index == 0 else 6, 0))
-        for widget in (self.frame, self.icon_host, self.name, self.via, self.pill, self.ip, actions):
-            widget.bind("<Button-1>", lambda _e: app.select_binding(self.iid))
+        self.data: Dict[str, Any] = {}
+        for widget in (self.frame, self.icon_host, self.name, self.via, self.pill, self.ip, title, via, rate,
+                       self.rate, self.kind, self.stripe, self.via_glyph, self.spark.canvas):
+            widget.bind("<Button-1>", lambda _e: app.select_binding(self.key))
+            widget.bind("<Button-3>", lambda e: app._show_app_menu(self.key, e))
 
     def _act(self, handler: Any) -> None:
-        self.app.select_binding(self.iid)
+        self.app.select_binding(self.key)
         handler()
 
     def set_icon(self, widget: Any) -> None:
@@ -390,25 +473,43 @@ class _BindingRow:
             self.icon_widget.destroy()
         self.icon_widget = widget
         widget.place(relx=0.5, rely=0.5, anchor="center")
-        widget.bind("<Button-1>", lambda _e: self.app.select_binding(self.iid))
+        widget.bind("<Button-1>", lambda _e: self.app.select_binding(self.key))
 
-    def update(self, data: Dict[str, Any], public_ip: str) -> None:
+    def update(self, data: Dict[str, Any], public_ip: str, colour: str, kind: str) -> None:
         p = theme.current_palette()
+        self.data = data
+        alive = data.get("alive", True) if self.adopted else data["running"]
         self.name.configure(text=data["app_name"])
+        set_pill(self.pill, ("live" if alive else "exited") if self.adopted else ("running" if alive else "stopped"))
         self.via.configure(text=f"via {data['iface']}")
-        if data["running"]:
-            self.pill.configure(text="running", background=p["success"], foreground=p["bg"])
-        else:
-            self.pill.configure(text="stopped", background=p["surface_alt"], foreground=p["text_muted"])
-        self.ip.configure(text=public_ip)
+        self.via_glyph.delete("all")
+        graph.draw_kind_glyph(self.via_glyph, kind, 8, 8, 14, p["text_muted"], p["surface"])
+        self.ip.configure(text=f"IP {public_ip}" if public_ip else "")
+        self.stripe.configure(background=colour if alive else p["line_hi"])
+
+    def set_traffic(self, history: Optional[Sequence[Tuple[float, float]]], shared: int) -> None:
+        p = theme.current_palette()
+        if history is None:
+            self.rate.configure(text="counted on its connection", foreground=p["text_muted"])
+            self.spark.update([], 1.0, p["text_muted"])
+            return
+        down, up = history[-1]
+        suffix = f"  · shared by {shared}" if shared > 1 else ""
+        self.rate.configure(text=f"↓ {traffic.format_rate(down)}   ↑ {traffic.format_rate(up)}{suffix}",
+                            foreground=p["text"])
+        values = [d + u for d, u in history]
+        self.spark.update(values, traffic.nice_ceiling(max(values, default=0.0) * 1.1, floor=16 * 1024),
+                          p["success"])
 
     def set_selected(self, selected: bool) -> None:
         p = theme.current_palette()
         self.selected = selected
-        self.frame.configure(highlightbackground=p["accent"] if selected else p["border"],
-                             highlightthickness=2 if selected else 1)
+        self.frame.configure(highlightbackground=p["accent"] if selected else p["border"])
 
     def set_enabled(self, enabled: bool, running: bool = True) -> None:
+        if self.adopted:
+            _set_enabled(self.buttons[0], enabled)
+            return
         states = row_button_states(running, enabled)
         for button, key in zip(self.buttons, ("verify", "stop", "log", "force")):
             _set_enabled(button, states[key])
@@ -418,8 +519,15 @@ class _BindingRow:
 # Main window
 # ---------------------------------------------------------------------------
 
+def initial_geometry(screen_w: int, screen_h: int) -> str:
+    """Window size that fits the screen with a margin, never above the design size. Pure."""
+    width = max(min(DESIGN_SIZE[0], screen_w - 80), MIN_SIZE[0])
+    height = max(min(DESIGN_SIZE[1], screen_h - 80), MIN_SIZE[1])
+    return f"{width}x{height}"
+
+
 class InterMuxApp:
-    """Main window: bind an app to an interface, list bindings, run teardown actions."""
+    """Main window: the live network view, routed apps, and a sidebar to route more apps."""
 
     def __init__(self, root: Any) -> None:
         self.root = root
@@ -428,8 +536,11 @@ class InterMuxApp:
         self._busy = 0
         self._snapshot_inflight = False
         self._iface_map: Dict[str, str] = {}
+        self._interfaces: List[Any] = []
+        self._link_speeds: Dict[str, Optional[float]] = {}
         self._rows: Dict[str, Dict[str, Any]] = {}
-        self._row_widgets: Dict[str, _BindingRow] = {}
+        self._cards: Dict[str, _AppCard] = {}
+        self._lanes: Dict[str, monitor.LaneRow] = {}
         self._public_ips: Dict[str, Tuple[str, float]] = {}
         self._selected_iid: Optional[str] = None
         self._pending: List[Dict[str, Any]] = []
@@ -438,14 +549,13 @@ class InterMuxApp:
         self._assigning = False
         self._picked_entry: Optional[AppEntry] = None
         self._desktop_info: Dict[str, AppEntry] = {}
-        self._tile_icon: Any = None
         self._adoptions: List[Dict[str, Any]] = []
-        self._adopt_widgets: Dict[str, _AdoptRow] = {}
-        self._adopt_header: Any = None
+        self.tracker = traffic.RateTracker()
+        self.colours = monitor.ColourBook()
 
         root.title(f"InterMux {config.VERSION}")
-        root.geometry("1040x860")
-        root.minsize(900, 760)
+        root.geometry(initial_geometry(root.winfo_screenwidth(), root.winfo_screenheight()))
+        root.minsize(*MIN_SIZE)
         self.app_var = tk.StringVar(root, value="")
         self.iface_var = tk.StringVar(root, value="")
         self.separate_var = tk.BooleanVar(root, value=False)
@@ -462,138 +572,224 @@ class InterMuxApp:
         self.refresh_all()
         self.worker.submit(_icon_scan_task, on_done=self._on_icon_scan)
         self._schedule_auto_refresh()
+        self.root.after(TRAFFIC_MS, self._traffic_tick)
 
     # -- layout ---------------------------------------------------------
 
     def _build(self, root: Any) -> None:
         pad = theme.SPACE_OUTER
+        p = self.palette
         root.columnconfigure(0, weight=1)
         root.rowconfigure(2, weight=1)
 
-        header = ttk.Frame(root)
-        header.grid(row=0, column=0, sticky="ew", padx=pad, pady=(pad, theme.SPACE_CARD_GAP))
-        ttk.Label(header, text="InterMux", style="Title.TLabel").pack(side="left")
-        ttk.Label(header, text=f"v{config.VERSION}", style="Muted.TLabel").pack(side="left", padx=(8, 0))
-        self.session_chip = ttk.Label(header, textvariable=self.session_var, style="Chip.TLabel")
-        self.session_chip.pack(side="left", padx=(theme.SPACE_CARD_GAP, 0))
+        header = tk.Frame(root, background=p["bg"])
+        header.grid(row=0, column=0, sticky="ew", padx=pad, pady=(16, 14))
+        graph.logo(header, 26, p["bg"]).pack(side="left")
+        tk.Label(header, text="InterMux", background=p["bg"], foreground=p["text"],
+                 font=theme.font("title")).pack(side="left", padx=(10, 0))
+        tk.Label(header, text=f"v{config.VERSION}", background=p["bg"], foreground=p["text_muted"],
+                 font=theme.font("mono")).pack(side="left", padx=(8, 0), pady=(3, 0))
+        chip = tk.Frame(header, background=p["bg"], highlightthickness=1, highlightbackground=p["line_hi"])
+        chip.pack(side="left", padx=(16, 0))
+        self.live_dot = graph.status_dot(chip, p["success"], p["bg"], size=7)
+        self.live_dot.pack(side="left", padx=(9, 0))
+        self.session_chip = tk.Label(chip, textvariable=self.session_var, background=p["bg"],
+                                     foreground=p["text_muted"], font=theme.font("mono"), padx=7, pady=3)
+        self.session_chip.pack(side="left")
         ttk.Button(header, text="Refresh", style="Ghost.TButton", command=self.refresh_all).pack(side="right")
         ttk.Button(header, text="Report issue", style="Secondary.TButton", command=self._on_report).pack(
             side="right", padx=(0, 8))
 
         self.banner = ttk.Frame(root, padding=theme.SPACE_INNER, style="Banner.TFrame")
-        self.body = ttk.Frame(root)
+        self.body = tk.Frame(root, background=p["bg"])
         self.body.grid(row=2, column=0, sticky="nsew", padx=pad)
         self.body.columnconfigure(0, weight=1)
-        self.body.rowconfigure(0, weight=0)
-        self.body.rowconfigure(1, weight=1, minsize=BINDINGS_MIN_HEIGHT)
+        self.body.columnconfigure(1, weight=0, minsize=SIDEBAR_WIDTH)
+        self.body.rowconfigure(0, weight=1)
 
-        self._build_bind_card(self.body)
-        self._build_bindings_card(self.body)
+        main = tk.Frame(self.body, background=p["bg"])
+        self.main = main
+        main.grid(row=0, column=0, sticky="nsew", padx=(0, theme.SPACE_CARD_GAP))
+        main.columnconfigure(0, weight=1)
+        main.rowconfigure(1, weight=5, minsize=NETWORK_MIN_HEIGHT)
+        main.rowconfigure(2, weight=3, minsize=APPS_MIN_HEIGHT)
+        self._build_tiles(main)
+        self._build_network(main)
+        self._build_apps(main)
 
-        footer = ttk.Frame(root, style="Footer.TFrame")
-        footer.grid(row=3, column=0, sticky="ew", padx=pad, pady=(theme.SPACE_CARD_GAP, pad))
-        self.status_dot = tk.Label(footer, text="●", font=theme.font("body"))
+        side = tk.Frame(self.body, background=p["bg"], width=SIDEBAR_WIDTH)
+        side.grid(row=0, column=1, sticky="nsew")
+        side.columnconfigure(0, weight=1)
+        side.rowconfigure(1, weight=1)
+        self._build_bind_card(side)
+        self._build_queue(side)
+
+        footer = tk.Frame(root, background=p["bg"])
+        footer.grid(row=3, column=0, sticky="ew", padx=pad, pady=(12, 12))
+        self.status_dot = graph.status_dot(footer, p["text_muted"], p["bg"])
         self.status_dot.pack(side="left")
         # Buttons are packed first so the status text can never push them out of view.
-        self.reset_btn = ttk.Button(footer, text="Reset everything", style="Danger.TButton", command=self._on_reset)
+        self.reset_btn = ttk.Button(footer, text="Reset everything", style="Small.Danger.TButton",
+                                    command=self._on_reset)
         self.reset_btn.pack(side="right")
-        self.teardown_btn = ttk.Button(footer, text="Teardown idle", style="Secondary.TButton",
+        self.teardown_btn = ttk.Button(footer, text="Teardown idle", style="Small.Secondary.TButton",
                                        command=self._on_teardown)
-        self.teardown_btn.pack(side="right", padx=(0, theme.SPACE_INNER))
+        self.teardown_btn.pack(side="right", padx=(0, 8))
+        self.live_label = tk.Label(footer, text="", background=p["bg"], foreground=p["text_muted"],
+                                   font=theme.font("mono"))
+        self.live_label.pack(side="right", padx=(0, 16))
         self.status_label = tk.Label(footer, textvariable=self.status_var, font=theme.font("body"), anchor="w",
-                                     background=self.palette["bg"], foreground=self.palette["text"])
-        self.status_label.pack(side="left", padx=(6, 0), fill="x", expand=True)
+                                     background=p["bg"], foreground=p["text"])
+        self.status_label.pack(side="left", padx=(8, 0), fill="x", expand=True)
         self._set_status("")
         self._refresh_app_tile()
         self._update_buttons()
 
-    def _build_bind_card(self, parent: Any) -> None:
-        pad = theme.SPACE_INNER
-        gap = theme.SPACE_CARD_GAP
-        card = _card(parent)
-        card.grid(row=0, column=0, sticky="ew")
-        inner = tk.Frame(card, background=self.palette["surface"])
-        inner.pack(fill="x", padx=pad, pady=pad)
-        inner.columnconfigure(1, weight=1)
+    def _build_tiles(self, parent: Any) -> None:
         p = self.palette
+        row = tk.Frame(parent, background=p["bg"])
+        row.grid(row=0, column=0, sticky="ew", pady=(0, theme.SPACE_CARD_GAP))
+        self.tiles = {
+            "down": monitor.StatTile(row, "Download", p["accent_fg"]),
+            "up": monitor.StatTile(row, "Upload", p["violet"]),
+            "routed": monitor.StatTile(row, "Via InterMux", p["success"]),
+            "apps": monitor.StatTile(row, "Routed apps", p["warning"], sparkline=False),
+        }
+        for index, tile in enumerate(self.tiles.values()):
+            row.columnconfigure(index, weight=1, uniform="tile")
+            tile.frame.grid(row=0, column=index, sticky="nsew", padx=(0 if index == 0 else 12, 0))
 
-        ttk.Label(inner, text="New binding", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w")
+    def _build_network(self, parent: Any) -> None:
+        p = self.palette
+        panel, header, body = _panel(parent, "Network")
+        panel.grid(row=1, column=0, sticky="nsew")
+        legend = tk.Frame(header, background=p["surface"])
+        legend.pack(side="right")
+        for text, colour in (("routed by intermux", p["success"]), ("not routed", p["accent_fg"]),
+                             ("upload", p["violet"])):
+            graph.status_dot(legend, colour, p["surface"], size=7).pack(side="left", padx=(12, 5))
+            tk.Label(legend, text=text, background=p["surface"], foreground=p["text_muted"],
+                     font=theme.font("eyebrow")).pack(side="left")
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        self.lane_scroll = theme.ScrollFrame(body, p["surface"], height=60)
+        self.lane_scroll.grid(row=0, column=0, sticky="nsew", pady=(0, 2))
+        self.lane_scroll.attach_wheel(self.root)
+        self.lanes_host = self.lane_scroll.inner
+        self.lanes_host.columnconfigure(0, weight=1)
+        self.lanes_empty = tk.Label(body, text="No network connections are up. Connect to a network and press "
+                                               "Refresh.", background=p["surface"], foreground=p["text_muted"],
+                                    font=theme.font("body"))
 
-        ttk.Label(inner, text="Interface", style="Sub.TLabel").grid(row=1, column=0, sticky="w",
-                                                                    pady=(pad, 0), padx=(0, gap))
+    def _build_apps(self, parent: Any) -> None:
+        p = self.palette
+        panel, header, body = _panel(parent, "Routed apps")
+        panel.grid(row=2, column=0, sticky="nsew", pady=(theme.SPACE_CARD_GAP, 0))
+        self.apps_count = tk.Label(header, text="", background=p["surface"], foreground=p["text_muted"],
+                                   font=theme.font("mono"))
+        self.apps_count.pack(side="right", padx=(0, 6))
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(0, weight=1)
+        self.scroll = theme.ScrollFrame(body, p["surface"], height=60)
+        self.scroll.grid(row=0, column=0, sticky="nsew", padx=(12, 2), pady=12)
+        self.scroll.attach_wheel(self.root)
+        self.rows_host = self.scroll.inner
+        self.rows_host.columnconfigure(0, weight=1)
+        self.empty_label = tk.Frame(body, background=p["surface"])
+        self.empty_label.columnconfigure(0, weight=1)
+        self.empty_label.rowconfigure(0, weight=1)
+        inner = tk.Frame(self.empty_label, background=p["surface"])
+        inner.grid(row=0, column=0)
+        tk.Label(inner, text="No apps are routed yet", background=p["surface"], foreground=p["text"],
+                 font=theme.font("section")).pack()
+        tk.Label(inner, text="Pick a connection and an app on the right, add it to the queue and press Assign.",
+                 background=p["surface"], foreground=p["text_muted"], font=theme.font("small")).pack(pady=(4, 0))
+        self._show_empty(self.empty_label, True)
+
+    def _build_bind_card(self, parent: Any) -> None:
+        p = self.palette
+        bg = p["surface"]
+        panel, _header, body = _panel(parent, "Route an app")
+        panel.grid(row=0, column=0, sticky="ew")
+        inner = tk.Frame(body, background=bg)
+        inner.pack(fill="x", padx=16, pady=(12, 16))
+        inner.columnconfigure(0, weight=1)
+
+        def label(text: str, row: int, top: int = 0) -> None:
+            tk.Label(inner, text=text, background=bg, foreground=p["text_muted"], font=theme.font("small"),
+                     anchor="w").grid(row=row, column=0, sticky="w", pady=(top, 5))
+
+        label("Connection", 0)
         self.iface_combo = ttk.Combobox(inner, textvariable=self.iface_var, state="readonly", values=[],
                                         font=theme.font("body"), height=10)
-        self.iface_combo.grid(row=1, column=1, sticky="ew", pady=(pad, 0))
+        self.iface_combo.grid(row=1, column=0, sticky="ew")
         self.iface_combo.bind("<<ComboboxSelected>>", lambda _e: self._update_buttons())
 
-        self.app_tile = tk.Frame(inner, background=p["surface_alt"], highlightthickness=1,
-                                 highlightbackground=p["border"], highlightcolor=p["focus"])
-        self.app_tile.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(pad, 0))
+        label("Application", 2, top=12)
+        tile_bg = p["bg"]
+        self.app_tile = tk.Frame(inner, background=tile_bg, highlightthickness=1,
+                                 highlightbackground=p["line_hi"], highlightcolor=p["focus"], cursor="hand2")
+        self.app_tile.grid(row=3, column=0, sticky="ew")
         self.app_tile.columnconfigure(1, weight=1)
-        tpad = pad // 2
-        self.app_icon_host = tk.Frame(self.app_tile, background=p["surface_alt"], width=TILE_ICON, height=TILE_ICON)
-        self.app_icon_host.grid(row=0, column=0, rowspan=2, padx=pad, pady=tpad)
+        self.app_icon_host = tk.Frame(self.app_tile, background=tile_bg, width=TILE_ICON, height=TILE_ICON)
+        self.app_icon_host.grid(row=0, column=0, rowspan=2, padx=10, pady=8)
         self.app_icon_host.grid_propagate(False)
         self.app_icon_widget: Any = None
-        self.app_name_label = tk.Label(self.app_tile, text="", background=p["surface_alt"], foreground=p["text"],
-                                       font=theme.font("section"), anchor="w", width=1)
-        self.app_name_label.grid(row=0, column=1, sticky="sew", pady=(tpad, 0))
-        self.app_path_label = tk.Label(self.app_tile, text="", background=p["surface_alt"],
+        self.app_name_label = tk.Label(self.app_tile, text="", background=tile_bg, foreground=p["text"],
+                                       font=theme.font("label"), anchor="w", width=1)
+        self.app_name_label.grid(row=0, column=1, sticky="sew", pady=(8, 0))
+        self.app_path_label = tk.Label(self.app_tile, text="", background=tile_bg,
                                        foreground=p["text_muted"], font=theme.font("small"), anchor="w", width=1)
-        self.app_path_label.grid(row=1, column=1, sticky="new", pady=(0, tpad))
-        self.pick_btn = ttk.Button(self.app_tile, text="Choose application", style="Secondary.TButton",
+        self.app_path_label.grid(row=1, column=1, sticky="new", pady=(0, 8))
+        self.pick_btn = ttk.Button(self.app_tile, text="Choose", style="Small.Secondary.TButton",
                                    command=self._on_pick)
-        self.pick_btn.grid(row=0, column=2, rowspan=2, padx=pad)
+        self.pick_btn.grid(row=0, column=2, rowspan=2, padx=10)
         for widget in (self.app_tile, self.app_icon_host, self.app_name_label, self.app_path_label):
             widget.bind("<Button-1>", lambda _e: self._on_pick())
 
-        entry_row = tk.Frame(inner, background=p["surface"])
-        entry_row.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(pad, 0))
-        entry_row.columnconfigure(1, weight=1)
-        ttk.Label(entry_row, text="Or type a name or path", style="Sub.TLabel").grid(
-            row=0, column=0, sticky="w", padx=(0, gap))
-        self.path_entry = ttk.Entry(entry_row, textvariable=self.app_var)
-        self.path_entry.grid(row=0, column=1, sticky="ew")
-        self.add_btn = ttk.Button(entry_row, text="Add", style="Primary.TButton", command=self._on_add)
-        self.add_btn.grid(row=0, column=2, padx=(pad, 0))
+        label("Or type a command or path", 4, top=12)
+        self.path_entry = ttk.Entry(inner, textvariable=self.app_var)
+        self.path_entry.grid(row=5, column=0, sticky="ew")
 
         ttk.Checkbutton(
-            inner, text="Open a separate profile if the app is already running",
+            inner, text="Separate profile if it is already running",
             variable=self.separate_var, style="Card.TCheckbutton",
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(pad, 0))
+        ).grid(row=6, column=0, sticky="w", pady=(12, 0))
+        self.add_btn = ttk.Button(inner, text="Add to queue", style="Primary.TButton", command=self._on_add)
+        self.add_btn.grid(row=7, column=0, sticky="ew", pady=(14, 0))
 
-    def _section(self, parent: Any, column: int, title: str, empty_text: str) -> Tuple[Any, Any, Any, Any]:
-        """One half of the Bindings card. Returns (header_frame, scroll, rows_host, empty_label)."""
+    def _build_queue(self, parent: Any) -> None:
         p = self.palette
-        pad = theme.SPACE_INNER
-        panel = tk.Frame(parent, background=p["surface"], highlightthickness=1,
-                         highlightbackground=p["border"], borderwidth=0)
-        panel.grid(row=0, column=column, sticky="nsew", padx=(0, pad) if column == 0 else (0, 0))
-        panel.columnconfigure(0, weight=1)
-        panel.rowconfigure(1, weight=1)
-        header = tk.Frame(panel, background=p["surface"])
-        header.grid(row=0, column=0, sticky="ew", padx=pad, pady=(pad, 6))
-        ttk.Label(header, text=title, style="Section.TLabel").pack(side="left")
-        body = tk.Frame(panel, background=p["surface"], highlightthickness=0, borderwidth=0)
-        body.grid(row=1, column=0, sticky="nsew", padx=(pad, 4), pady=(0, pad))
+        panel, header, body = _panel(parent, "Queue")
+        panel.grid(row=1, column=0, sticky="nsew", pady=(theme.SPACE_CARD_GAP, 0))
+        self.queue_count = tk.Label(header, text="", background=p["surface"], foreground=p["text_muted"],
+                                    font=theme.font("mono"))
+        self.queue_count.pack(side="right", padx=(0, 6))
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
-        scroll = theme.ScrollFrame(body, p["surface"])
-        scroll.grid(row=0, column=0, sticky="nsew")
-        # Mouse wheel and touchpad scrolling for this section (the window routes events by pointer position).
-        scroll.attach_wheel(self.root)
-        host = scroll.inner
-        host.columnconfigure(0, weight=1)
-        # Empty state: a sibling of the ScrollFrame (created after it, so drawn above the canvas),
-        # filling the whole body below the heading and centring the label.
-        empty = tk.Frame(body, background=p["surface"], highlightthickness=0, borderwidth=0)
-        empty.columnconfigure(0, weight=1)
-        empty.rowconfigure(0, weight=1)
-        ttk.Label(empty, text=empty_text, style="CardMuted.TLabel", justify="center",
-                  anchor="center", wraplength=240).grid(row=0, column=0)
-        empty.grid(row=0, column=0, sticky="nsew")
-        empty.tkraise()
-        return header, scroll, host, empty
+        holder = tk.Frame(body, background=p["surface"])
+        holder.grid(row=0, column=0, sticky="nsew", padx=(12, 2), pady=(12, 0))
+        holder.columnconfigure(0, weight=1)
+        holder.rowconfigure(0, weight=1)
+        self.pending_scroll = theme.ScrollFrame(holder, p["surface"], height=60)
+        self.pending_scroll.grid(row=0, column=0, sticky="nsew")
+        self.pending_scroll.attach_wheel(self.root)
+        self.pending_host = self.pending_scroll.inner
+        self.pending_host.columnconfigure(0, weight=1)
+        self.pending_empty = tk.Frame(holder, background=p["surface"])
+        self.pending_empty.columnconfigure(0, weight=1)
+        self.pending_empty.rowconfigure(0, weight=1)
+        tk.Label(self.pending_empty, text="Queued apps start together\nwith one password prompt.",
+                 background=p["surface"], foreground=p["text_muted"], font=theme.font("small"),
+                 justify="center").grid(row=0, column=0)
+        self._show_empty(self.pending_empty, True)
+        buttons = tk.Frame(body, background=p["surface"])
+        buttons.grid(row=1, column=0, sticky="ew", padx=16, pady=(10, 16))
+        buttons.columnconfigure(0, weight=1)
+        self.assign_btn = ttk.Button(buttons, text="Assign", style="Primary.TButton", command=self._on_assign)
+        self.assign_btn.grid(row=0, column=0, sticky="ew")
+        self.clear_btn = ttk.Button(buttons, text="Clear", style="Secondary.TButton", command=self._on_clear)
+        self.clear_btn.grid(row=0, column=1, padx=(8, 0))
 
     @staticmethod
     def _show_empty(empty: Any, show: bool) -> None:
@@ -603,32 +799,6 @@ class InterMuxApp:
         else:
             empty.grid_remove()
 
-    def _build_bindings_card(self, parent: Any) -> None:
-        pad = theme.SPACE_INNER
-        card = _card(parent)
-        card.grid(row=1, column=0, sticky="nsew", pady=(theme.SPACE_CARD_GAP, 0))
-        inner = tk.Frame(card, background=self.palette["surface"])
-        inner.pack(fill="both", expand=True, padx=pad + 4, pady=pad + 4)
-        inner.columnconfigure(0, weight=1)
-        inner.rowconfigure(1, weight=1, minsize=BINDINGS_MIN_HEIGHT - 80)
-        ttk.Label(inner, text="Bindings", style="Section.TLabel").grid(row=0, column=0, sticky="w",
-                                                                       pady=(0, pad))
-        sections = tk.Frame(inner, background=self.palette["surface"])
-        sections.grid(row=1, column=0, sticky="nsew")
-        sections.rowconfigure(0, weight=1)
-        sections.columnconfigure(0, weight=1, uniform="half")
-        sections.columnconfigure(1, weight=1, uniform="half")
-
-        head, self.pending_scroll, self.pending_host, self.pending_empty = self._section(
-            sections, 0, "Pending", "Nothing pending. Add an application above.")
-        self.clear_btn = ttk.Button(head, text="Clear", style="Small.Secondary.TButton", command=self._on_clear)
-        self.clear_btn.pack(side="right")
-        self.assign_btn = ttk.Button(head, text="Assign", style="Primary.TButton", command=self._on_assign)
-        self.assign_btn.pack(side="right", padx=(0, 6))
-
-        _head, self.scroll, self.rows_host, self.empty_label = self._section(
-            sections, 1, "Active", "No apps are bound yet.")
-
     def _update_buttons(self) -> None:
         idle = self._busy == 0
         has_iface = self._iface_name() is not None
@@ -637,13 +807,12 @@ class InterMuxApp:
         _set_enabled(self.assign_btn, idle and bool(self._pending))
         _set_enabled(self.clear_btn, idle and bool(self._pending))
         _set_enabled(self.pick_btn, idle)
-        for adopt_row in self._adopt_widgets.values():
-            _set_enabled(adopt_row.release, idle)
         _set_enabled(self.teardown_btn, idle)
         _set_enabled(self.reset_btn, idle)
-        for iid, row in self._row_widgets.items():
-            data = self._rows.get(iid)
-            row.set_enabled(idle, bool(data and data.get("running")))
+        for key, card in self._cards.items():
+            data = self._rows.get(key) or {}
+            card.set_enabled(idle, bool(data.get("running")))
+        self.queue_count.configure(text=str(len(self._pending)) if self._pending else "")
 
     # -- app tile ---------------------------------------------------------
 
@@ -695,15 +864,15 @@ class InterMuxApp:
             return
         self._desktop_info = result
         self._refresh_app_tile()
-        for iid, widget in self._row_widgets.items():
-            self._set_row_icon(widget, self._rows.get(iid))
+        for key, card in self._cards.items():
+            self._set_card_icon(card, self._card_data(key))
         self._render_pending()
 
-    def _set_row_icon(self, widget: _BindingRow, row: Optional[Dict[str, Any]]) -> None:
+    def _set_card_icon(self, card: _AppCard, row: Optional[Dict[str, Any]]) -> None:
         if row is None:
             return
-        widget.set_icon(self._icon_widget(widget.icon_host, row["app"], row["app_name"], ROW_ICON,
-                                          self.palette["surface"]))
+        card.set_icon(self._icon_widget(card.icon_host, row["app"], row["app_name"], CARD_ICON,
+                                        self.palette["surface"]))
 
     # -- status and errors ----------------------------------------------
 
@@ -715,7 +884,7 @@ class InterMuxApp:
         kind = kind or status_kind(text)
         colour = {"error": p["danger"], "success": p["success"], "warning": p["warning"]}.get(
             kind, p["text_muted"])
-        self.status_dot.configure(foreground=colour, background=p["bg"])
+        graph.set_dot(self.status_dot, colour)
 
     def _fail(self, title: str, error: BaseException) -> None:
         text = _error_text(error)
@@ -743,6 +912,8 @@ class InterMuxApp:
         self._apply_interfaces(result["interfaces"])
         self._apply_bindings(result["bindings"])
         self._apply_adoptions(result.get("adoptions", []))
+        self._render_cards()
+        self._render_lanes()
         self._update_buttons()
 
     def _on_environment(self, result: Any, error: Optional[BaseException]) -> None:
@@ -799,58 +970,228 @@ class InterMuxApp:
             self.iface_combo.state(["!disabled", "readonly"])
         else:
             self.iface_combo.state(["disabled"])
+        self._interfaces = list(interfaces)
+        self._link_speeds = {i.name: traffic.link_speed_bytes(i.name) for i in interfaces}
+
+    # -- network view -------------------------------------------------------
+
+    def _bound_ifaces(self) -> List[str]:
+        names = [row["iface"] for row in self._rows.values()] + [a["iface"] for a in self._adoptions]
+        return list(dict.fromkeys(names))
+
+    def _render_lanes(self) -> None:
+        """Create, update or remove one lane per visible connection, then refresh their chips."""
+        wanted = monitor.visible_lanes(self._interfaces, self._bound_ifaces())
+        names = [iface.name for iface in wanted]
+        for name in list(self._lanes):
+            if name not in names:
+                self._lanes.pop(name).destroy()
+        for index, iface in enumerate(wanted):
+            lane = self._lanes.get(iface.name)
+            if lane is None:
+                lane = monitor.LaneRow(self.lanes_host, iface, self._on_route_here)
+                self._lanes[iface.name] = lane
+            else:
+                lane.set_interface(iface)
+            lane.frame.grid(row=index * 2, column=0, sticky="ew")
+            if index < len(wanted) - 1:
+                lane.separator.grid(row=index * 2 + 1, column=0, sticky="ew")
+            else:
+                lane.separator.grid_remove()
+            lane.set_chips(self._chips_for(iface.name), self.select_binding, self._show_app_menu)
+        if wanted:
+            self.lanes_empty.place_forget()
+        else:
+            self.lanes_empty.place(relx=0.5, rely=0.5, anchor="center")
+        self._render_traffic()
+
+    def _chips_for(self, iface: str) -> List[Dict[str, Any]]:
+        chips = []
+        for key, row in self._rows.items():
+            if row["iface"] == iface:
+                chips.append({"key": key, "name": row["app_name"], "colour": self.colours.colour(row["app"]),
+                              "running": bool(row["running"]), "note": "" if row["running"] else "stopped"})
+        for data in self._adoptions:
+            if data["iface"] == iface:
+                chips.append({"key": ADOPT_PREFIX + data["id"], "name": data["app_name"],
+                              "colour": self.colours.colour(data["app"]), "running": bool(data.get("alive", True)),
+                              "note": "adopted"})
+        return chips
+
+    def _on_route_here(self, iface: str) -> None:
+        """"+ Route an app here" on a lane: choose that connection in the sidebar, then pick an app."""
+        label = next((lbl for lbl, name in self._iface_map.items() if name == iface), None)
+        if label is None:
+            self._set_status(f"{iface} cannot be used for routing right now.", "warning")
+            return
+        self.iface_var.set(label)
+        self._update_buttons()
+        if self.app_var.get().strip():
+            self._set_status(f"Connection set to {iface}. Press Add to queue.")
+        else:
+            self._set_status(f"Connection set to {iface}. Choose the app to route.")
+            self._on_pick()
+
+    def _traffic_tick(self) -> None:
+        try:
+            self._sample_traffic()
+        except Exception:
+            log.exception("traffic sampling failed")
+        try:
+            self.root.after(TRAFFIC_MS, self._traffic_tick)
+        except tk.TclError:
+            pass
+
+    def _sample_traffic(self) -> None:
+        lanes = [iface.name for iface in monitor.visible_lanes(self._interfaces, self._bound_ifaces())]
+        veths = {iface: netns.veth_names(iface)[0] for iface in {row["iface"] for row in self._rows.values()}}
+        counters = traffic.read_counters(lanes + list(veths.values()))
+        samples: Dict[str, Tuple[int, int]] = {}
+        for name in lanes:
+            if name in counters:
+                samples[name] = traffic.iface_sample(counters[name])
+        for iface, veth in veths.items():
+            if veth in counters:
+                samples[ns_key(iface)] = traffic.veth_sample(counters[veth])
+        self.tracker.update(samples, time.monotonic())
+        try:
+            visible = bool(self.root.winfo_viewable())
+        except tk.TclError:
+            return
+        if visible:
+            self._render_traffic()
+
+    def _render_traffic(self) -> None:
+        p = self.palette
+        routed_counts: Dict[str, int] = {}
+        for row in self._rows.values():
+            if row["running"]:
+                routed_counts[row["iface"]] = routed_counts.get(row["iface"], 0) + 1
+        for data in self._adoptions:
+            if data.get("alive", True):
+                routed_counts[data["iface"]] = routed_counts.get(data["iface"], 0) + 1
+        for name, lane in self._lanes.items():
+            key = ns_key(name)
+            routed = self.tracker.rate(key) if key in self.tracker.names() else None
+            lane.set_traffic(self.tracker.history(name), routed, routed_counts.get(name, 0),
+                             self._link_speeds.get(name))
+
+        physical = [name for name in self._lanes if not monitor.is_vpn_name(name)]
+        down_series = sum_series([self.tracker.history(n) for n in physical], 0)
+        up_series = sum_series([self.tracker.history(n) for n in physical], 1)
+        routed_names = [n for n in self.tracker.names() if n.startswith(NS_PREFIX)]
+        routed_series = [d + u for d, u in zip(sum_series([self.tracker.history(n) for n in routed_names], 0),
+                                               sum_series([self.tracker.history(n) for n in routed_names], 1))]
+        down = down_series[-1] if down_series else 0.0
+        up = up_series[-1] if up_series else 0.0
+        routed_now = routed_series[-1] if routed_series else 0.0
+        number, unit = traffic.split_rate(down)
+        self.tiles["down"].set(number, unit, f"{len(physical)} link" + ("" if len(physical) == 1 else "s"),
+                               down_series)
+        number, unit = traffic.split_rate(up)
+        self.tiles["up"].set(number, unit, "all apps", up_series)
+        number, unit = traffic.split_rate(routed_now)
+        share = routed_share(routed_now, down + up)
+        self.tiles["routed"].set(number, unit, f"{share} of total" if share else "", routed_series)
+        running = sum(1 for r in self._rows.values() if r["running"]) + sum(
+            1 for a in self._adoptions if a.get("alive", True))
+        total = len(self._rows) + len(self._adoptions)
+        lanes_used = len({r["iface"] for r in self._rows.values()} | {a["iface"] for a in self._adoptions})
+        self.tiles["apps"].set(str(running), f"of {total} running" if total else "running",
+                               f"{lanes_used} link" + ("" if lanes_used == 1 else "s") if total else "")
+        shared: Dict[str, int] = {}
+        for row in self._rows.values():
+            shared[row["iface"]] = shared.get(row["iface"], 0) + 1
+        for key, card in self._cards.items():
+            data = self._card_data(key)
+            if data is None:
+                continue
+            if card.adopted:
+                card.set_traffic(None, 0)
+            else:
+                name = ns_key(data["iface"])
+                card.set_traffic(self.tracker.history(name) if name in self.tracker.names() else
+                                 [(0.0, 0.0)] * self.tracker.size, shared.get(data["iface"], 1))
+        self.live_label.configure(text=f"live · {time.strftime('%H:%M:%S')}")
 
     # -- bindings -----------------------------------------------------------
 
+    def _card_data(self, key: str) -> Optional[Dict[str, Any]]:
+        if key.startswith(ADOPT_PREFIX):
+            return next((a for a in self._adoptions if ADOPT_PREFIX + a["id"] == key), None)
+        return self._rows.get(key)
+
     def _apply_bindings(self, rows: Sequence[Dict[str, Any]]) -> None:
         self._rows = {}
-        ordered: List[str] = []
         for row in rows:
             iid = _iid(row["iface"], row["app"])
             self._rows[iid] = dict(row, iid=iid)
-            ordered.append(iid)
-        for iid in list(self._row_widgets):
-            if iid not in self._rows:
-                self._row_widgets.pop(iid).frame.destroy()
-        for index, iid in enumerate(ordered):
-            row = self._rows[iid]
-            widget = self._row_widgets.get(iid)
-            if widget is None:
-                widget = _BindingRow(self, self.rows_host, iid)
-                self._row_widgets[iid] = widget
-                self._set_row_icon(widget, row)
-            widget.update(row, fresh_public_ip(self._public_ips.get(row["iface"]), time.monotonic()))
-            widget.frame.grid(row=index, column=0, sticky="ew", pady=(0, 8))
         now = time.monotonic()
         self._public_ips = {k: v for k, v in self._public_ips.items()
                             if any(r["iface"] == k for r in rows) and fresh_public_ip(v, now)}
-        if self._selected_iid not in self._rows:
-            self._selected_iid = None
-        for iid, widget in self._row_widgets.items():
-            widget.set_selected(iid == self._selected_iid)
-        self._show_empty(self.empty_label, not (ordered or self._adoptions))
 
     def _apply_adoptions(self, rows: Sequence[Dict[str, Any]]) -> None:
         self._adoptions = [dict(r) for r in rows]
-        wanted = {r["id"] for r in self._adoptions}
-        for key in list(self._adopt_widgets):
-            if key not in wanted:
-                self._adopt_widgets.pop(key).frame.destroy()
-        if self._adopt_header is None:
-            self._adopt_header = ttk.Label(self.rows_host, text="Adopted apps", style="Sub.TLabel")
-        for index, data in enumerate(self._adoptions):
-            widget = self._adopt_widgets.get(data["id"])
-            if widget is None:
-                widget = _AdoptRow(self, self.rows_host, data)
-                self._adopt_widgets[data["id"]] = widget
-            else:
-                widget.update(data)
-            widget.frame.grid(row=1001 + index, column=0, sticky="ew", pady=(0, 8))
-        if self._adoptions:
-            self._adopt_header.grid(row=1000, column=0, sticky="w", pady=(4, 4))
+
+    def _render_cards(self) -> None:
+        """Bindings first, then adoptions; cards are kept and updated in place."""
+        keys = list(self._rows) + [ADOPT_PREFIX + a["id"] for a in self._adoptions]
+        for key in list(self._cards):
+            if key not in keys:
+                self._cards.pop(key).frame.destroy()
+        now = time.monotonic()
+        kinds = {iface.name: graph.kind_for(iface) for iface in self._interfaces}
+        for index, key in enumerate(keys):
+            data = self._card_data(key)
+            if data is None:
+                continue
+            card = self._cards.get(key)
+            if card is None:
+                card = _AppCard(self, self.rows_host, key, adopted=key.startswith(ADOPT_PREFIX))
+                self._cards[key] = card
+                card.update(data, "", self.colours.colour(data["app"]), kinds.get(data["iface"], "other"))
+                self._set_card_icon(card, data)
+            public_ip = "" if card.adopted else fresh_public_ip(self._public_ips.get(data["iface"]), now)
+            card.update(data, public_ip, self.colours.colour(data["app"]), kinds.get(data["iface"], "other"))
+            card.frame.grid(row=index, column=0, sticky="ew", pady=(0, 8))
+        if self._selected_iid not in self._cards:
+            self._selected_iid = None
+        for key, card in self._cards.items():
+            card.set_selected(key == self._selected_iid)
+        self._show_empty(self.empty_label, not keys)
+        # With nothing routed the apps panel only needs room for its message; the network view takes the rest.
+        self.main.rowconfigure(2, weight=3 if keys else 0)
+        running = sum(1 for r in self._rows.values() if r["running"])
+        self.apps_count.configure(text=f"{running} running · {len(keys)} total" if keys else "")
+
+    def _show_app_menu(self, key: str, event: Any) -> None:
+        """Right-click on a chip or card: the same actions as the card's buttons."""
+        self.select_binding(key)
+        data = self._card_data(key)
+        if data is None:
+            return
+        p = self.palette
+        menu = tk.Menu(self.root, tearoff=False, background=p["surface_alt"], foreground=p["text"],
+                       activebackground=p["accent"], activeforeground=p["accent_text"],
+                       disabledforeground=p["line_hi"], borderwidth=1, relief="flat")
+        idle = self._busy == 0
+        if key.startswith(ADOPT_PREFIX):
+            menu.add_command(label=f"Release {data['app_name']}", state="normal" if idle else "disabled",
+                             command=lambda: self._on_release_adoption(data))
         else:
-            self._adopt_header.grid_remove()
-        self._show_empty(self.empty_label, not (self._rows or self._adoptions))
+            states = row_button_states(bool(data["running"]), idle)
+            menu.add_command(label="Verify public IP", command=self._on_verify,
+                             state="normal" if states["verify"] else "disabled")
+            menu.add_command(label="Stop", command=self._on_stop, state="normal" if states["stop"] else "disabled")
+            menu.add_command(label="Open log", command=self._on_open_log,
+                             state="normal" if states["log"] else "disabled")
+            menu.add_separator()
+            menu.add_command(label="Force quit", command=self._on_force_quit,
+                             state="normal" if states["force"] else "disabled")
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
 
     def _on_release_adoption(self, data: Dict[str, Any]) -> None:
         if self._busy:
@@ -874,9 +1215,23 @@ class InterMuxApp:
             self._set_status(f"Stopped routing {name}; it uses the default route again.")
 
     def select_binding(self, iid: str) -> None:
-        self._selected_iid = iid if iid in self._rows else None
-        for key, widget in self._row_widgets.items():
-            widget.set_selected(key == self._selected_iid)
+        self._selected_iid = iid if iid in self._cards else None
+        for key, card in self._cards.items():
+            card.set_selected(key == self._selected_iid)
+        card = self._cards.get(iid)
+        if card is not None:
+            self._scroll_into_view(card.frame)
+
+    def _scroll_into_view(self, widget: Any) -> None:
+        try:
+            self.root.update_idletasks()
+            total = max(self.rows_host.winfo_height(), 1)
+            top = widget.winfo_y()
+            first, last = self.scroll.canvas.yview()
+            if top / total < first or (top + widget.winfo_height()) / total > last:
+                self.scroll.scroll_to(top / total)
+        except tk.TclError:
+            pass
 
     def _selected_row(self) -> Optional[Dict[str, Any]]:
         if self._selected_iid is None:

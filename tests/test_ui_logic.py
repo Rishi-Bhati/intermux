@@ -107,7 +107,8 @@ class ThemeAndLabelTests(unittest.TestCase):
         p = theme.PALETTE
         for fg, bg in (("text", "surface"), ("text", "surface_alt"), ("text", "bg"),
                        ("text_muted", "surface"), ("text_muted", "surface_alt"), ("text_muted", "bg"),
-                       ("bg", "danger"), ("bg", "warning"), ("bg", "success"), ("accent", "surface")):
+                       ("bg", "danger"), ("bg", "warning"), ("bg", "success"), ("accent_fg", "surface"),
+                       ("accent_fg", "surface_alt"), ("accent_text", "accent")):
             self.assertGreaterEqual(theme.contrast_ratio(p[fg], p[bg]), 4.5, f"{fg} on {bg}")
 
     def test_combobox_arrow_contrast(self):

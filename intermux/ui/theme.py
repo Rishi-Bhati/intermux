@@ -19,19 +19,28 @@ log = logging.getLogger("intermux.ui")
 # ---------------------------------------------------------------------------
 
 PALETTE: Dict[str, str] = {
-    "bg": "#0E1117",
-    "surface": "#161B22",
-    "surface_alt": "#1C2330",
-    "border": "#2A3140",
-    "text": "#E6EAF2",
-    "text_muted": "#9AA4B5",
-    "accent": "#5B8CFF",
+    # The same tokens as the InterMux website (website/app/globals.css).
+    "bg": "#0C0D0E",
+    "surface": "#121315",
+    "surface_alt": "#17191B",
+    "border": "#1F2123",
+    "line_hi": "#33363A",
+    "text": "#E9EAEB",
+    "text_muted": "#868B91",
+    "accent": "#3A5AFF",        # fills: primary buttons, selection
+    "accent_fg": "#6680FF",     # accent used as text or a thin line on a dark surface (>= 4.5:1)
     "accent_text": "#FFFFFF",
-    "success": "#3FD69A",
-    "warning": "#F2B84B",
-    "danger": "#FF6B6B",
-    "focus": "#8AB4FF",
+    "success": "#3FD69A",       # green: InterMux is routing
+    "warning": "#FFB547",
+    "danger": "#FF8585",
+    "focus": "#6680FF",
+    "violet": "#A78BFA",
+    "cyan": "#38C8F0",
+    "pink": "#F472B6",
 }
+
+# Colours that tell apps apart in the network view, in the order apps get them.
+APP_COLOURS = ("#FFB547", "#38C8F0", "#A78BFA", "#F472B6", "#3FD69A", "#6680FF", "#FF8585")
 
 COMBO_ARROW = PALETTE["text"]  # dropdown arrow colour; contrasts with surface_alt
 
@@ -47,10 +56,17 @@ _fonts: Dict[str, Any] = {}
 _images: List[Any] = []  # keeps PhotoImages referenced for the life of the process
 
 FONT_SIZES: Dict[str, Tuple[int, str]] = {
-    "title": (18, "bold"),
+    "title": (15, "bold"),
     "section": (12, "bold"),
     "body": (11, "normal"),
     "small": (10, "normal"),
+    "stat": (20, "bold"),       # big live numbers
+    "stat_small": (14, "bold"),
+    "label": (10, "bold"),
+}
+MONO_SIZES: Dict[str, Tuple[int, str]] = {
+    "eyebrow": (9, "normal"),   # small uppercase section labels, like the website's eyebrows
+    "mono": (10, "normal"),     # device names and addresses
 }
 
 
@@ -93,7 +109,7 @@ def current_palette() -> Dict[str, str]:
 
 
 def font(kind: str = "body") -> Any:
-    """Return the named font ("title", "section", "body", "small"); falls back to TkDefaultFont."""
+    """Return a named font (see FONT_SIZES and MONO_SIZES); falls back to TkDefaultFont."""
     if kind in _fonts:
         return _fonts[kind]
     import tkinter.font as tkfont
@@ -175,6 +191,9 @@ def apply_theme(root: Any) -> Dict[str, str]:
     family = base.cget("family")
     for kind, (size, weight) in FONT_SIZES.items():
         _fonts[kind] = tkfont.Font(root=root, family=family, size=size, weight=weight)
+    mono_family = tkfont.nametofont("TkFixedFont").cget("family")
+    for kind, (size, weight) in MONO_SIZES.items():
+        _fonts[kind] = tkfont.Font(root=root, family=mono_family, size=size, weight=weight)
     body, small, section, title = _fonts["body"], _fonts["small"], _fonts["section"], _fonts["title"]
 
     style = ttk.Style(root)
@@ -214,12 +233,17 @@ def apply_theme(root: Any) -> Dict[str, str]:
     style.configure("CardSmall.TLabel", background=p["surface"], foreground=p["text_muted"], font=small)
     style.configure("Section.TLabel", background=p["surface"], foreground=p["text"], font=section)
     style.configure("Sub.TLabel", background=p["surface"], foreground=p["text_muted"], font=small)
-    style.configure("Chip.TLabel", background=p["surface_alt"], foreground=p["text"], font=small, padding=(10, 3))
+    style.configure("Chip.TLabel", background=p["surface"], foreground=p["text_muted"], font=_fonts["mono"],
+                    padding=(10, 3))
     style.configure("Banner.TFrame", background=p["warning"], bordercolor=p["warning"])
     style.configure("Banner.TLabel", background=p["warning"], foreground=p["bg"], font=body)
     style.configure("BannerTitle.TLabel", background=p["warning"], foreground=p["bg"], font=section)
     style.configure("Footer.TFrame", background=p["bg"])
     style.configure("Status.TLabel", background=p["bg"], foreground=p["text_muted"], font=body)
+    style.configure("Eyebrow.TLabel", background=p["surface"], foreground=p["text_muted"], font=_fonts["eyebrow"])
+    style.configure("AccentEyebrow.TLabel", background=p["surface"], foreground=p["accent_fg"],
+                    font=_fonts["eyebrow"])
+    style.configure("Mono.TLabel", background=p["surface"], foreground=p["text_muted"], font=_fonts["mono"])
 
     # Buttons
     def button(name: str, bg: str, fg: str, border: str, hover: str, pressed: str,
@@ -238,42 +262,51 @@ def apply_theme(root: Any) -> Dict[str, str]:
             darkcolor=[("focus", p["focus"]), ("pressed", pressed), ("active", hover), ("disabled", disabled_bg)],
         )
 
-    dis_bg, dis_fg = p["surface"], p["text_muted"]
+    dis_bg, dis_fg = p["surface"], p["line_hi"]
+    hover = shade(p["surface_alt"], 0.04)
     button("Primary.TButton", p["accent"], p["accent_text"], p["accent"],
-           shade(p["accent"], 0.15), shade(p["accent"], -0.18), p["surface_alt"], dis_fg)
-    button("Secondary.TButton", p["surface_alt"], p["text"], p["border"],
-           shade(p["surface_alt"], 0.10), shade(p["surface_alt"], -0.25), dis_bg, dis_fg)
+           shade(p["accent"], 0.12), shade(p["accent"], -0.15), p["surface_alt"], p["text_muted"])
+    button("Secondary.TButton", p["surface_alt"], p["text"], p["line_hi"],
+           hover, p["border"], dis_bg, dis_fg)
+    style.map("Secondary.TButton", bordercolor=[("focus", p["focus"]), ("disabled", p["border"]),
+                                                ("active", shade(p["line_hi"], 0.12))])
     button("Danger.TButton", p["danger"], p["bg"], p["danger"],
-           shade(p["danger"], 0.15), shade(p["danger"], -0.18), p["surface_alt"], dis_fg)
+           shade(p["danger"], 0.12), shade(p["danger"], -0.15), p["surface_alt"], p["text_muted"])
     button("Ghost.TButton", p["bg"], p["text_muted"], p["bg"],
-           p["surface_alt"], p["surface"], p["bg"], p["border"])
-    style.map("Ghost.TButton", foreground=[("disabled", p["border"]), ("active", p["text"])])
+           p["surface_alt"], p["surface"], p["bg"], p["line_hi"])
+    style.map("Ghost.TButton", foreground=[("disabled", p["line_hi"]), ("active", p["text"])])
     # Inside a card the ghost/secondary buttons sit on the surface colour
     button("CardGhost.TButton", p["surface"], p["text_muted"], p["surface"],
-           p["surface_alt"], p["bg"], p["surface"], p["border"])
-    style.map("CardGhost.TButton", foreground=[("disabled", p["border"]), ("active", p["text"])])
-    for variant in ("Secondary", "CardGhost", "Danger"):
-        style.configure(f"Small.{variant}.TButton", padding=(10, 4), font=small)
+           p["surface_alt"], p["bg"], p["surface"], p["line_hi"])
+    style.map("CardGhost.TButton", foreground=[("disabled", p["line_hi"]), ("active", p["text"])])
+    button("CardDanger.TButton", p["surface"], p["danger"], p["surface"],
+           p["surface_alt"], p["bg"], p["surface"], p["line_hi"])
+    style.map("CardDanger.TButton", foreground=[("disabled", p["line_hi"])])
+    button("Link.TButton", p["surface"], p["accent_fg"], p["surface"],
+           p["surface_alt"], p["bg"], p["surface"], p["line_hi"])
+    style.map("Link.TButton", foreground=[("disabled", p["line_hi"]), ("active", p["text"])])
+    for variant in ("Primary", "Secondary", "CardGhost", "CardDanger", "Danger", "Ghost", "Link"):
+        style.configure(f"Small.{variant}.TButton", padding=(10, 4), font=small, width=0)
 
     # Entry and combobox
-    style.configure("TEntry", fieldbackground=p["surface_alt"], foreground=p["text"], bordercolor=p["border"],
-                    lightcolor=p["border"], darkcolor=p["border"], insertcolor=p["text"], padding=8)
+    style.configure("TEntry", fieldbackground=p["bg"], foreground=p["text"], bordercolor=p["line_hi"],
+                    lightcolor=p["bg"], darkcolor=p["bg"], insertcolor=p["text"], padding=8)
     style.map("TEntry",
               bordercolor=[("focus", p["focus"])], lightcolor=[("focus", p["focus"])],
               darkcolor=[("focus", p["focus"])], fieldbackground=[("disabled", p["surface"])],
               foreground=[("disabled", p["text_muted"])])
     # The arrow button gets its own lighter face and a bright arrow (text on surface_alt is >= 4.5:1).
     combo_face = shade(p["surface_alt"], 0.10)
-    style.configure("TCombobox", fieldbackground=p["surface_alt"], foreground=p["text"],
+    style.configure("TCombobox", fieldbackground=p["bg"], foreground=p["text"],
                     background=combo_face, arrowcolor=COMBO_ARROW, arrowsize=18,
-                    bordercolor=p["text_muted"], lightcolor=p["border"], darkcolor=p["border"],
+                    bordercolor=p["line_hi"], lightcolor=p["border"], darkcolor=p["border"],
                     padding=6, relief="flat")
     style.map("TCombobox",
-              fieldbackground=[("readonly", p["surface_alt"]), ("disabled", p["surface"])],
+              fieldbackground=[("readonly", p["bg"]), ("disabled", p["surface"])],
               foreground=[("readonly", p["text"]), ("disabled", p["text_muted"])],
               background=[("disabled", p["surface"]), ("pressed", shade(combo_face, 0.10)),
                           ("active", shade(combo_face, 0.10)), ("readonly", combo_face)],
-              selectbackground=[("readonly", p["surface_alt"])],
+              selectbackground=[("readonly", p["bg"])],
               selectforeground=[("readonly", p["text"])],
               bordercolor=[("focus", p["focus"]), ("active", p["focus"])],
               arrowcolor=[("disabled", p["text_muted"]), ("pressed", p["focus"]), ("active", p["focus"]),
@@ -337,11 +370,13 @@ def _route_wheel(toplevel: Any, event: Any) -> None:
 class ScrollFrame(tk.Frame if tk is not None else object):  # type: ignore[misc]
     """A frame whose `inner` child scrolls vertically inside a Canvas with a ttk scrollbar."""
 
-    def __init__(self, master: Any, background: str, on_view: Optional[Callable[[], None]] = None) -> None:
+    def __init__(self, master: Any, background: str, on_view: Optional[Callable[[], None]] = None,
+                 height: Optional[int] = None) -> None:
         super().__init__(master, background=background, highlightthickness=0, borderwidth=0)
         self._on_view = on_view
+        extra = {"height": height} if height is not None else {}
         self.canvas = tk.Canvas(self, background=background, highlightthickness=0, borderwidth=0,
-                                yscrollincrement=20)
+                                yscrollincrement=20, **extra)
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self._yview)
         self.canvas.configure(yscrollcommand=self._set_view)
         self.canvas.grid(row=0, column=0, sticky="nsew")

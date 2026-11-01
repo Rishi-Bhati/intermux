@@ -72,7 +72,7 @@ class ReportDialog(tk.Toplevel):
         lines = max(1, -(-len(url) // LINK_CHARS_PER_LINE))
         text = tk.Text(
             row, height=lines, width=LINK_CHARS_PER_LINE, wrap="char", font=link_font,
-            background=p["surface_alt"], foreground=p["accent"], relief="flat", borderwidth=0,
+            background=p["surface_alt"], foreground=p["accent_fg"], relief="flat", borderwidth=0,
             highlightthickness=1, highlightbackground=p["border"], highlightcolor=p["focus"],
             selectbackground=p["accent"], selectforeground=p["accent_text"],
             inactiveselectbackground=p["accent"], insertwidth=0, padx=8, pady=6, cursor="hand2",
