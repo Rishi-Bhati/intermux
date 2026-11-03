@@ -13,7 +13,7 @@
 
 InterMux lets you choose which network connection each application uses. For example, you can keep a torrent client on Ethernet while your browser uses Wi-Fi or a phone hotspot. It runs each bound application inside its own network namespace and routes that namespace through the interface you pick. A small root helper, gated by polkit, sets up the networking. Your applications always run as your own user, so your profiles and settings are kept.
 
-InterMux has a graphical interface and a command line. Version 2.0.1 is the Linux edition. A separate Windows edition lives in [`windows/`](windows/README.md).
+InterMux has a graphical interface and a command line. Version 2.1.0 is the Linux edition. A separate Windows edition lives in [`windows/`](windows/README.md).
 
 ## Supported platforms
 
@@ -24,25 +24,25 @@ InterMux has a graphical interface and a command line. Version 2.0.1 is the Linu
 
 ## What it does
 
-- **Bind an application to an interface.** Pick an interface and an application. The application starts with all its traffic going through that interface.
-- **Route a running app.** If the application is already open, choose "Shift current session" instead of restarting it. InterMux moves the running copy onto the other interface without closing it.
-- **Watch every connection live.** The GUI shows each connection as a lane with its download and upload speed, a two-minute graph, whether it is routing, idle or saturated, and the apps riding on it.
-- **See the status.** The GUI and `intermux status` show every binding and every routed running app, with the traffic, DNS and bandwidth limit of each interface namespace.
-- **Tune each connection.** Choose its DNS servers, cap its bandwidth, move an app to another connection, restart it, or remove the namespace with everything in it.
+- **Bind an application to an interface.** Pick an interface and an application in the New binding form, then start it. The application starts with all its traffic going through that interface.
+- **Route a running app.** If the application is already open, choose "Shift current session" in the prompt instead of restarting it. InterMux moves the running copy onto the chosen interface without closing it.
+- **See every connection and app.** The Bindings table has one row per interface, with the apps routed through it listed under it. Each row shows its status, PID, download and upload speed, a graph of the last minute, its speed limit, DNS and public IP.
+- **See the status.** The Bindings table and `intermux status` show every binding and every routed running app. `intermux status` also shows the DNS, bandwidth limit and traffic of each interface namespace.
+- **Tune each connection.** For an interface, set its DNS servers, set a speed limit, or remove its namespace with everything in it. For an app, restart it, move it to another interface, or stop it.
 - **Verify the exit IP.** InterMux asks a public IP service which address it sees from inside a given interface.
 - **Clean up automatically.** When the last process of a bound application exits, a background watcher removes the plumbing for that binding.
 
 ## Features
 
 - Per-application binding through one network namespace per interface (veth pair, NAT, policy routing).
-- VPN tunnels (`tun`, `tap`, `wg`, `ppp`) can be bound: one app can use the VPN while the rest of the system does not.
-- DNS inside each namespace is kept on that namespace's own resolvers, even if the host rewrites `/etc/resolv.conf`. The resolvers are picked automatically, from a preset (Cloudflare, Google, Quad9), or typed in, and can be changed while apps run.
+- VPN tunnels (`tun`, `tap`, `wg`, `ppp`) can be bound: one app can use the VPN while the rest of the system does not. VPN connections can be connected, disconnected and imported from the window (NetworkManager).
+- DNS inside each namespace is kept on that namespace's own resolvers, even if the host rewrites `/etc/resolv.conf`. The resolvers are picked automatically, from a preset (Cloudflare, Google, Quad9), or typed in with Custom… (up to four IPv4 servers). They can be changed while apps run.
 - Bandwidth limits per interface namespace (download and upload, Mbit/s) with `tc`.
-- Live traffic monitoring, read from the kernel's per-interface counters without root: per connection, per interface namespace, and in total.
+- Live traffic rates, read from the kernel's interface counters without root: per interface, and per namespace for the apps InterMux started on it. Shifted apps are counted in their interface's figure.
 - Routing of an already running application through a cgroup v2 group and nftables packet marks, without restarting it.
 - Desktop application list read from `.desktop` entries (system, user, Flatpak and Snap export directories), plus free-form names or paths.
 - Special handling for Firefox and for the Chromium family (Chromium, Chrome, Brave, Vivaldi, Edge, Opera) to open a separate profile or close and reopen the browser.
-- GUI with a live network view, cards for routed apps (Verify IP, Restart, Stop, log, move, force quit), a per-connection Settings menu, and a queue that applies many apps with one password prompt. Recently routed apps are remembered with their DNS.
+- GUI with a New binding form, a queue that starts many apps with one password prompt, and a Bindings table that shows each interface with its apps, their traffic and their limits. Its buttons follow the selection. Recently routed apps are remembered with their DNS.
 - Full command line for scripting (`bind`, `status`, `stop`, `kill`, `restart`, `move`, `verify`, `dns`, `limit`, `remove`, `reconnect`, `adopt`, `release`, `teardown-idle`, `reset`, `interfaces`, `apps`, `check`, `report`).
 - Dependency check (`intermux check`) with a package-manager-specific install hint for each missing tool.
 - Bug report zip written to your own disk; nothing is uploaded automatically.
@@ -154,20 +154,22 @@ The script stops the watcher, resets all bindings and stops the running bound ap
 
 Start InterMux from your application menu, or run `intermux` in a terminal (no command opens the GUI). Do not run it as root.
 
+The window has three sections: **New binding**, **Queue** and **Bindings**. Drag the gaps between them to resize them.
+
 | Element | What it does |
 |---------|--------------|
-| **Connections** | The main view. One group per connection (Ethernet, Wi-Fi, tethering, VPN) with the apps routed through it. Each app has Restart, Stop and a ••• menu (verify public IP, open log, move to another connection, force quit); right-click works too. |
-| **+ Add app** | On a connection: picks it in the form and opens the application picker. |
-| **DNS / Speed limit** | On a connection that has routed apps: change its DNS servers or cap its download and upload speed. Its ••• menu also re-adds routes or stops all its apps and removes it. |
-| **+ Add VPN** | Connect, disconnect or import (WireGuard `.conf`, OpenVPN `.ovpn`) VPN connections through NetworkManager. A VPN connected here only carries the apps you route through it; the rest of the system keeps its normal route. |
-| **Live traffic** | Download and upload graphs per connection, and how much goes through InterMux. Drag the gap above it to make it bigger or smaller; the gap between the left side and the form resizes too. |
-| **Route an app** | Choose the connection and the application (from the picker, by name or path, or a recent one). "DNS, speed limit, profile" opens the options. **Add to queue**, then **Assign** applies the whole queue with one password prompt. |
-| **Release** | On a routed (adopted) app, stops routing it. |
-| **Teardown idle** | Removes the plumbing of bindings that have no running application. |
-| **Reset everything** | Removes everything InterMux created. It asks whether to also stop the applications inside InterMux namespaces. |
+| **New binding** | Choose the **Interface**, then the **Application**: type a name or path, pick a recent one, or use **Choose…** to pick from the installed applications. **DNS** offers Automatic, Cloudflare, Google, Quad9 and **Custom…**, which lets you type up to four IPv4 servers. **Speed limit** sets the download and upload speed in Mbit/s. **Add to queue** puts the application in the queue. |
+| **Queue** | The applications waiting to start, with their interface, DNS, speed limit and what to do if the application is already running. **Start all** starts the whole queue and asks for your password once. **Remove** and **Clear** change the list. |
+| **Bindings** | One row per interface, with the apps routed through it listed under it. Columns: Status, PID, Download, Upload, a "Last minute" graph, Speed limit, DNS and Public IP. |
+| **Buttons under Bindings** | They follow the selected row. For an app: **Check public IP**, **Restart**, **Stop**, **Open log**, **Move to…** and **Force quit**. For a shifted app: **Release**. For an interface: **DNS servers…**, **Speed limit…** and **Remove namespace…**, and **Check public IP** while one of its apps runs. Right-click a row for the same actions. |
+| **VPN connections…** | Connect or disconnect NetworkManager VPN connections, or import a WireGuard (`.conf`) or OpenVPN (`.ovpn`) file. A VPN connected here only carries the apps you route through it; the rest of the system keeps its normal route. |
+| **Refresh** | Reads the state again now. |
 | **Report issue** | Opens the bug report dialog (see [Troubleshooting](#troubleshooting)). |
+| **Re-add routes** | Re-adds the routes of interfaces that are back, as `intermux reconnect` does. |
+| **Remove stopped** | Removes the plumbing of bindings that have no running application. |
+| **Reset everything** | Removes everything InterMux created. It asks whether to also close the applications running through InterMux. |
 
-When you press Assign for an application that is already running, InterMux asks what to do: close and reopen it, open a separate profile, or "Shift current session". Shift routes the running copy through the interface without restarting it. The option "Open a separate profile if the app is already running" in the form sets that choice in advance.
+Tick "Open a separate profile if the app is already running" in the New binding form to start a second copy with its own profile instead of being asked. Otherwise, when you press **Start all** for an application that is already running, InterMux asks what to do: close and reopen it, open a separate profile, **Shift current session**, or cancel. Shift routes the running copy through the interface without restarting it.
 
 ### Command line
 
@@ -199,19 +201,19 @@ Run `intermux --help` or `intermux <command> --help` for details. The CLI refuse
 
 ### The password prompt
 
-Network changes need root. InterMux asks polkit (`pkexec`) to run its helper, and polkit shows a password dialog. The prompt appears once per Assign batch, not once per application. The policy requires administrator authentication each time; the authorization is not cached.
+Network changes need root. InterMux asks polkit (`pkexec`) to run its helper, and polkit shows a password dialog. The prompt appears once per **Start all** batch, not once per application. The policy requires administrator authentication each time; the authorization is not cached.
 
 ## How it works
 
 1. **Namespace per interface.** Each bound interface gets its own network namespace (`ns_<8 hex>`) connected to the host by a veth pair on a `10.200.N.0/24` subnet.
-2. **NAT and policy routing.** The host forwards and masquerades the namespace's traffic out of the chosen interface. A dedicated routing table and `ip rule` entry send that subnet's traffic through that interface.
+2. **NAT and policy routing.** The host forwards and masquerades the namespace's traffic out of the chosen interface. A dedicated routing table and `ip rule` entry send that subnet's traffic through that interface. When firewalld is running, the host end of the namespace's link is also added to its trusted zone while the namespace exists (runtime only).
 3. **DNS in each namespace.** Each namespace has its own `resolv.conf`: the servers you chose, or by default the interface's gateway first, then public resolvers. IPv4 DNS sent to any other address is also redirected to the namespace's resolvers, so a host that rewrites `/etc/resolv.conf` does not break it.
 4. **Root helper through polkit.** The GUI and CLI send one JSON request to `intermux helper`, started with `pkexec`. The helper makes the network changes and starts the application as you with `runuser`.
 5. **Watcher.** `intermux-watch.service` runs as root under systemd. It removes bindings whose namespace has no processes left and re-adds routes that the kernel dropped (for example after a link flap).
 6. **Bandwidth limits.** A token bucket filter (`tc qdisc ... tbf`) shapes the host end of the veth pair for download and the namespace end for upload, so a limit covers every app on that interface together.
 7. **VPN tunnels.** A tunnel such as WireGuard has no gateway, so the namespace's default route goes straight into it (`dev wg0`). The unreachable fallback keeps the app offline, rather than on the normal route, while the tunnel is down.
-8. **Live traffic.** The GUI reads `/sys/class/net/*/statistics` once a second, as your user. A namespace's traffic is read from the host end of its veth pair, which everything it sends or receives passes through.
-9. **Routing a running app.** InterMux moves the application's processes into a cgroup v2 group. An nftables rule marks packets from that cgroup, a `fwmark` policy rule sends marked packets to a per-interface routing table, and they are masqueraded on that interface. IPv6 for the group is blackholed so it cannot leak around the chosen interface.
+8. **Traffic counters.** The GUI reads `/sys/class/net/*/statistics` once a second, as your user. A namespace's traffic is read from the host end of its veth pair, which everything it sends or receives passes through.
+9. **Routing a running app.** InterMux moves the application's processes into a cgroup v2 group. An nftables rule marks packets from that cgroup, a `fwmark` policy rule sends marked packets to a per-interface routing table, and they are masqueraded on that interface. IPv6 for the group is rejected, so it cannot leak around the chosen interface and apps fall back to IPv4. DNS (port 53) is not marked, so name lookups use the normal route.
 
 State is kept in `/var/lib/intermux/state.json`.
 
@@ -231,9 +233,9 @@ The full policy, including how to report a vulnerability, is in [SECURITY.md](SE
 
 - **Flatpak apps cannot be bound.** They run in their own sandbox; InterMux marks them as not bindable.
 - **Snap and Flatpak Firefox.** Opening a separate Firefox profile uses a profile directory that a Snap- or Flatpak-confined Firefox may not be able to read.
-- **Routing a running app drops existing TCP connections.** The application keeps running and reconnects on its own.
-- **DNS in a routed running app.** DNS lookups from an app routed with "Shift current session" may still use the default route instead of the chosen interface.
-- **Traffic is per interface namespace.** All apps bound to one interface share one namespace, so their traffic, DNS and bandwidth limit are shared too; the cards say "shared by N". Traffic of an adopted app is counted on its connection only.
+- **Connections opened before a shift keep their old route.** "Shift current session" applies to connections the app opens afterwards; ones it already had open stay on the old route until they reconnect. Reload a page or reopen a tab to move it.
+- **DNS in a routed running app.** Name lookups of an app routed with "Shift current session" use the system's normal route, not the chosen interface, so resolvers that only another link reaches keep working. The app's other traffic uses the chosen interface.
+- **Traffic is per interface namespace.** All apps bound to one interface share one namespace, so their DNS and bandwidth limit are shared too, and the speed on an app row is the namespace's speed. A shifted app has no counter of its own; its traffic is part of its interface's speed.
 - **Moving an app restarts it.** A namespace's routing belongs to its interface, so InterMux moves a bound app by starting it again on the new connection. To move an app without restarting it, use "Shift current session".
 - **Shared public IP.** Two interfaces can still show the same public IP when they use the same upstream connection.
 - **cgroup v2 is required** to route a running app (InterMux reports `cgroup v2 is required to route a running app` otherwise). Routing a running app also needs `nft`.
@@ -242,7 +244,7 @@ The full policy, including how to report a vulnerability, is in [SECURITY.md](SE
 
 ## Troubleshooting
 
-- **Logs.** Each binding writes a log under `~/.local/state/intermux/logs`. The GUI "Log" button opens it.
+- **Logs.** Each binding writes a log under `~/.local/state/intermux/logs`. The **Open log** button opens it.
 - **Bug report.** Use the **Report issue** button in the GUI, or run `intermux report`. This writes a zip to `~/intermux-reports` (change with `--out DIR`). Nothing is uploaded; you attach the zip yourself. `intermux report --web` opens the reporting portal.
 - **Debug output.** Run the CLI with `INTERMUX_DEBUG=1`, for example `INTERMUX_DEBUG=1 intermux status`, to send debug logging to stderr.
 - **Missing tools.** Run `intermux check`. The GUI also shows a banner when a required tool is missing.
@@ -266,7 +268,7 @@ intermux/
   helper/      protocol, root helper server, unprivileged client
   system/      namespaces, firewall, routing, running-app adoption, deps, safe file operations
   dnsconf.py   DNS presets and validation
-  ui/          Tk GUI (app, network view, graphs, dialogs, history, picker, theme, worker, report dialog)
+  ui/          Tk GUI (main window, dialogs, graphs, picker, history, VPN and report dialogs, theme, worker)
 get/           one-line installers (install.sh for Linux, install.ps1 for Windows)
 packaging/
   linux/       polkit policy, desktop entry, icon, metainfo, systemd unit and preset
@@ -289,6 +291,10 @@ python3 -m unittest discover -s tests -t . -v
 The namespace integration test changes networking on the machine it runs on, so it needs root and is skipped by default. Run it only in a virtual machine or other disposable system; see CONTRIBUTING.md for the command.
 
 To report a security problem, follow [SECURITY.md](SECURITY.md) and do not open a public issue.
+
+## Acknowledgements
+
+Some features in 2.1.0 were inspired by Exordio's fork, [Exordio/intermux](https://github.com/Exordio/intermux).
 
 ## License
 

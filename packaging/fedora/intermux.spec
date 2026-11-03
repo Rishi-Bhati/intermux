@@ -13,7 +13,7 @@
 # bundled-runtime packages.
 
 Name:           intermux
-Version:        2.0.1
+Version:        2.1.0
 Release:        1%{?dist}
 Summary:        Bind individual applications to specific network interfaces
 License:        MIT
@@ -106,6 +106,8 @@ appstream-util validate-relax --nonet \
 %{_presetdir}/90-intermux.preset
 
 %changelog
+* Tue Nov 03 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.1.0-1
+- 2.1.0: new main window with tables and inline speed graphs; DNS per interface with custom servers; speed limits; VPN connections from the app; shifted apps keep DNS, reject IPv6 at once and accept replies under strict rp_filter; firewalld trusts each namespace link
 * Tue Oct 13 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.0.1-1
 - 2.0.1: keep scanning Firefox profile roots past a symlinked one; security reports go to the Reportary portal
 - 2.0.0: initial packaging (starting point, untested)

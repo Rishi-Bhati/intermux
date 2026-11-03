@@ -1,5 +1,53 @@
 # InterMux Release Notes
 
+## v2.1.0 — New window, DNS and speed limits
+
+InterMux 2.1 has a new main window. It lists every interface and the apps routed through it in one table,
+and it adds DNS and speed limits for each interface, and VPN connections, from the app itself.
+
+### What's new
+
+* **A new main window.** The window has three parts: New binding (where you pick the interface, the app,
+  DNS and speed limits), Queue (the apps waiting to start) and Bindings (one row per interface, with the
+  apps routed through it underneath). Drag the gaps between the parts to resize them.
+* **Live numbers in the table.** Each row shows its status, process IDs, download and upload speed, a small
+  graph of the last minute, its speed limit, DNS and public IP.
+* **Buttons follow your selection.** Select an app and you get Check public IP, Restart, Stop, Open log,
+  Move to… and Force quit. Select an interface and you get DNS servers…, Speed limit… and Remove
+  namespace…. Right-click offers the same actions.
+* **DNS for each interface.** Choose Automatic, Cloudflare, Google or Quad9, or Custom… to type up to four
+  IPv4 servers. You can change the DNS of an interface later, and running apps pick up the change.
+* **Speed limits.** Cap the download and upload speed of an interface in Mbit/s, when you add an app to the
+  queue, or later from the interface's Speed limit… button.
+* **VPN connections from the app.** The VPN connections… button connects, disconnects and imports WireGuard
+  (.conf) and OpenVPN (.ovpn) connections. A VPN connected this way only carries the apps you route through
+  it.
+* **Restart, move and remove.** Restart an app in its interface with the same profile, move it to another
+  interface (it restarts there), or remove an interface's namespace with everything in it.
+* **Recent apps.** The Application field remembers the last 20 apps you routed, with their interface and DNS.
+
+### Fixes
+
+* **Shifted apps keep their name lookups.** Moving a running app with "Shift current session" no longer
+  breaks name resolution. Lookups use the normal route, so resolvers that only another link can reach keep
+  working.
+* **Shifted apps fall back to IPv4 at once.** IPv6 connections of a shifted app fail straight away instead of
+  hanging, so apps switch to IPv4 without delay.
+* **Replies get through.** Replies to a shifted app are no longer dropped on systems with strict
+  reverse-path filtering.
+* **firewalld no longer blocks apps.** While a namespace exists, InterMux adds its link to firewalld's
+  trusted zone, so apps bound to a WireGuard tunnel or another link outside firewalld's default zone are not
+  blocked.
+
+### Install or update
+
+Run the one-line installer shown in the [README](README.md#quick-install) to install or update:
+`curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh`
+
+Several features in this release were inspired by Exordio's fork, [Exordio/intermux](https://github.com/Exordio/intermux).
+
+---
+
 ## v2.0.1 — Linux fixes
 
 * **Firefox profiles.** A symlinked Firefox profile root (for example one managed by a dotfile tool) no longer stops InterMux from reading the other roots, so Snap or Flatpak Firefox profiles are still found.
