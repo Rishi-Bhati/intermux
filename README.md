@@ -75,7 +75,7 @@ Names are taken from the files in `packaging/` and from the hints printed by `in
 
 | Distribution | Runtime packages | Optional | Extra for building from source |
 |--------------|------------------|----------|--------------------------------|
-| Arch | `iproute2 iptables polkit util-linux procps-ng xdg-utils` | `nftables curl` | `tk` (and `pyinstaller` from the AUR for the PKGBUILD) |
+| Arch | `iproute2 iptables polkit util-linux procps-ng xdg-utils tk mpdecimal hicolor-icon-theme` | `nftables curl` | `pyinstaller` from the AUR for the PKGBUILD |
 | Debian / Ubuntu | `iproute2 iptables pkexec` (or `policykit-1`) `util-linux procps xdg-utils python3-tk` | `nftables curl` | `python3-tk python3-venv` |
 | Fedora | `iproute iptables-nft polkit util-linux procps-ng xdg-utils hicolor-icon-theme` | `nftables curl` | `python3-tkinter` |
 | openSUSE | `iproute2 iptables procps util-linux polkit xdg-utils` | `nftables curl` | `python3-tk` |

@@ -8,9 +8,12 @@ pkgdesc="Bind individual applications to specific network interfaces"
 arch=('x86_64' 'aarch64')
 url="https://github.com/Rishi-Bhati/intermux"
 license=('MIT')
-depends=('iproute2' 'iptables' 'polkit' 'util-linux' 'procps-ng' 'xdg-utils' 'glibc')
-# tk: PyInstaller needs the Tcl/Tk libraries (tkinter) at build time to bundle the GUI
-makedepends=('pyinstaller' 'tk')
+# tk (with the X11 libraries it pulls in) and mpdecimal: the PyInstaller bundle carries Python and
+# Tcl/Tk but links them against these system libraries. hicolor-icon-theme owns the icon directories.
+depends=('iproute2' 'iptables' 'polkit' 'util-linux' 'procps-ng' 'xdg-utils' 'glibc' 'tk' 'mpdecimal'
+         'hicolor-icon-theme')
+# pyinstaller is in the AUR, not the official repositories
+makedepends=('pyinstaller')
 optdepends=('nftables: route already-running apps'
             'curl: public IP check')
 install=intermux.install
