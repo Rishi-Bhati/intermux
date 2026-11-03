@@ -1,6 +1,10 @@
 intermux (2.1.0) unstable; urgency=medium
 
-  * 2.1.0: new main window with tables and inline speed graphs; DNS per interface with custom servers; speed limits; VPN connections from the app; shifted apps keep DNS, reject IPv6 at once and accept replies under strict rp_filter; firewalld trusts each namespace link.
+  * 2.1.0: new main window with tables and inline speed graphs.
+  * DNS per interface with custom servers; speed limits; VPN connections from
+    the app.
+  * Shifted apps keep their DNS, reject IPv6 at once and accept replies under
+    strict rp_filter; firewalld trusts each namespace link.
 
  -- Rishi-Bhati <bhatirishi5@gmail.com>  Tue, 03 Nov 2026 00:00:00 +0000
 
