@@ -13,6 +13,7 @@ from intermux.system import commands
 log = logging.getLogger("intermux.system.adopt")
 
 CGROUP_ROOT = Path("/sys/fs/cgroup")
+SYSCTL_CONF_DIR = Path("/proc/sys/net/ipv4/conf")
 GROUP_PARENT = "intermux"
 SLOT_MIN, SLOT_MAX = 1, 200
 MARK_BASE = 0x100
@@ -50,6 +51,21 @@ def nft_table_name(slot: int) -> str:
     return f"intermux_adopt{slot}"
 
 
+def kernel_slots() -> Set[int]:
+    """Slots whose nft table is already loaded, whatever the state file says (it may have been lost)."""
+    slots: Set[int] = set()
+    try:
+        names = list_nft_tables()
+    except Exception as exc:  # noqa: BLE001 - best effort; nft may be missing or not permitted
+        log.debug("cannot list nft tables: %s", exc)
+        return slots
+    for name in names:
+        tail = name[len("intermux_adopt"):]
+        if tail.isdigit():
+            slots.add(int(tail))
+    return slots
+
+
 def pick_slot(used: Iterable[int]) -> int:
     """Return the lowest free slot in SLOT_MIN..SLOT_MAX."""
     taken = set(used)
@@ -59,21 +75,46 @@ def pick_slot(used: Iterable[int]) -> int:
     raise InterMuxError("no free adoption slot", code="no_slot")
 
 
-def nft_script(slot: int, group_rel: str, iface: str) -> str:
-    """Return the nft script that marks the group's packets and masquerades them on iface."""
+_GROUP_PATH_RE = re.compile(r"^intermux/adopt-[0-9a-f]{8,32}$")
+
+
+def nft_script(slot: int, group_path: str, iface: str) -> str:
+    """Return the nft script that marks the group's packets and masquerades them on iface.
+
+    DNS (port 53) is left unmarked: the host's resolvers (Tailscale's 100.100.100.100, a LAN router, an
+    IPv6 server) are often reachable only through their own link, so routing queries out of iface makes
+    every lookup fail. Other IPv6 is rejected rather than blackholed so connects fail at once and apps fall
+    back to IPv4 instead of hanging; the rejects sit in their own chain so the IPv6 match stays explicit
+    when the ruleset is listed and loaded again. Only the original direction of a connection is marked: a
+    reply to a connection someone else opened must leave the way the request came in. The mark is copied to
+    the connection and restored on replies, so a strict rp_filter checks them against the slot's table.
+    The script first deletes any table of the same name, so loading it twice gives the same ruleset."""
     if not isinstance(iface, str) or not _IFACE_RE.match(iface):
         raise ValidationError(f"unsafe interface name: {iface!r}")
-    parts = [p for p in group_rel.split("/") if p]
-    if not parts or any(not re.match(r"^[A-Za-z0-9_.-]+$", p) for p in parts):
-        raise ValidationError(f"unsafe cgroup path: {group_rel!r}")
-    path = "/".join(parts)
+    if not isinstance(group_path, str) or not _GROUP_PATH_RE.match(group_path):
+        raise ValidationError(f"unsafe cgroup path: {group_path!r}")
+    parts = group_path.split("/")
     mark = f"0x{slot_mark(slot):x}"
     name = nft_table_name(slot)
+    member = f"socket cgroupv2 level {len(parts)} \"{group_path}\""
     return (
+        f"add table inet {name}\n"
+        f"delete table inet {name}\n"
         f"table inet {name} {{\n"
+        f"  chain reject_ipv6 {{\n"
+        f"    meta l4proto tcp reject with tcp reset\n"
+        f"    reject with icmpx type admin-prohibited\n"
+        f"  }}\n"
         f"  chain output {{\n"
         f"    type route hook output priority mangle; policy accept;\n"
-        f"    socket cgroupv2 level {len(parts)} \"{path}\" meta mark set {mark}\n"
+        f"    {member} meta l4proto {{ tcp, udp }} th dport 53 return\n"
+        f"    {member} ip6 daddr ::1 return\n"
+        f"    {member} meta nfproto ipv6 jump reject_ipv6\n"
+        f"    {member} ct direction original meta mark set {mark} ct mark set {mark}\n"
+        f"  }}\n"
+        f"  chain prerouting {{\n"
+        f"    type filter hook prerouting priority mangle; policy accept;\n"
+        f"    ct mark {mark} meta mark set {mark}\n"
         f"  }}\n"
         f"  chain postrouting {{\n"
         f"    type nat hook postrouting priority srcnat; policy accept;\n"
@@ -84,16 +125,53 @@ def nft_script(slot: int, group_rel: str, iface: str) -> str:
 
 
 def _group_dir(rel: str) -> Path:
+    # The path also comes back from the state file; never let it point outside InterMux's own groups.
+    if not isinstance(rel, str) or not _GROUP_PATH_RE.match(rel):
+        raise ValidationError(f"unsafe cgroup path: {rel!r}")
     return Path(CGROUP_ROOT) / rel
 
 
 def read_group_pids(group_rel: str) -> List[int]:
-    """Return pids listed in the group's cgroup.procs; [] if the group is missing."""
+    """Return pids listed in the group's cgroup.procs; [] if the group is gone."""
+    pids = read_group_pids_or_none(group_rel)
+    return pids if pids is not None else []
+
+
+def read_group_pids_or_none(group_rel: str) -> Optional[List[int]]:
+    """Pids in the group; [] when the group no longer exists; None when it exists but cannot be read
+    (callers must then treat the adoption as still alive rather than tear it down)."""
+    procs = _group_dir(group_rel) / "cgroup.procs"
     try:
-        text = (_group_dir(group_rel) / "cgroup.procs").read_text()
-    except OSError:
+        text = procs.read_text()
+    except FileNotFoundError:
         return []
+    except OSError as exc:
+        log.warning("cannot read %s: %s", procs, exc)
+        return None
     return [int(t) for t in text.split() if t.isdigit()]
+
+
+def pid_group(pid: int) -> Optional[str]:
+    """The InterMux adoption group pid belongs to (e.g. "intermux/adopt-0123abcd"), or None."""
+    try:
+        with open(f"/proc/{pid}/cgroup", "r", encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                if line.startswith("0::/"):
+                    path = line[len("0::/"):].strip()
+                    return path if _GROUP_PATH_RE.match(path) else None
+    except OSError:
+        return None
+    return None
+
+
+def forget_marked_connections(slot: int) -> None:
+    """Delete conntrack entries carrying the slot's mark (needs the conntrack tool; skipped without it)."""
+    conntrack = commands.which("conntrack")
+    if not conntrack:
+        return
+    for family in ("ipv4", "ipv6"):
+        commands.run([conntrack, "-D", "-f", family, "--mark", str(slot_mark(slot))],
+                     tolerate=("0 flow entries", "No such file", "not found"))
 
 
 def ensure_group(group_rel: str) -> None:
@@ -147,10 +225,21 @@ def _ip_bin() -> str:
     return commands.ip_bin()
 
 
-def apply_nft(slot: int, group_rel: str, iface: str) -> None:
+NFT_UNSUPPORTED = ("routing a running app needs Linux 5.13 or newer and nftables 0.9.8 or newer, which can "
+                   "match the cgroup v2 path of a socket")
+
+
+def apply_nft(slot: int, group_path: str, iface: str) -> None:
     """Load the marking table for the slot."""
-    script = nft_script(slot, group_rel, iface)
-    commands.run_checked([_nft_bin(), "-f", "-"], input_text=script)
+    script = nft_script(slot, group_path, iface)
+    result = commands.run([_nft_bin(), "-f", "-"], input_text=script)
+    if not result.ok:
+        detail = result.stderr.strip()
+        if "cgroupv2" in detail or "socket" in detail and "not supported" in detail.lower():
+            raise InterMuxError(f"{NFT_UNSUPPORTED} ({detail.splitlines()[0] if detail else 'nft failed'})",
+                                code="nft_unsupported")
+        raise InterMuxError(f"nft could not load the routing rules: {detail or 'unknown error'}",
+                            code="nft_failed")
 
 
 def delete_nft(slot: int) -> None:
@@ -236,11 +325,30 @@ def table_ok(routes: Any, iface: str, gateway: Optional[str]) -> bool:
     for r in routes:
         if not isinstance(r, dict) or r.get("dst") != "default":
             continue
+        metric = r.get("metric")
         if r.get("type") == "unreachable":
-            have_fallback = True
-        elif r.get("dev") == iface and (r.get("gateway") or None) == (gateway or None):
+            # A fallback with a lower metric than the interface route would win the lookup and blackhole the app.
+            if metric in (None, _BLACKHOLE_METRIC):
+                have_fallback = True
+        elif (r.get("dev") == iface and (r.get("gateway") or None) == (gateway or None)
+              and metric in (None, _ROUTE_METRIC)):
             have_iface = True
     return have_iface and have_fallback
+
+
+def enable_src_valid_mark(iface: str) -> bool:
+    """Let rp_filter use the packet mark on iface, so replies restored to the slot's mark pass the reverse
+    path check (strict rp_filter otherwise drops them when the main table's default is another link).
+    Per interface, and re-applied on refresh: the setting is lost when the interface is recreated."""
+    if not isinstance(iface, str) or not _IFACE_RE.match(iface) or iface in (".", ".."):
+        raise ValidationError(f"unsafe interface name: {iface!r}")
+    knob = Path(SYSCTL_CONF_DIR) / iface / "src_valid_mark"
+    try:
+        knob.write_text("1")
+        return knob.read_text().strip() == "1"
+    except OSError as exc:
+        log.warning("cannot enable src_valid_mark on %s: %s", iface, exc)
+        return False
 
 
 def _v6_step(argv: List[str]) -> None:
@@ -248,10 +356,15 @@ def _v6_step(argv: List[str]) -> None:
     commands.run_checked(argv, tolerate=_V6_MISSING)
 
 
-def apply_policy(slot: int, iface: str, gateway: Optional[str]) -> None:
-    """Install the fwmark rules (IPv4, plus an IPv6 blackhole) and the slot's routes. Safe to repeat."""
+def apply_policy(slot: int, iface: str, gateway: Optional[str]) -> List[str]:
+    """Install the fwmark rules (IPv4, plus an IPv6 blackhole) and the slot's routes. Safe to repeat.
+    Returns user-facing warnings."""
     if not isinstance(iface, str) or not _IFACE_RE.match(iface):
         raise ValidationError(f"unsafe interface name: {iface!r}")
+    warnings: List[str] = []
+    if not enable_src_valid_mark(iface):
+        warnings.append(f"could not set src_valid_mark on {iface}; with strict reverse-path filtering, "
+                        "replies to this app may be dropped")
     ip = _ip_bin()
     if not _rule_exists(slot):
         commands.run_checked([ip] + rule_args(slot))
@@ -264,9 +377,19 @@ def apply_policy(slot: int, iface: str, gateway: Optional[str]) -> None:
         v6_rule = _rule_exists(slot, 6)
     except Exception as exc:  # noqa: BLE001 - IPv6 may be disabled
         log.warning("cannot list IPv6 rules: %s", exc)
-        return
+        return warnings
     if not v6_rule:
         _v6_step([ip] + rule_args(slot, 6))
+    return warnings
+
+
+def _ipv6_rules_available() -> bool:
+    """False on hosts where IPv6 policy rules cannot exist (IPv6 disabled), so their absence is not a fault."""
+    try:
+        commands.json_cmd([_ip_bin(), "-6", "-j", "rule", "show"])
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def refresh_policy(slot: int, iface: str, gateway: Optional[str]) -> bool:
@@ -274,7 +397,8 @@ def refresh_policy(slot: int, iface: str, gateway: Optional[str]) -> bool:
     ip = _ip_bin()
     try:
         routes = commands.json_cmd([ip, "-j", "route", "show", "table", str(slot_table(slot))])
-        healthy = table_ok(routes, iface, gateway) and _rule_exists(slot) and _rule_exists(slot, 6)
+        healthy = (table_ok(routes, iface, gateway) and _rule_exists(slot)
+                   and (_rule_exists(slot, 6) or not _ipv6_rules_available()))
     except Exception as exc:  # noqa: BLE001
         log.warning("cannot inspect adoption table %d: %s", slot_table(slot), exc)
         return False
@@ -395,3 +519,7 @@ def sweep_leftovers() -> None:
                 log.debug("cannot remove %s: %s", d, exc)
     except OSError as exc:
         log.debug("cannot scan cgroups: %s", exc)
+    try:
+        (Path(CGROUP_ROOT) / GROUP_PARENT).rmdir()   # only succeeds once no adoption group is left
+    except OSError:
+        pass

@@ -15,6 +15,7 @@ import logging
 import os
 import signal
 import threading
+import time
 from typing import Any, Callable, Dict, Iterable, Optional, Set
 
 from intermux import config, engine, state
@@ -57,14 +58,19 @@ def needs_teardown(st: state.State, live: Set[int], ns_inode: Callable[[str], Op
             return True
     if any(iface not in bound_ifaces for iface in st.subnets):
         return True
-    return any(not list(group_pids(a.group)) for a in st.adoptions)
+    # None means the group could not be read: treat it as still in use rather than release a live app.
+    return any(_empty_group(group_pids(a.group)) for a in st.adoptions)
+
+
+def _empty_group(pids: Optional[Iterable[int]]) -> bool:
+    return pids is not None and not list(pids)
 
 
 def _default_check() -> bool:
     st = state.load_state(config.STATE_FILE)
     if not (st.bindings or st.subnets or st.adoptions):
         return False
-    return needs_teardown(st, live_netns_inodes(), procs.netns_inode, adopt_sys.read_group_pids)
+    return needs_teardown(st, live_netns_inodes(), procs.netns_inode, adopt_sys.read_group_pids_or_none)
 
 
 def _has_routes() -> bool:
@@ -87,6 +93,19 @@ def refresh_adoption_routes() -> Dict[str, Any]:
     return {"refreshed_adoptions": slots} if slots else {}
 
 
+FULL_REFRESH_EVERY = 60.0     # seconds between re-checks of NAT, forwarding and firewalld (costlier)
+_last_full = [float("-inf")]
+
+
+def _refresh_routes() -> Dict[str, Any]:
+    """Routes every pass; NAT, forwarding and the firewalld entry once a minute (a firewall reload drops them)."""
+    now = time.monotonic()
+    full = now - _last_full[0] >= FULL_REFRESH_EVERY
+    if full:
+        _last_full[0] = now
+    return engine.refresh_routes(full=full)
+
+
 def run_once(teardown: Optional[Callable[[], Dict[str, Any]]] = None,
              refresh: Optional[Callable[[], Dict[str, Any]]] = None, *,
              check: Optional[Callable[[], bool]] = None,
@@ -103,7 +122,7 @@ def run_once(teardown: Optional[Callable[[], Dict[str, Any]]] = None,
     if not idle and not want_refresh:
         return {}
     teardown = teardown or engine.teardown_idle
-    refresh = refresh or engine.refresh_routes
+    refresh = refresh or _refresh_routes
     refresh_adoptions = refresh_adoptions or refresh_adoption_routes
     report: Dict[str, Any] = {}
     with state.state_lock():

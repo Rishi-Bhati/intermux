@@ -40,8 +40,34 @@ class ValidRequestTests(unittest.TestCase):
                 "app": "/usr/bin/firefox",
                 "running_policy": "ask",
                 "env": {},
+                "dns": "keep",
+                "limit": None,
             },
         )
+
+    def test_bind_dns_choices(self):
+        for dns in ("keep", "auto", ["1.1.1.1", "9.9.9.9"]):
+            _, params = validate_request(req("bind", {"iface": "eth0", "app": "/usr/bin/x", "dns": dns}))
+            self.assertEqual(params["dns"], dns)
+        for bad in ("cloudflare", [], ["127.0.0.53"], ["1.1.1.1"] * 5, ["::1"], [1]):
+            with self.subTest(dns=bad), self.assertRaises(ValidationError):
+                validate_request(req("bind", {"iface": "eth0", "app": "/usr/bin/x", "dns": bad}))
+
+    def test_set_dns_rejects_keep(self):
+        self.assertEqual(validate_request(req("set_dns", {"iface": "eth0", "dns": "auto"}))[1]["dns"], "auto")
+        with self.assertRaises(ValidationError):
+            validate_request(req("set_dns", {"iface": "eth0", "dns": "keep"}))
+        with self.assertRaises(ValidationError):
+            validate_request(req("set_dns", {"iface": "eth0"}))
+
+    def test_set_limit_bounds(self):
+        self.assertEqual(validate_request(req("set_limit", {"iface": "eth0"}))[1],
+                         {"iface": "eth0", "down": None, "up": None})
+        self.assertEqual(validate_request(req("set_limit", {"iface": "eth0", "down": 20, "up": 2.5}))[1],
+                         {"iface": "eth0", "down": 20.0, "up": 2.5})
+        for bad in (-1, 0, 1e9, "20", True, float("nan")):
+            with self.subTest(limit=bad), self.assertRaises(ValidationError):
+                validate_request(req("set_limit", {"iface": "eth0", "down": bad}))
 
     def test_bind_all_params(self):
         env = {"DISPLAY": ":0", "WAYLAND_DISPLAY": "wayland-0", "LANG": "en_US.UTF-8"}
@@ -110,6 +136,12 @@ class ValidRequestTests(unittest.TestCase):
             "adopt": {"iface": "eth0", "app": "/usr/bin/x"},
             "release_adoption": {"id": "0123456789abcdef"},
             "batch": {"ops": [{"op": "bind", "iface": "eth0", "app": "/usr/bin/x"}]},
+            "set_dns": {"iface": "eth0", "dns": ["1.1.1.1"]},
+            "set_limit": {"iface": "eth0", "down": 10},
+            "restart_app": {"iface": "eth0", "app": "/usr/bin/x"},
+            "remove_namespace": {"iface": "eth0"},
+            "reconnect": {},
+            "move_app": {"iface": "wlan0", "app": "/usr/bin/x", "to": "eth0"},
         }
         self.assertEqual(set(examples), set(ACTIONS))
         for action, params in examples.items():

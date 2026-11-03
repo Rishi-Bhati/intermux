@@ -6,12 +6,14 @@ import copy
 import re
 from typing import Any, Callable, Dict, Tuple
 
-from intermux import config
+from intermux import config, dnsconf
 from intermux.errors import ValidationError
+from intermux.system import shaping
 
 PROTOCOL_VERSION = 1
 ACTIONS = ("status", "bind", "stop_app", "kill_app", "teardown_idle", "reset", "verify",
-           "adopt", "release_adoption", "batch")
+           "adopt", "release_adoption", "batch", "set_dns", "set_limit", "restart_app", "remove_namespace",
+           "reconnect", "move_app")
 RUNNING_POLICIES = ("ask", "close", "separate")
 IFACE_RE = r"^[A-Za-z0-9_.:@-]{1,15}$"
 
@@ -29,7 +31,14 @@ def _is_int(value: Any) -> bool:
 
 
 def _has_control_chars(value: str) -> bool:
-    return any(ch in value for ch in _FORBIDDEN_CHARS)
+    """True for strings the OS cannot take: NUL, CR, LF, or text that is not valid UTF-8 (lone surrogates)."""
+    if any(ch in value for ch in _FORBIDDEN_CHARS):
+        return True
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return True
+    return False
 
 
 def validate_env(env: Any) -> Dict[str, str]:
@@ -46,17 +55,26 @@ def validate_env(env: Any) -> Dict[str, str]:
     return clean
 
 
+def validate_iface_name(value: Any) -> str:
+    """The interface-name rule shared by the helper and the CLI. Raises ValidationError."""
+    return _v_iface("iface", value)
+
+
 def _v_iface(name: str, value: Any) -> str:
     if not isinstance(value, str) or value in (".", "..") or not _IFACE_PATTERN.fullmatch(value):
-        raise ValidationError(f"invalid interface name for {name}")
+        raise ValidationError(f"invalid interface name for {name} "
+                              "(1 to 15 characters: letters, digits and _ . : @ -)")
     return value
 
 
 def _v_app(name: str, value: Any) -> str:
     if not isinstance(value, str) or not value.startswith("/") or value.endswith("/"):
         raise ValidationError(f"{name} must be an absolute path to a file")
-    if len(value) > _MAX_PATH or _has_control_chars(value):
+    if _has_control_chars(value) or len(value.encode("utf-8")) > _MAX_PATH:
         raise ValidationError(f"invalid {name}: too long or contains control characters")
+    if "=" in value:
+        # The app is started through `env -i NAME=VALUE... app`, where env would read it as a variable.
+        raise ValidationError(f"{name} cannot contain '='; rename the file or use a link to it")
     return value
 
 
@@ -65,7 +83,7 @@ _ADOPT_ID_PATTERN = re.compile(r"^[0-9a-f]{8,32}$")
 
 def _v_adopt_id(name: str, value: Any) -> str:
     if not isinstance(value, str) or not _ADOPT_ID_PATTERN.fullmatch(value):
-        raise ValidationError(f"invalid {name}")
+        raise ValidationError(f"invalid {name} (8 to 32 lowercase hexadecimal characters)")
     return value
 
 
@@ -85,6 +103,39 @@ def _v_env(_name: str, value: Any) -> Dict[str, str]:
     return validate_env(value)
 
 
+def _v_dns(name: str, value: Any, allow_keep: bool = True) -> Any:
+    """"keep" (bind only), "auto", or a list of 1-4 upstream IPv4 resolvers."""
+    if isinstance(value, str):
+        if value == dnsconf.AUTO or (allow_keep and value == dnsconf.KEEP):
+            return value
+        choices = '"auto", "keep"' if allow_keep else '"auto"'
+        raise ValidationError(f"{name} must be {choices} or a list of servers")
+    try:
+        return dnsconf.check_servers(value)
+    except ValueError as exc:
+        raise ValidationError(f"{name}: {exc}") from None
+
+
+def _v_dns_set(name: str, value: Any) -> Any:
+    return _v_dns(name, value, allow_keep=False)
+
+
+def _v_mbit(name: str, value: Any) -> Any:
+    try:
+        return shaping.check_mbit(value)
+    except ValueError as exc:
+        raise ValidationError(f"{name}: {exc}") from None
+
+
+def _v_limit(name: str, value: Any) -> Any:
+    """None (keep the interface's limit) or {"down": Mbit/s or None, "up": Mbit/s or None}."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) - {"down", "up"}:
+        raise ValidationError(f"{name} must be an object with down and up")
+    return {key: _v_mbit(f"{name}.{key}", value.get(key)) for key in ("down", "up")}
+
+
 # action -> {param name: (validator, default)}; _REQUIRED marks a mandatory parameter.
 _PARAM_SPECS: Dict[str, Dict[str, Tuple[Callable[[str, Any], Any], Any]]] = {
     "status": {},
@@ -93,6 +144,8 @@ _PARAM_SPECS: Dict[str, Dict[str, Tuple[Callable[[str, Any], Any], Any]]] = {
         "app": (_v_app, _REQUIRED),
         "running_policy": (_v_policy, "ask"),
         "env": (_v_env, {}),
+        "dns": (_v_dns, dnsconf.KEEP),
+        "limit": (_v_limit, None),
     },
     "stop_app": {
         "iface": (_v_iface, _REQUIRED),
@@ -116,6 +169,30 @@ _PARAM_SPECS: Dict[str, Dict[str, Tuple[Callable[[str, Any], Any], Any]]] = {
     "release_adoption": {
         "id": (_v_adopt_id, _REQUIRED),
     },
+    "set_dns": {
+        "iface": (_v_iface, _REQUIRED),
+        "dns": (_v_dns_set, _REQUIRED),
+    },
+    "set_limit": {
+        "iface": (_v_iface, _REQUIRED),
+        "down": (_v_mbit, None),
+        "up": (_v_mbit, None),
+    },
+    "restart_app": {
+        "iface": (_v_iface, _REQUIRED),
+        "app": (_v_app, _REQUIRED),
+        "env": (_v_env, {}),
+    },
+    "remove_namespace": {
+        "iface": (_v_iface, _REQUIRED),
+    },
+    "reconnect": {},
+    "move_app": {
+        "iface": (_v_iface, _REQUIRED),
+        "app": (_v_app, _REQUIRED),
+        "to": (_v_iface, _REQUIRED),
+        "env": (_v_env, {}),
+    },
 }
 
 
@@ -135,8 +212,11 @@ def _validate_spec(specs: Dict[str, Tuple[Callable[[str, Any], Any], Any]], labe
     return clean
 
 
+BATCH_OPS = ("bind", "adopt", "set_limit")
+
+
 def _v_ops(name: str, value: Any) -> list:
-    """Validate the ops of a batch: each op is a bind or adopt with the single action's rules."""
+    """Validate the ops of a batch: each op is a bind, adopt or set_limit with the single action's rules."""
     if not isinstance(value, list) or not 1 <= len(value) <= MAX_BATCH_OPS:
         raise ValidationError(f"{name} must be a list of 1 to {MAX_BATCH_OPS} operations")
     clean = []
@@ -144,7 +224,7 @@ def _v_ops(name: str, value: Any) -> list:
         if not isinstance(op, dict):
             raise ValidationError("each operation must be an object")
         kind = op.get("op")
-        if not isinstance(kind, str) or kind not in ("bind", "adopt"):
+        if not isinstance(kind, str) or kind not in BATCH_OPS:
             raise ValidationError("unknown operation in batch")
         fields = {k: v for k, v in op.items() if k != "op"}
         checked = _validate_spec(_PARAM_SPECS[kind], f"batch {kind}", fields)

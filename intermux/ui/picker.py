@@ -182,7 +182,7 @@ class AppPicker(tk.Toplevel):
         self._query = tk.StringVar(self)
         self._search = ttk.Entry(top, textvariable=self._query)
         self._search.grid(row=0, column=0, sticky="ew")
-        self._placeholder = tk.Label(self._search, text=PLACEHOLDER, background=p["surface_alt"],
+        self._placeholder = tk.Label(self._search, text=PLACEHOLDER, background=p["bg"],
                                      foreground=p["text_muted"], font=theme.font("body"), cursor="xterm")
         self._placeholder.place(x=10, rely=0.5, anchor="w")
         self._placeholder.bind("<Button-1>", lambda _e: self._search.focus_set())

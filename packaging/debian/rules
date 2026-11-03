@@ -1,5 +1,5 @@
 #!/usr/bin/make -f
-# Starting point, untested. Bundles the PyInstaller onedir build into
+# Bundles the PyInstaller onedir build into
 # /usr/lib/intermux, the same layout that install.sh produces.
 
 BUNDLE_DIST := $(CURDIR)/build-dist

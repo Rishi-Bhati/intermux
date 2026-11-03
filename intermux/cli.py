@@ -45,8 +45,43 @@ def build_parser() -> argparse.ArgumentParser:
                        help="open a separate profile if the application is already running")
     group.add_argument("--close-existing", action="store_true",
                        help="close running instances of the application and reopen it")
+    p.add_argument("--dns", metavar="SERVERS",
+                   help="DNS for the interface namespace: auto, a preset (cloudflare, google, quad9) or "
+                        "up to 4 IPv4 servers separated by commas; by default an existing namespace keeps "
+                        "its DNS")
 
-    sub.add_parser("status", help="show bindings")
+    sub.add_parser("status", help="show bindings, DNS, bandwidth limits and traffic")
+
+    p = sub.add_parser("dns", help="change the DNS servers of an interface namespace")
+    p.add_argument("--iface", required=True, metavar="IF", help="interface whose namespace to change")
+    p.add_argument("servers", metavar="SERVERS",
+                   help="auto, a preset (cloudflare, google, quad9) or up to 4 IPv4 servers separated by "
+                        "commas")
+
+    p = sub.add_parser("limit", help="limit the bandwidth of an interface namespace (Mbit/s)",
+                       description="Set the download and upload limits of an interface namespace, in "
+                                   "Mbit/s from 0.064 to 100000. A direction left out has no limit, so "
+                                   "`intermux limit --iface IF` with neither option removes both.")
+    p.add_argument("--iface", required=True, metavar="IF", help="interface whose namespace to limit")
+    p.add_argument("--down", type=float, metavar="MBIT",
+                   help="download limit, 0.064 to 100000 Mbit/s; omit for no limit")
+    p.add_argument("--up", type=float, metavar="MBIT",
+                   help="upload limit, 0.064 to 100000 Mbit/s; omit for no limit")
+
+    p = sub.add_parser("restart", help="restart an application in its namespace with the same options")
+    p.add_argument("--app", required=True, metavar="APP", help="command name or path of the application")
+    p.add_argument("--iface", required=True, metavar="IF", help="network interface it is bound to")
+
+    p = sub.add_parser("remove", help="stop everything in an interface namespace and remove the namespace")
+    p.add_argument("--iface", required=True, metavar="IF", help="interface whose namespace to remove")
+    p.add_argument("--yes", action="store_true", help="do not ask for confirmation")
+
+    p = sub.add_parser("move", help="move a bound application to another interface (it restarts)")
+    p.add_argument("--app", required=True, metavar="APP", help="command name or path of the application")
+    p.add_argument("--iface", required=True, metavar="IF", help="interface it is bound to now")
+    p.add_argument("--to", required=True, metavar="IF", help="interface to move it to")
+
+    sub.add_parser("reconnect", help="re-add the routes of namespaces whose interface is back (e.g. a VPN)")
 
     p = sub.add_parser("stop", help="stop the application bound to an interface")
     p.add_argument("--app", required=True, metavar="APP", help="command name or path of the application")
@@ -96,6 +131,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.print_help()
         return 1
     try:
+        _check_iface_args(args)
         return _HANDLERS[args.command](args)
     except KeyboardInterrupt:
         _error("interrupted")
@@ -129,6 +165,7 @@ def _warn(msg: str) -> None:
 
 
 def _error(msg: str) -> None:
+    sys.stdout.flush()  # keep the order of progress lines and errors when both go to one pipe
     print(f"[X] {msg}", file=sys.stderr)
 
 
@@ -152,11 +189,30 @@ def _print_table(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
         print("  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip())
 
 
-def _confirm(prompt: str) -> bool:
+def _check_iface_args(args: argparse.Namespace) -> None:
+    """Reject a malformed --iface / --to before any progress line is printed. Raises ValidationError."""
+    from intermux.errors import ValidationError
+    from intermux.helper import protocol
+
+    for attr, flag in (("iface", "--iface"), ("to", "--to")):
+        value = getattr(args, attr, None)
+        if value is None:
+            continue
+        try:
+            protocol.validate_iface_name(value)
+        except protocol.ValidationError:
+            raise ValidationError(f"invalid interface name for {flag}: {value!r} "
+                                  "(1 to 15 characters: letters, digits and _ . : @ -)") from None
+
+
+def _confirm(prompt: str, word: str = "") -> bool:
+    """Ask on the terminal. With `word`, only that word (any case) confirms; otherwise y or yes does."""
     try:
-        return input(prompt).strip() == "yes"
+        answer = input(prompt).strip().lower()
     except EOFError:
+        print()
         return False
+    return answer == word if word else answer in ("y", "yes")
 
 
 def _resolve_app(app_arg: str, iface: Optional[str] = None) -> str:
@@ -246,6 +302,9 @@ def _cmd_interfaces(args: argparse.Namespace) -> int:
 def _cmd_apps(args: argparse.Namespace) -> int:
     from intermux.apps import desktop_entries
 
+    if args.search is not None and not args.search.strip():
+        _error("--search needs some text to look for")
+        return 2
     entries = desktop_entries.scan_desktop_entries()
     if args.search:
         entries = desktop_entries.search_entries(entries, args.search)
@@ -270,11 +329,12 @@ def _cmd_bind(args: argparse.Namespace) -> int:
         policy = "separate"
     else:
         policy = "ask"
+    dns = parse_dns_arg(args.dns) if args.dns is not None else "keep"
     name = os.path.basename(app_path)
     _info(f"binding {name} to {args.iface}")
     try:
         result = helper_client.bind(args.iface, app_path, running_policy=policy,
-                                    env=env)
+                                    env=env, dns=dns)
     except HelperError as exc:
         if exc.code != "already_running":
             raise
@@ -285,7 +345,7 @@ def _cmd_bind(args: argparse.Namespace) -> int:
         if answer[0] == "adopt":
             return _adopt_and_report(args.iface, app_path)
         result = helper_client.bind(args.iface, app_path, running_policy=answer[1],
-                                    env=env)
+                                    env=env, dns=dns)
     _report_bind(result or {})
     return 0
 
@@ -327,10 +387,52 @@ def _cmd_status(args: argparse.Namespace) -> int:
             nat = "yes" if any(b.subnet in line.split() for line in nat_lines) else "no"
         rows.append([b.app_name, b.iface, b.subnet, b.profile_mode, status, ns_up, nat, b.log_path or "-"])
     _print_table(["APP", "IFACE", "SUBNET", "PROFILE", "STATUS", "NAMESPACE", "NAT", "LOG"], rows)
+    if getattr(st, "subnets", None):
+        print()
+        _print_namespaces(st)
     if adoptions:
         print()
         _print_adoptions(adoptions)
     return 0
+
+
+def parse_dns_arg(text: str) -> Any:
+    """"auto" or a list of servers from a --dns / dns argument. Raises ValidationError."""
+    from intermux import dnsconf
+    from intermux.errors import ValidationError
+
+    if text.strip().lower() == dnsconf.AUTO:
+        return dnsconf.AUTO
+    try:
+        return dnsconf.parse_servers(text)
+    except ValueError as exc:
+        raise ValidationError(str(exc)) from None
+
+
+def _print_namespaces(st: Any) -> None:
+    """One row per interface namespace: DNS, bandwidth limit and traffic since it was created."""
+    from intermux import dnsconf
+    from intermux.system import netns, shaping, traffic
+
+    subnets = getattr(st, "subnets", None) or {}
+    limits = getattr(st, "limits", None) or {}
+    dns_map = getattr(st, "dns", None) or {}
+    rows = []
+    for iface in sorted(subnets):
+        host_v = netns.veth_names(iface)[0]
+        counters = traffic.read_counters([host_v]).get(host_v)
+        if counters is None:
+            moved = "-"
+        else:
+            down, up = traffic.veth_sample(counters)
+            moved = f"↓ {traffic.format_bytes(down)}  ↑ {traffic.format_bytes(up)}"
+        limit = limits.get(iface) or {}
+        limit_text = (f"↓ {shaping.format_mbit(limit.get('down'))}  ↑ {shaping.format_mbit(limit.get('up'))}"
+                      if limit else "none")
+        rows.append([iface, netns.namespace_name(iface), subnets[iface],
+                     dnsconf.describe(dns_map.get(iface, [])), limit_text, moved])
+    if rows:
+        _print_table(["IFACE", "NAMESPACE", "SUBNET", "DNS", "LIMIT", "TRAFFIC"], rows)
 
 
 def _print_adoptions(adoptions: Sequence[Any]) -> None:
@@ -411,6 +513,82 @@ def _cmd_verify(args: argparse.Namespace) -> int:
     return 1
 
 
+def _cmd_dns(args: argparse.Namespace) -> int:
+    from intermux import dnsconf
+    from intermux.helper import client as helper_client
+
+    dns = parse_dns_arg(args.servers)
+    data = helper_client.call("set_dns", {"iface": args.iface, "dns": dns}) or {}
+    label = "automatic" if data.get("automatic") else dnsconf.describe(data.get("servers") or [])
+    _ok(f"DNS of {args.iface}: {label} ({_join(data.get('servers') or [])})")
+    for warning in data.get("warnings") or []:
+        _warn(str(warning))
+    return 0
+
+
+def _cmd_limit(args: argparse.Namespace) -> int:
+    from intermux.helper import client as helper_client
+    from intermux.system import shaping
+
+    data = helper_client.call("set_limit", {"iface": args.iface, "down": args.down, "up": args.up}) or {}
+    if not data.get("down") and not data.get("up"):
+        _ok(f"removed the bandwidth limit of {args.iface}")
+    else:
+        _ok(f"limited {args.iface}: download {shaping.format_mbit(data.get('down'))}, "
+            f"upload {shaping.format_mbit(data.get('up'))}")
+    return 0
+
+
+def _cmd_restart(args: argparse.Namespace) -> int:
+    from intermux.helper import client as helper_client
+    from intermux.system import session
+
+    app_path = _resolve_app(args.app, args.iface)
+    env = session.build_app_env(session.detect_session())
+    _info(f"restarting {os.path.basename(app_path)} on {args.iface}")
+    data = helper_client.call("restart_app", {"iface": args.iface, "app": app_path, "env": env}) or {}
+    _report_bind(data)
+    return 0
+
+
+def _cmd_remove(args: argparse.Namespace) -> int:
+    from intermux.helper import client as helper_client
+
+    if not args.yes and not _confirm(f"Stop everything in the {args.iface} namespace and remove it? [y/N] "):
+        _warn("cancelled")
+        return 1
+    data = helper_client.call("remove_namespace", {"iface": args.iface}) or {}
+    if data.get("removed"):
+        _ok(f"removed the {args.iface} namespace" + (f" ({_join(data.get('apps') or [])})" if data.get("apps") else ""))
+        return 0
+    _warn(f"the namespace is kept: processes still running ({_join(data.get('still_running') or [])})")
+    return 1
+
+
+def _cmd_move(args: argparse.Namespace) -> int:
+    from intermux.helper import client as helper_client
+    from intermux.system import session
+
+    app_path = _resolve_app(args.app, args.iface)
+    env = session.build_app_env(session.detect_session())
+    _info(f"moving {os.path.basename(app_path)} from {args.iface} to {args.to}")
+    data = helper_client.call("move_app", {"iface": args.iface, "app": app_path, "to": args.to, "env": env}) or {}
+    _report_bind(data)
+    return 0
+
+
+def _cmd_reconnect(args: argparse.Namespace) -> int:
+    from intermux.helper import client as helper_client
+
+    data = helper_client.call("reconnect") or {}
+    refreshed = data.get("refreshed") or []
+    if refreshed:
+        _ok(f"reconnected: {_join(refreshed)}")
+    else:
+        _info("every namespace whose interface is up already has its route")
+    return 0
+
+
 def _cmd_teardown_idle(args: argparse.Namespace) -> int:
     from intermux.helper import client as helper_client
 
@@ -435,7 +613,7 @@ def _cmd_reset(args: argparse.Namespace) -> int:
         _warn("this removes all InterMux namespaces, veth pairs, routing rules, NAT rules and bindings")
         if args.kill_apps:
             _warn("applications running inside InterMux namespaces will be terminated")
-        if not _confirm("Type 'yes' to continue: "):
+        if not _confirm("Type 'yes' to continue: ", word="yes"):
             _info("aborted; nothing was changed")
             return 1
     _info("removing everything InterMux created")
@@ -491,7 +669,15 @@ def _cmd_report(args: argparse.Namespace) -> int:
         else:
             _info(f"open this page to report: {report.REPORT_PAGE_URL}")
         return 0
-    path = bugreport.write_bug_zip(directory=Path(args.out).expanduser() if args.out else None)
+    out = Path(args.out).expanduser() if args.out else None
+    if out is not None and out.exists() and not out.is_dir():
+        _error(f"--out must be a folder, but {out} is a file")
+        return 2
+    try:
+        path = bugreport.write_bug_zip(directory=out)
+    except OSError as exc:
+        _error(f"could not save the bug report in {out or '~/intermux-reports'}: {exc.strerror or exc}")
+        return 1
     _ok(f"saved bug report: {path}")
     _info(f"upload this file in the reporting portal: {report.REPORT_PAGE_URL}")
     return 0
@@ -511,4 +697,10 @@ _HANDLERS: Dict[str, Handler] = {
     "release": _cmd_release,
     "check": _cmd_check,
     "report": _cmd_report,
+    "dns": _cmd_dns,
+    "limit": _cmd_limit,
+    "restart": _cmd_restart,
+    "remove": _cmd_remove,
+    "reconnect": _cmd_reconnect,
+    "move": _cmd_move,
 }

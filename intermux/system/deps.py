@@ -43,6 +43,7 @@ _TOOL_SPECS: Tuple[Tuple[str, bool, str, str, Dict[str, str]], ...] = (
     ("curl", False, "public IP verification", "curl", {}),
     ("nft", False, "route an already running app (shift current session)", "nftables", {}),
     ("xdg-open", False, "open links and folders", "xdg-utils", {}),
+    ("tc", False, "bandwidth limits per interface", "iproute2", {"dnf": "iproute-tc"}),
 )
 
 

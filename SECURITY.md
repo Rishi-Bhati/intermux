@@ -46,7 +46,7 @@ Protections in the helper:
 
 - **Network namespaces isolate routing, not the application.** A bound app runs as you and can read your files, just like any other program you start. Do not bind software you do not trust.
 - **Anyone authorized by polkit can change bindings.** Changes to network setup are allowed for users that polkit authorizes. This is normally administrators.
-- **The application binary is trusted.** The helper checks that the path is absolute and well formed (no trailing slash, no control characters). Whether the file exists is checked before a request is sent, by the unprivileged CLI and GUI (`resolve_app_path`). The helper does not check the file's existence itself, and the launch fails if the file is missing. InterMux does not verify the program's contents.
+- **The application binary is trusted.** The helper checks that the path is absolute and well formed (no trailing slash, no `=`, no control characters, valid UTF-8, at most 4096 bytes). Whether the file exists and is executable is checked before a request is sent, by the unprivileged CLI and GUI (`resolve_app_path`). The helper does not check the file's existence itself, and the launch fails if the file is missing. InterMux does not verify the program's contents.
 
 ### Network Requests
 

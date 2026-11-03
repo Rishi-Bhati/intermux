@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
+from intermux import config
 from intermux.config import LOCK_FILE, STATE_FILE, SUBNET_BASE_OCTET
 
 log = logging.getLogger("intermux.state")
@@ -72,6 +73,14 @@ class State:
     bindings: List[Binding] = field(default_factory=list)
     ip_forward_prev: Optional[str] = None                   # value before we first enabled forwarding
     adoptions: List[Adoption] = field(default_factory=list)
+    dns: Dict[str, List[str]] = field(default_factory=dict)   # iface -> DNS servers chosen by hand
+    limits: Dict[str, Dict[str, Optional[float]]] = field(default_factory=dict)  # iface -> {"down", "up"} Mbit/s
+
+    def forget_iface(self, iface: str) -> None:
+        """Drop everything kept per interface once its namespace is gone."""
+        self.subnets.pop(iface, None)
+        self.dns.pop(iface, None)
+        self.limits.pop(iface, None)
 
     def bindings_for_iface(self, iface: str) -> List[Binding]:
         return [b for b in self.bindings if b.iface == iface]
@@ -106,7 +115,8 @@ def state_from_dict(data: Dict[str, Any]) -> State:
     raw_subnets = data.get("subnets")
     if isinstance(raw_subnets, dict):
         for iface, cidr in raw_subnets.items():
-            if isinstance(iface, str) and valid_pool_subnet(cidr):
+            if (isinstance(iface, str) and _IFACE_NAME_RE.fullmatch(iface) and iface not in (".", "..")
+                    and valid_pool_subnet(cidr)):
                 subnets[iface] = cidr
             else:
                 log.warning("ignoring malformed subnet entry: %r -> %r", iface, cidr)
@@ -134,7 +144,42 @@ def state_from_dict(data: Dict[str, Any]) -> State:
         bindings=bindings,
         ip_forward_prev=None if ip_prev is None else str(ip_prev),
         adoptions=adoptions,
+        dns=_dns_from_dict(data.get("dns")),
+        limits=_limits_from_dict(data.get("limits")),
     )
+
+
+def _dns_from_dict(raw: Any) -> Dict[str, List[str]]:
+    from intermux import dnsconf
+
+    found: Dict[str, List[str]] = {}
+    if not isinstance(raw, dict):
+        return found
+    for iface, servers in raw.items():
+        try:
+            found[str(iface)] = dnsconf.check_servers(servers)
+        except ValueError:
+            log.warning("ignoring malformed DNS entry: %r -> %r", iface, servers)
+    return found
+
+
+def _limits_from_dict(raw: Any) -> Dict[str, Dict[str, Optional[float]]]:
+    from intermux.system import shaping
+
+    found: Dict[str, Dict[str, Optional[float]]] = {}
+    if not isinstance(raw, dict):
+        return found
+    for iface, item in raw.items():
+        try:
+            if not isinstance(item, dict):
+                raise ValueError("not an object")
+            limit = {"down": shaping.check_mbit(item.get("down")), "up": shaping.check_mbit(item.get("up"))}
+        except ValueError:
+            log.warning("ignoring malformed limit entry: %r -> %r", iface, item)
+            continue
+        if limit["down"] or limit["up"]:
+            found[str(iface)] = limit
+    return found
 
 
 def _to_int(value: Any, default: int) -> int:
@@ -164,6 +209,12 @@ def _binding_from_dict(item: Any) -> Optional[Binding]:
     if not 1 <= table <= _MAX_TABLE or not 1 <= priority <= _MAX_PRIORITY:
         log.warning("ignoring binding with out-of-range table/priority: %r", item)
         return None
+    if not _IFACE_NAME_RE.fullmatch(str(item["iface"])) or str(item["iface"]) in (".", ".."):
+        log.warning("ignoring binding with invalid interface name: %r", item)
+        return None
+    if not re.fullmatch(config.NS_NAME_RE, str(item["namespace"])):
+        log.warning("ignoring binding with invalid namespace name: %r", item)
+        return None
     raw_pid = item.get("pid")
     pid: Optional[int] = None
     if raw_pid is not None and not isinstance(raw_pid, bool):
@@ -190,6 +241,8 @@ def _binding_from_dict(item: Any) -> Optional[Binding]:
 
 
 _ADOPT_ID_RE = re.compile(r"^[0-9a-f]{8,32}$")
+_IFACE_NAME_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,15}$")
+_SLOT_RANGE = (1, 200)   # adopt.SLOT_MIN..SLOT_MAX (not imported: state must not depend on system code)
 _REQUIRED_ADOPTION_KEYS = ("id", "iface", "app", "slot", "group", "mark", "table", "priority", "uid")
 
 
@@ -219,6 +272,12 @@ def _adoption_from_dict(item: Any) -> Optional[Adoption]:
         pids = [int(p) for p in raw_pids]
     except (TypeError, ValueError):
         log.warning("ignoring adoption with non-integer fields: %r", item)
+        return None
+    # The group path, slot and interface are used for cgroup, sysctl and nft paths by the root helper:
+    # they must be exactly what InterMux itself would have written for this id.
+    if (str(item["group"]) != f"intermux/adopt-{adopt_id}" or not _SLOT_RANGE[0] <= slot <= _SLOT_RANGE[1]
+            or not _IFACE_NAME_RE.fullmatch(str(item["iface"])) or str(item["iface"]) in (".", "..")):
+        log.warning("ignoring adoption with an invalid group, slot or interface: %r", item)
         return None
     app = str(item["app"])
     return Adoption(

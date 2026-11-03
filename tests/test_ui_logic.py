@@ -107,7 +107,8 @@ class ThemeAndLabelTests(unittest.TestCase):
         p = theme.PALETTE
         for fg, bg in (("text", "surface"), ("text", "surface_alt"), ("text", "bg"),
                        ("text_muted", "surface"), ("text_muted", "surface_alt"), ("text_muted", "bg"),
-                       ("bg", "danger"), ("bg", "warning"), ("bg", "success"), ("accent", "surface")):
+                       ("bg", "danger"), ("bg", "warning"), ("bg", "success"), ("accent_fg", "surface"),
+                       ("accent_fg", "surface_alt"), ("accent_text", "accent")):
             self.assertGreaterEqual(theme.contrast_ratio(p[fg], p[bg]), 4.5, f"{fg} on {bg}")
 
     def test_combobox_arrow_contrast(self):
@@ -248,7 +249,6 @@ class WheelRoutingTests(unittest.TestCase):
         return frame, labels
 
     def test_wheel_scrolls_only_the_section_under_the_pointer(self) -> None:
-        import tkinter as tk
         self.root.geometry("300x300")
         first, first_labels = self._section(200)
         second, _ = self._section(200)
@@ -286,9 +286,9 @@ class RowStateTests(unittest.TestCase):
     def test_running_row_all_enabled_when_idle(self):
         self.assertTrue(all(row_button_states(True, True).values()))
 
-    def test_stopped_row_keeps_only_log(self):
+    def test_stopped_row_keeps_log_and_restart(self):
         self.assertEqual(row_button_states(False, True),
-                         {"verify": False, "stop": False, "log": True, "force": False})
+                         {"verify": False, "stop": False, "log": True, "force": False, "restart": True})
 
     def test_busy_disables_everything(self):
         self.assertFalse(any(row_button_states(True, False).values()))
@@ -316,3 +316,67 @@ class PublicIpExpiryTests(unittest.TestCase):
         self.assertEqual(fresh_public_ip(("1.2.3.4", 100.0), 200.0), "1.2.3.4")
         self.assertEqual(fresh_public_ip(("1.2.3.4", 100.0), 400.0), "")
         self.assertEqual(fresh_public_ip(None, 400.0), "")
+
+
+class TableRowTests(unittest.TestCase):
+    def _iface(self, name, up=True, cidrs=("10.0.0.2/24",)):
+        return SimpleNamespace(name=name, kind="wifi", up=up, ipv4_cidrs=list(cidrs))
+
+    def test_active_rows_group_apps_under_their_interface(self):
+        from intermux.ui.app import active_rows
+        bindings = [
+            {"iface": "wlan0", "app": "/usr/bin/b", "app_name": "b", "running": False, "pid": None, "pids": []},
+            {"iface": "eth0", "app": "/usr/bin/a", "app_name": "a", "running": True, "pid": 42, "pids": [42, 43]},
+        ]
+        adoptions = [{"id": "ab12cd34", "iface": "wlan0", "app": "/usr/bin/c", "app_name": "c",
+                      "alive": True, "pids": [9, 7]}]
+        rows = active_rows(bindings, adoptions, {"wlan0": self._iface("wlan0")},
+                           {"wlan0": {"dns": ["1.1.1.1", "1.0.0.1"], "limit": {"down": 20.0, "up": None}}},
+                           {"wlan0": ("ok", "Routing 1 app")},
+                           {"wlan0": (2048.0, 0.0), "ns:eth0": (512.0, 0.0)}, {"wlan0": "1.2.3.4"})
+        self.assertEqual([r["iid"] for r in rows],
+                         ["if:eth0", "b:eth0|/usr/bin/a", "if:wlan0", "b:wlan0|/usr/bin/b", "a:ab12cd34"])
+        eth0, a, wlan0, b, c = rows
+        self.assertIn("warn", eth0["tags"])           # not in the interface list: shown as a problem
+        self.assertEqual(a["values"][:2], ("running", "42"))  # the launched pid, not the whole namespace
+        self.assertEqual(a["values"][2], "512 B/s")   # app rows show their namespace's speed
+        self.assertEqual(a["spark"], "ns:eth0")
+        self.assertEqual(wlan0["values"][0], "routing 1 app")
+        self.assertEqual(wlan0["values"][2], "2.0 KB/s")
+        self.assertEqual(wlan0["values"][5:], ("↓ 20 Mbit/s", "Cloudflare", "1.2.3.4"))
+        self.assertEqual(wlan0["spark"], "wlan0")      # the interface row graphs the whole interface
+        self.assertIsNone(b["spark"])                  # a stopped app has no graph
+        self.assertIsNone(c["spark"])                  # a shifted app has no counter of its own
+        self.assertIn("muted", b["tags"])
+        self.assertEqual(c["values"][:2], ("running, shifted", "7 +1"))
+
+    def test_pid_text(self):
+        from intermux.ui.app import pid_text
+        self.assertEqual(pid_text([]), "")
+        self.assertEqual(pid_text([None]), "")
+        self.assertEqual(pid_text([9, 3, 4]), "3 +2")
+
+    def test_queue_rows(self):
+        from intermux.ui.app import queue_rows
+        items = [{"iface": "wlan0", "app": "/a", "name": "A", "policy": "separate", "dns": "keep", "limit": None},
+                 {"iface": "eth0", "app": "/b", "name": "B", "policy": "ask", "dns": "keep", "limit": None}]
+        rows = queue_rows(items, ["wlan0"])
+        self.assertEqual(rows[0]["values"], ("wlan0", "keep", "-", "separate profile"))
+        self.assertEqual(rows[1]["values"][1], "auto")
+
+    def test_actions_follow_the_selection(self):
+        from intermux.ui.app import selection_actions, visible_actions
+        self.assertEqual(visible_actions(None), ())
+        self.assertEqual(visible_actions({"kind": "adopt"}), ("release",))
+        self.assertIn("dns", visible_actions({"kind": "iface", "namespace": True}))
+        self.assertNotIn("dns", visible_actions({"kind": "iface", "namespace": False}))
+        self.assertFalse(any(selection_actions(None, True).values()))
+        stopped = selection_actions({"kind": "bind", "running": False, "namespace": True}, True, can_move=False)
+        self.assertTrue(stopped["restart"] and stopped["log"])
+        self.assertFalse(stopped["stop"] or stopped["move"])
+        self.assertFalse(any(selection_actions({"kind": "bind", "running": True, "namespace": True}, False).values()))
+
+    def test_window_height_follows_the_layout(self):
+        from intermux.ui.app import initial_geometry
+        self.assertEqual(initial_geometry(2560, 1440, 1100), "1360x1100")
+        self.assertEqual(initial_geometry(1366, 768, 1100), "1286x688")

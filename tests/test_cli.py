@@ -204,3 +204,44 @@ class StillRunningReportTests(unittest.TestCase):
             rc, out = self._run(argv, {"stopped": [], "still_running": [9]})
             self.assertEqual(rc, 1, argv)
             self.assertIn("9", out)
+
+
+class NamespaceCommandTests(unittest.TestCase):
+    def test_parse_dns_arg(self) -> None:
+        from intermux import cli
+        from intermux.errors import ValidationError
+        self.assertEqual(cli.parse_dns_arg("auto"), "auto")
+        self.assertEqual(cli.parse_dns_arg("Cloudflare"), ["1.1.1.1", "1.0.0.1"])
+        self.assertEqual(cli.parse_dns_arg("9.9.9.9,1.1.1.1"), ["9.9.9.9", "1.1.1.1"])
+        with self.assertRaises(ValidationError):
+            cli.parse_dns_arg("127.0.0.53")
+
+    def _call(self, argv, data):
+        from unittest import mock
+        from intermux import cli
+        buf = io.StringIO()
+        with mock.patch("intermux.helper.client.call", return_value=data) as call, \
+             contextlib.redirect_stdout(buf):
+            code = cli.main(argv)
+        return code, call, buf.getvalue()
+
+    def test_limit_and_dns_commands(self) -> None:
+        code, call, out = self._call(["limit", "--iface", "wlan0", "--down", "20"],
+                                     {"down": 20.0, "up": None})
+        self.assertEqual(code, 0)
+        call.assert_called_once_with("set_limit", {"iface": "wlan0", "down": 20.0, "up": None})
+        self.assertIn("20 Mbit/s", out)
+        code, call, out = self._call(["dns", "--iface", "wlan0", "quad9"],
+                                     {"servers": ["9.9.9.9", "149.112.112.112"], "automatic": False})
+        call.assert_called_once_with("set_dns", {"iface": "wlan0", "dns": ["9.9.9.9", "149.112.112.112"]})
+        self.assertIn("Quad9", out)
+
+    def test_remove_and_reconnect(self) -> None:
+        code, call, _ = self._call(["remove", "--iface", "wlan0", "--yes"], {"removed": True, "apps": ["x"]})
+        self.assertEqual(code, 0)
+        call.assert_called_once_with("remove_namespace", {"iface": "wlan0"})
+        code, _, out = self._call(["remove", "--iface", "wlan0", "--yes"], {"removed": False, "still_running": [4]})
+        self.assertEqual(code, 1)
+        code, call, out = self._call(["reconnect"], {"refreshed": ["wg0"]})
+        call.assert_called_once_with("reconnect")
+        self.assertIn("wg0", out)

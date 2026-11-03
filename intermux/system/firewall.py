@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import logging
+import re
 import shlex
 from ipaddress import IPv4Network
 from pathlib import Path
 from typing import List, NamedTuple, Optional, Tuple
 
+from intermux.config import VETH_HOST_RE
 from intermux.errors import MissingToolError, ValidationError
 from intermux.subnets import POOL
 from intermux.system.commands import run, run_checked, which
@@ -18,6 +20,8 @@ _IPTABLES_CANDIDATES = ("iptables", "iptables-nft", "iptables-legacy")
 _NAT_CHAINS = frozenset({"PREROUTING", "POSTROUTING"})
 _MISSING_RULE = ("does a matching rule exist", "Bad rule")
 _SELECTOR_FLAGS = ("-s", "-d")
+TRUSTED_ZONE = "trusted"
+_FIREWALLD_MISSING = ("UNKNOWN_INTERFACE", "ZONE_CONFLICT", "NOT_ENABLED", "not running")
 
 
 class NatRule(NamedTuple):
@@ -27,8 +31,14 @@ class NatRule(NamedTuple):
     insert: bool            # True: -I (top of chain); False: -A (append)
 
 
+_IFACE_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,15}$")
+FIREWALLD_NOT_RUNNING = 252   # exit status of `firewall-cmd --state` when the daemon is stopped
+
+
 def nat_rules(subnet: IPv4Network, iface: str) -> List[NatRule]:
     """The three rules intermux needs for a namespace subnet, in apply order."""
+    if not isinstance(iface, str) or not _IFACE_RE.match(iface) or iface in (".", ".."):
+        raise ValidationError(f"invalid interface name: {iface!r}")
     s = str(subnet)
     return [
         NatRule("nat", "POSTROUTING", ("-s", s, "-o", iface, "-j", "MASQUERADE"), insert=False),
@@ -151,6 +161,56 @@ def delete_rule_line(line: str) -> None:
         log.warning("cannot derive a delete command from %r", line)
         return
     run([iptables_cmd(), *args], tolerate=_MISSING_RULE)
+
+
+def firewalld_cmd() -> Optional[str]:
+    """Path of firewall-cmd unless firewalld is not installed or reports that it is stopped.
+
+    Any other failure of `--state` (a timeout, D-Bus not up yet, a permission problem) keeps the path, so
+    the change that follows is attempted and its failure is reported, instead of firewalld being silently
+    assumed absent while it may be blocking the namespace."""
+    path = which("firewall-cmd")
+    if path is None:
+        return None
+    result = run([path, "--state"], timeout=15, tolerate=("not running",))
+    if result.ok:
+        return path
+    text = f"{result.stdout} {result.stderr}".lower()
+    if result.returncode == FIREWALLD_NOT_RUNNING or "not running" in text:
+        return None
+    log.warning("cannot tell whether firewalld is running (%s); assuming it is", text.strip() or result.returncode)
+    return path
+
+
+def _check_host_veth(name: str) -> None:
+    if not isinstance(name, str) or not re.fullmatch(VETH_HOST_RE, name):
+        raise ValidationError(f"invalid veth name: {name!r}")
+
+
+def trust_veth(host_veth: str) -> bool:
+    """Put the host end of a namespace veth in firewalld's trusted zone (runtime only).
+
+    firewalld filters forwarding in its own nftables table, where the iptables FORWARD ACCEPT rules above have
+    no effect. A veth in no zone lands in the default zone, which forwards only to interfaces of that same
+    zone; traffic to any other uplink (a wg-quick tunnel, a tether in another zone) hits firewalld's final
+    reject and the app has no network. False when firewalld refused; True when it accepted or is not running."""
+    _check_host_veth(host_veth)
+    fwcmd = firewalld_cmd()
+    if fwcmd is None:
+        return True
+    current = run([fwcmd, f"--get-zone-of-interface={host_veth}"], tolerate=("no zone",))
+    if current.ok and current.stdout.strip() == TRUSTED_ZONE:
+        return True
+    return run([fwcmd, f"--zone={TRUSTED_ZONE}", f"--change-interface={host_veth}"]).ok
+
+
+def untrust_veth(host_veth: str) -> None:
+    """Undo trust_veth. An interface firewalld does not know is not an error."""
+    _check_host_veth(host_veth)
+    fwcmd = firewalld_cmd()
+    if fwcmd is None:
+        return
+    run([fwcmd, f"--zone={TRUSTED_ZONE}", f"--remove-interface={host_veth}"], tolerate=_FIREWALLD_MISSING)
 
 
 def get_ip_forward() -> str:

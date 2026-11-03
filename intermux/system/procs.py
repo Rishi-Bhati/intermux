@@ -83,6 +83,22 @@ def _proc_state(pid: int) -> Optional[str]:
     return rest[0] if rest else None
 
 
+def start_time(pid: int) -> Optional[int]:
+    """When pid started (clock ticks since boot, field 22 of /proc/<pid>/stat), or None if it is gone.
+
+    A pid number can be reused after its process exits; the same pid with the same start time is the same
+    process."""
+    raw = _read_bytes(f"/proc/{pid}/stat")
+    if raw is None:
+        return None
+    try:
+        # The command name (field 2) is in parentheses and may itself contain spaces or ")".
+        fields = raw[raw.rindex(b")") + 2:].split()
+        return int(fields[19])
+    except (ValueError, IndexError):
+        return None
+
+
 def _alive(pid: int) -> bool:
     state = _proc_state(pid)
     return state is not None and state not in _DEAD_STATES

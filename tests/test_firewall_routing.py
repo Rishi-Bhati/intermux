@@ -180,6 +180,79 @@ class FirewallRuleTests(unittest.TestCase):
         self.assertFalse(firewall.is_pool_subnet("not-an-address"))
 
 
+class FirewalldTests(unittest.TestCase):
+    """firewalld forwards in its own nftables table, so the iptables ACCEPT rules do not get past it."""
+
+    VETH = "veth0_0123abcd"
+
+    def _run(self, state_ok=True, change_ok=True, installed=True, zone=""):
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(list(argv))
+            if argv[1] == "--state":
+                if state_ok is True:
+                    return mock.Mock(ok=True, returncode=0, stdout="running\n", stderr="")
+                if state_ok is False:   # what firewall-cmd prints when the daemon is stopped
+                    return mock.Mock(ok=False, returncode=252, stdout="not running\n", stderr="")
+                return mock.Mock(ok=False, returncode=1, stdout="", stderr=state_ok)
+            if argv[1].startswith("--get-zone-of-interface"):
+                return mock.Mock(ok=bool(zone), returncode=0 if zone else 2, stdout=f"{zone}\n", stderr="")
+            return mock.Mock(ok=change_ok, returncode=0 if change_ok else 1, stdout="", stderr="")
+
+        which = "/usr/bin/firewall-cmd" if installed else None
+        patches = (mock.patch.object(firewall, "which", return_value=which),
+                   mock.patch.object(firewall, "run", side_effect=fake_run))
+        return calls, patches
+
+    def test_running_firewalld_gets_the_veth_in_the_trusted_zone(self):
+        calls, (p1, p2) = self._run()
+        with p1, p2:
+            self.assertTrue(firewall.trust_veth(self.VETH))
+        self.assertEqual(calls, [["/usr/bin/firewall-cmd", "--state"],
+                                 ["/usr/bin/firewall-cmd", f"--get-zone-of-interface={self.VETH}"],
+                                 ["/usr/bin/firewall-cmd", "--zone=trusted", f"--change-interface={self.VETH}"]])
+
+    def test_already_trusted_is_left_alone(self):
+        calls, (p1, p2) = self._run(zone="trusted")
+        with p1, p2:
+            self.assertTrue(firewall.trust_veth(self.VETH))
+        self.assertFalse([c for c in calls if "--change-interface" in " ".join(c)])
+
+    def test_unclear_state_still_tries_and_reports(self):
+        # A timeout or D-Bus error must not be mistaken for "firewalld is not running".
+        calls, (p1, p2) = self._run(state_ok="Error: COMMAND_FAILED", change_ok=False)
+        with p1, p2:
+            self.assertFalse(firewall.trust_veth(self.VETH))
+        self.assertTrue([c for c in calls if "--change-interface" in " ".join(c)])
+
+    def test_refusal_is_reported(self):
+        calls, (p1, p2) = self._run(change_ok=False)
+        with p1, p2:
+            self.assertFalse(firewall.trust_veth(self.VETH))
+
+    def test_nothing_to_do_without_firewalld(self):
+        for kwargs in ({"installed": False}, {"state_ok": False}):
+            calls, (p1, p2) = self._run(**kwargs)
+            with p1, p2:
+                self.assertTrue(firewall.trust_veth(self.VETH))
+                firewall.untrust_veth(self.VETH)
+            self.assertFalse([c for c in calls if c[1] != "--state"], kwargs)
+
+    def test_untrust_removes_the_interface(self):
+        calls, (p1, p2) = self._run()
+        with p1, p2:
+            firewall.untrust_veth(self.VETH)
+        self.assertEqual(calls[-1], ["/usr/bin/firewall-cmd", "--zone=trusted", f"--remove-interface={self.VETH}"])
+
+    def test_only_intermux_host_veths(self):
+        for bad in ("wlan0", "veth1_0123abcd", "veth0_0123abcd --panic-on", ""):
+            with self.assertRaises(firewall.ValidationError):
+                firewall.trust_veth(bad)
+            with self.assertRaises(firewall.ValidationError):
+                firewall.untrust_veth(bad)
+
+
 class EnsurePolicyTests(unittest.TestCase):
     """ensure_policy builds the command list; the system commands are mocked out."""
 

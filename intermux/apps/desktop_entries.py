@@ -25,7 +25,7 @@ class AppEntry:
     icon: str
     exec_argv: List[str]          # cleaned argv (field codes removed)
     desktop_file: str
-    binary: Optional[str]         # resolved absolute path of argv[0] or None
+    binary: Optional[str]         # resolved absolute path of the program it starts, or None
     bindable: bool
     reason: str                   # "" when bindable, else why not
 
@@ -65,6 +65,25 @@ def clean_exec(exec_value: str) -> List[str]:
     return argv
 
 
+def launched_program(argv: Sequence[str]) -> Optional[str]:
+    """The program an Exec line really starts. `env [-i] [-u NAME] [NAME=VALUE]... program` starts
+    `program`, so binding it means binding that program, not env itself. Pure."""
+    if not argv:
+        return None
+    if os.path.basename(argv[0]) != "env":
+        return argv[0]
+    rest = list(argv[1:])
+    while rest:
+        token = rest[0]
+        if token in ("-u", "--unset"):
+            rest = rest[2:]
+        elif token == "--" or (token.startswith("-") and token != "-") or "=" in token:
+            rest = rest[1:]
+        else:
+            return token
+    return None
+
+
 def parse_desktop_file(path: Path) -> Optional[AppEntry]:
     """Parse the [Desktop Entry] group of a .desktop file; None if it is not a launchable application."""
     keys = _read_main_group(Path(path))
@@ -80,8 +99,9 @@ def parse_desktop_file(path: Path) -> Optional[AppEntry]:
         return None
 
     argv = clean_exec(exec_value)
-    binary = _resolve_binary(argv[0]) if argv else None
-    if argv and os.path.basename(argv[0]) == "flatpak":
+    program = launched_program(argv)
+    binary = _resolve_binary(program) if program else None
+    if program and os.path.basename(program) == "flatpak":
         bindable, reason = False, FLATPAK_REASON
     elif binary is None:
         bindable, reason = False, MISSING_BINARY_REASON
