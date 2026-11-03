@@ -16,13 +16,40 @@ except ImportError:  # reported by main()
     ttk = None  # type: ignore[assignment]
 
 AUTO_LABEL = "Automatic"
-DNS_CHOICES = [AUTO_LABEL] + [f"{name}: {', '.join(servers)}" for name, servers in dnsconf.PRESETS.items()]
+CUSTOM_LABEL = "Custom…"
+DNS_CHOICES = ([AUTO_LABEL] + [f"{name}: {', '.join(servers)}" for name, servers in dnsconf.PRESETS.items()]
+               + [CUSTOM_LABEL])
+CUSTOM_HINT = "Type up to four IPv4 servers separated by commas, for example 9.9.9.9, 149.112.112.112."
+
+
+def bind_custom_choice(combo: Any, var: Any, hint: Any = None) -> None:
+    """Choosing "Custom…" empties the field and puts the cursor in it so the servers can be typed.
+
+    `hint`, a label, shows how to type them while the field holds anything but Automatic or a preset.
+    """
+    def chosen(_event: Any = None) -> None:
+        if var.get() == CUSTOM_LABEL:
+            var.set("")
+            combo.focus_set()
+            combo.icursor("end")
+        refresh()
+
+    def refresh(*_args: Any) -> None:
+        if hint is not None:
+            text = var.get().strip()
+            hint.configure(text="" if text == AUTO_LABEL or text in DNS_CHOICES else CUSTOM_HINT)
+
+    combo.bind("<<ComboboxSelected>>", chosen, add="+")
+    var.trace_add("write", refresh)
+    refresh()
 
 
 def dns_choice_value(text: str) -> Any:
     """What a DNS field means: dnsconf.AUTO for "Automatic", else a list of servers. Raises ValueError."""
     if not text.strip() or text.strip() == AUTO_LABEL:
         return dnsconf.AUTO
+    if text.strip() == CUSTOM_LABEL:
+        raise ValueError("type the DNS servers to use, separated by commas")
     return dnsconf.parse_servers(text)
 
 
@@ -140,6 +167,11 @@ class DnsDialog(_Modal):
         self.label("Servers", 0)
         combo = ttk.Combobox(self.body, textvariable=self.var, values=DNS_CHOICES, width=42)
         combo.grid(row=1, column=0, sticky="ew")
+        p = theme.current_palette()
+        hint = tk.Label(self.body, text="", background=p["bg"], foreground=p["text_muted"],
+                        font=theme.font("small"), anchor="w", justify="left", wraplength=420)
+        hint.grid(row=2, column=0, sticky="w", pady=(6, 0))
+        bind_custom_choice(combo, self.var, hint)
         combo.focus_set()
 
     def collect(self) -> Any:

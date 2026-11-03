@@ -773,6 +773,10 @@ class InterMuxApp:
         self.dns_combo = ttk.Combobox(options, textvariable=self.dns_var, values=dialogs.DNS_CHOICES,
                                       font=theme.font("body"), width=22)
         self.dns_combo.grid(row=1, column=0, sticky="ew")
+        self.dns_hint = ttk.Label(options, text="", style="Small.TLabel")
+        self.dns_hint.grid(row=2, column=0, columnspan=5, sticky="ew", pady=(6, 0))
+        self.dns_hint.bind("<Configure>", lambda e: self.dns_hint.configure(wraplength=max(e.width, 200)))
+        dialogs.bind_custom_choice(self.dns_combo, self.dns_var, self.dns_hint)
         limit_label = ttk.Label(options, text="Speed limit, Mbit/s", style="Muted.TLabel")
         limit_label.grid(row=0, column=1, columnspan=4, sticky="w", padx=(FIELD_GAP, 0), pady=(0, 4))
         Tooltip(limit_label, "Leave empty for no limit. DNS and the speed limit apply to every app "

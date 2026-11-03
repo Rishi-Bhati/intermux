@@ -178,6 +178,10 @@ class DialogParsingTests(unittest.TestCase):
         self.assertEqual(dialogs.dns_choice_value(dialogs.DNS_CHOICES[1]), ["1.1.1.1", "1.0.0.1"])
         self.assertEqual(dialogs.dns_choice_label(["8.8.8.8", "8.8.4.4"]), "Google: 8.8.8.8, 8.8.4.4")
         self.assertEqual(dialogs.dns_choice_label([]), "Automatic")
+        self.assertEqual(dialogs.DNS_CHOICES[-1], dialogs.CUSTOM_LABEL)
+        with self.assertRaises(ValueError):
+            dialogs.dns_choice_value(dialogs.CUSTOM_LABEL)   # chosen but nothing typed yet
+        self.assertEqual(dialogs.dns_choice_value("9.9.9.9, 1.1.1.1"), ["9.9.9.9", "1.1.1.1"])
         with self.assertRaises(ValueError):
             dialogs.dns_choice_value("localhost")
 
