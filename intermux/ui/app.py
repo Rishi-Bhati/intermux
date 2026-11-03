@@ -201,7 +201,9 @@ def fresh_public_ip(stored: Optional[Tuple[str, float]], now: float, ttl: float 
 
 
 def _set_enabled(widget: Any, enabled: bool) -> None:
-    widget.state(["!disabled"] if enabled else ["disabled"])
+    """Enable or disable a ttk widget; leaves it alone when it is already right, so it is not redrawn."""
+    if widget.instate(["disabled"]) == enabled:
+        widget.state(["!disabled"] if enabled else ["disabled"])
 
 
 KIND_LABELS = {
@@ -532,6 +534,12 @@ def unusable_text(interfaces: Sequence[Any], bound: Sequence[str]) -> str:
         f"{i.name} ({'no gateway' if i.up else 'disconnected'})" for i in others)
 
 
+def _set_var(var: Any, value: str) -> None:
+    """Set a StringVar only when the value differs, so its label is not redrawn for nothing."""
+    if var.get() != value:
+        var.set(value)
+
+
 def _sync_tree(tree: Any, rows: Sequence[Dict[str, Any]]) -> None:
     """Make `tree` show exactly `rows`, updating items in place so selection and scroll survive refreshes."""
     wanted = {row["iid"] for row in rows}
@@ -550,12 +558,17 @@ def _sync_tree(tree: Any, rows: Sequence[Dict[str, Any]]) -> None:
         options = {"text": (" " + row["text"]) if image else row["text"], "values": row["values"],
                    "tags": row.get("tags", ()), "image": image or ""}
         iid = row["iid"]
+        # Remember what each item shows and only write what changed; rewriting unchanged items every second
+        # makes the table repaint.
+        shown = tree.__dict__.setdefault("_shown", {})
         if tree.exists(iid):
             if tree.parent(iid) != parent or tree.index(iid) != index:
                 tree.move(iid, parent, index)
-            tree.item(iid, **options)
+            if shown.get(iid) != options:
+                tree.item(iid, **options)
         else:
             tree.insert(parent, index, iid=iid, open=True, **options)
+        shown[iid] = options
 
 
 # ---------------------------------------------------------------------------
@@ -1047,7 +1060,7 @@ class InterMuxApp:
         return f"{name}   {resolved}"
 
     def _on_app_changed(self) -> None:
-        self.app_hint_var.set(self._app_hint())
+        _set_var(self.app_hint_var, self._app_hint())
         self._update_buttons()
 
     # -- status and errors ----------------------------------------------
@@ -1091,7 +1104,7 @@ class InterMuxApp:
         self._bindings = [dict(r) for r in result["bindings"]]
         self._adoptions = [dict(r) for r in result.get("adoptions", [])]
         self._namespaces = dict(result.get("namespaces") or {})
-        self.iface_hint_var.set(unusable_text(self._interfaces, self._bound_ifaces()))
+        _set_var(self.iface_hint_var, unusable_text(self._interfaces, self._bound_ifaces()))
         self._render_bindings()
         self._render_pending()
 
@@ -1142,13 +1155,13 @@ class InterMuxApp:
         self._iface_map = mapping
         labels = list(mapping)
         chosen = next((lbl for lbl, name in mapping.items() if name == previous), labels[0]) if labels else ""
-        self.iface_var.set(chosen or NO_IFACE_TEXT)
+        # Touch the field only when something changed: rewriting it on every refresh redraws its border.
+        if self.iface_var.get() != (chosen or NO_IFACE_TEXT):
+            self.iface_var.set(chosen or NO_IFACE_TEXT)
         if changed:
             self.iface_combo.configure(values=labels)
-        if labels:
-            self.iface_combo.state(["!disabled", "readonly"])
-        else:
-            self.iface_combo.state(["disabled"])
+        if bool(labels) == self.iface_combo.instate(["disabled"]):
+            self.iface_combo.state(["!disabled", "readonly"] if labels else ["disabled"])
         self._interfaces = list(interfaces)
         self._link_speeds = {i.name: traffic.link_speed_bytes(i.name) for i in interfaces}
 
@@ -1267,12 +1280,19 @@ class InterMuxApp:
             except tk.TclError:
                 box = ""
             if not box:
-                canvas.place_forget()
+                if getattr(canvas, "_geometry", None) is not None:
+                    canvas._geometry = None  # type: ignore[attr-defined]
+                    canvas.place_forget()
                 continue
             x, y, width, height = box
             width, height = max(width - 16, 10), max(height - 10, 6)
-            canvas.configure(background=self._spark_background(iid), width=width, height=height)
-            canvas.place(x=x + 8, y=y + 5, width=width, height=height)
+            geometry = (x + 8, y + 5, width, height)
+            if getattr(canvas, "_geometry", None) != geometry:
+                canvas._geometry = geometry  # type: ignore[attr-defined]
+                canvas.place(x=geometry[0], y=geometry[1], width=width, height=height)
+            background = self._spark_background(iid)
+            if canvas.cget("background") != background:
+                canvas.configure(background=background)
             self._draw_spark(canvas, width, height)
 
     def _draw_spark(self, canvas: Any, width: int, height: int) -> None:
@@ -1296,10 +1316,12 @@ class InterMuxApp:
         return item["data"] if item and item["kind"] == "bind" else None
 
     def _on_select(self) -> None:
-        self.hint_var.set(selection_hint(self._selected_item()))
+        _set_var(self.hint_var, selection_hint(self._selected_item()))
         self._update_buttons()
         for iid, canvas in self._sparks.items():
-            canvas.configure(background=self._spark_background(iid))
+            background = self._spark_background(iid)
+            if canvas.cget("background") != background:
+                canvas.configure(background=background)
 
     def _on_return_key(self, _event: Any) -> None:
         if isinstance(safe_focus(self.root), ttk.Button):
