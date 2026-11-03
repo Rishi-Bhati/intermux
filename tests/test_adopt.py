@@ -67,11 +67,33 @@ class NftScriptTests(unittest.TestCase):
         # again would reset every TCP connection of the app, IPv4 included.
         script = adopt.nft_script(5, adopt.group_rel(ID), "wlan0")
         rules = self._output_rules(script)
-        self.assertTrue(rules[1].endswith("meta nfproto ipv6 jump reject_ipv6"), rules)
-        self.assertEqual(len(rules), 3)
+        self.assertTrue(rules[1].endswith("ip6 daddr ::1 return"), rules)   # local IPv6 keeps working
+        self.assertTrue(rules[2].endswith("meta nfproto ipv6 jump reject_ipv6"), rules)
+        self.assertEqual(len(rules), 4)
         chain = script.split("chain reject_ipv6 {", 1)[1].split("\n  }", 1)[0]
         self.assertEqual([line.strip() for line in chain.strip().splitlines()],
-                         ["meta l4proto tcp reject with tcp reset", "reject with icmpx admin-prohibited"])
+                         ["meta l4proto tcp reject with tcp reset", "reject with icmpx type admin-prohibited"])
+
+    def test_script_is_accepted_by_nft(self):
+        """Check the syntax with the real nft (`nft -c` loads nothing). The cgroup match needs the cgroup to
+        exist, so it is swapped for a plain match; everything else is checked as generated."""
+        import re
+        import shutil
+        import subprocess
+        import tempfile
+
+        nft, unshare = shutil.which("nft"), shutil.which("unshare")
+        if not nft or not unshare:
+            self.skipTest("nft or unshare is not installed")
+        script = adopt.nft_script(5, adopt.group_rel(ID), "wlan0")
+        script = re.sub(r'socket cgroupv2 level \d+ "[^"]+"', "meta skuid 0", script)
+        with tempfile.NamedTemporaryFile("w", suffix=".nft") as handle:
+            handle.write(script)
+            handle.flush()
+            result = subprocess.run([unshare, "-rn", nft, "-c", "-f", handle.name], capture_output=True, text=True)
+        if "not permitted" in result.stderr or "Permission denied" in result.stderr or "unshare" in result.stderr:
+            self.skipTest("cannot create a user and network namespace here")
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_only_the_original_direction_is_marked(self):
         # Replies to a connection someone else opened must leave the way the request came in.

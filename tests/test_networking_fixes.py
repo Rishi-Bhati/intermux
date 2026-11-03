@@ -124,5 +124,22 @@ class ProcessIdentityTests(unittest.TestCase):
                 self.assertIsNone(adopt.read_group_pids_or_none("intermux/adopt-0123456789abcdef"))
 
 
+class AdoptionRoutingTests(unittest.TestCase):
+    def test_a_fallback_with_a_lower_metric_is_not_healthy(self):
+        good = [{"dst": "default", "dev": "wlan0", "gateway": "10.0.0.1", "metric": 100},
+                {"dst": "default", "type": "unreachable", "metric": 1000}]
+        self.assertTrue(adopt.table_ok(good, "wlan0", "10.0.0.1"))
+        stray = [good[0], {"dst": "default", "type": "unreachable", "metric": 50}]
+        self.assertFalse(adopt.table_ok(stray, "wlan0", "10.0.0.1"))
+        self.assertFalse(adopt.table_ok([dict(good[0], metric=500), good[1]], "wlan0", "10.0.0.1"))
+
+    def test_slots_loaded_in_the_kernel_are_not_reused(self):
+        with mock.patch.object(adopt, "list_nft_tables", return_value=["intermux_adopt1", "intermux_adopt3"]):
+            self.assertEqual(adopt.kernel_slots(), {1, 3})
+            self.assertEqual(adopt.pick_slot({2} | adopt.kernel_slots()), 4)
+        with mock.patch.object(adopt, "list_nft_tables", side_effect=OSError("no nft")):
+            self.assertEqual(adopt.kernel_slots(), set())
+
+
 if __name__ == "__main__":
     unittest.main()

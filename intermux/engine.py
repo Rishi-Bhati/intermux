@@ -727,7 +727,7 @@ def adopt(iface: str, app: str, *, user: UserInfo) -> Dict[str, Any]:
 
     st = state.load_state(config.STATE_FILE)
     adopt_id = secrets.token_hex(8)
-    slot = adopt_sys.pick_slot(a.slot for a in st.adoptions)
+    slot = adopt_sys.pick_slot({a.slot for a in st.adoptions} | adopt_sys.kernel_slots())
     group = adopt_sys.group_rel(adopt_id)
     gateway = interface.gateways[0] if interface.gateways else None
 
@@ -748,8 +748,10 @@ def adopt(iface: str, app: str, *, user: UserInfo) -> Dict[str, Any]:
                 continue
             moved.extend(adopt_sys.move_pids(group, [pid]))
         if moved:
-            adopt_sys.apply_nft(slot, group, iface)
+            # Routes and the fwmark rule first, marking last: packets are never marked before a complete
+            # table exists for them to follow.
             policy_warnings = adopt_sys.apply_policy(slot, iface, gateway)
+            adopt_sys.apply_nft(slot, group, iface)
     except Exception as exc:
         rollback()
         raise ConflictError(f"could not route {os.path.basename(app)} through {iface}: {exc}",
@@ -765,7 +767,13 @@ def adopt(iface: str, app: str, *, user: UserInfo) -> Dict[str, Any]:
         created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
     )
     st.adoptions.append(record)
-    state.save_state(st, config.STATE_FILE)
+    try:
+        state.save_state(st, config.STATE_FILE)
+    except Exception as exc:
+        # Without a record nothing would ever release the cgroup, rules and routes: undo them now.
+        rollback()
+        raise ConflictError(f"could not record the routing of {os.path.basename(app)}: {exc}",
+                            code="adopt_failed") from exc
     warnings = ["connections the app already had open keep their old route until they reconnect; "
                 "new connections use " + iface,
                 "DNS lookups use the system's normal route"]

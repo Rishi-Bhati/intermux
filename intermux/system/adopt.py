@@ -51,6 +51,21 @@ def nft_table_name(slot: int) -> str:
     return f"intermux_adopt{slot}"
 
 
+def kernel_slots() -> Set[int]:
+    """Slots whose nft table is already loaded, whatever the state file says (it may have been lost)."""
+    slots: Set[int] = set()
+    try:
+        names = list_nft_tables()
+    except Exception as exc:  # noqa: BLE001 - best effort; nft may be missing or not permitted
+        log.debug("cannot list nft tables: %s", exc)
+        return slots
+    for name in names:
+        tail = name[len("intermux_adopt"):]
+        if tail.isdigit():
+            slots.add(int(tail))
+    return slots
+
+
 def pick_slot(used: Iterable[int]) -> int:
     """Return the lowest free slot in SLOT_MIN..SLOT_MAX."""
     taken = set(used)
@@ -88,11 +103,12 @@ def nft_script(slot: int, group_path: str, iface: str) -> str:
         f"table inet {name} {{\n"
         f"  chain reject_ipv6 {{\n"
         f"    meta l4proto tcp reject with tcp reset\n"
-        f"    reject with icmpx admin-prohibited\n"
+        f"    reject with icmpx type admin-prohibited\n"
         f"  }}\n"
         f"  chain output {{\n"
         f"    type route hook output priority mangle; policy accept;\n"
         f"    {member} meta l4proto {{ tcp, udp }} th dport 53 return\n"
+        f"    {member} ip6 daddr ::1 return\n"
         f"    {member} meta nfproto ipv6 jump reject_ipv6\n"
         f"    {member} ct direction original meta mark set {mark} ct mark set {mark}\n"
         f"  }}\n"
@@ -309,9 +325,13 @@ def table_ok(routes: Any, iface: str, gateway: Optional[str]) -> bool:
     for r in routes:
         if not isinstance(r, dict) or r.get("dst") != "default":
             continue
+        metric = r.get("metric")
         if r.get("type") == "unreachable":
-            have_fallback = True
-        elif r.get("dev") == iface and (r.get("gateway") or None) == (gateway or None):
+            # A fallback with a lower metric than the interface route would win the lookup and blackhole the app.
+            if metric in (None, _BLACKHOLE_METRIC):
+                have_fallback = True
+        elif (r.get("dev") == iface and (r.get("gateway") or None) == (gateway or None)
+              and metric in (None, _ROUTE_METRIC)):
             have_iface = True
     return have_iface and have_fallback
 
