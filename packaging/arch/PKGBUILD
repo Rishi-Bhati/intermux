@@ -21,7 +21,7 @@ install=intermux.install
 options=('!strip' '!debug')
 source=("$pkgname-$_tag.tar.gz::$url/archive/refs/tags/$_tag.tar.gz")
 # Update this pkgsum on every release, otherwise validation fails
-sha256sums=('e8e7833c0c98d408505fe1756b7de64209901b3a2fb07b5430019c737e81d140')
+sha256sums=('efb14f803b8f5690ecbf7f8ea3cfcd7e1d09bf882548fb93ddb602fd012aa7e6')
 
 build() {
     cd "$srcdir/$pkgname-$_tag"
