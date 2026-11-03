@@ -13,6 +13,7 @@ from intermux.system import commands
 log = logging.getLogger("intermux.system.adopt")
 
 CGROUP_ROOT = Path("/sys/fs/cgroup")
+SYSCTL_CONF_DIR = Path("/proc/sys/net/ipv4/conf")
 GROUP_PARENT = "intermux"
 SLOT_MIN, SLOT_MAX = 1, 200
 MARK_BASE = 0x100
@@ -60,7 +61,13 @@ def pick_slot(used: Iterable[int]) -> int:
 
 
 def nft_script(slot: int, group_rel: str, iface: str) -> str:
-    """Return the nft script that marks the group's packets and masquerades them on iface."""
+    """Return the nft script that marks the group's packets and masquerades them on iface.
+
+    DNS (port 53) is left unmarked: the host's resolvers (Tailscale's 100.100.100.100, a LAN router, an
+    IPv6 server) are often reachable only through their own link, so routing queries out of iface makes
+    every lookup fail. Other IPv6 is rejected rather than blackholed so connects fail at once and apps fall
+    back to IPv4 instead of hanging. The mark is copied to the connection and restored on replies, so a
+    strict rp_filter validates them against the slot's table instead of the main one."""
     if not isinstance(iface, str) or not _IFACE_RE.match(iface):
         raise ValidationError(f"unsafe interface name: {iface!r}")
     parts = [p for p in group_rel.split("/") if p]
@@ -69,11 +76,19 @@ def nft_script(slot: int, group_rel: str, iface: str) -> str:
     path = "/".join(parts)
     mark = f"0x{slot_mark(slot):x}"
     name = nft_table_name(slot)
+    member = f"socket cgroupv2 level {len(parts)} \"{path}\""
     return (
         f"table inet {name} {{\n"
         f"  chain output {{\n"
         f"    type route hook output priority mangle; policy accept;\n"
-        f"    socket cgroupv2 level {len(parts)} \"{path}\" meta mark set {mark}\n"
+        f"    {member} meta l4proto {{ tcp, udp }} th dport 53 return\n"
+        f"    {member} meta nfproto ipv6 meta l4proto tcp reject with tcp reset\n"
+        f"    {member} meta nfproto ipv6 reject with icmpx admin-prohibited\n"
+        f"    {member} meta mark set {mark} ct mark set {mark}\n"
+        f"  }}\n"
+        f"  chain prerouting {{\n"
+        f"    type filter hook prerouting priority mangle; policy accept;\n"
+        f"    ct mark {mark} meta mark set {mark}\n"
         f"  }}\n"
         f"  chain postrouting {{\n"
         f"    type nat hook postrouting priority srcnat; policy accept;\n"
@@ -243,6 +258,18 @@ def table_ok(routes: Any, iface: str, gateway: Optional[str]) -> bool:
     return have_iface and have_fallback
 
 
+def enable_src_valid_mark(iface: str) -> None:
+    """Let rp_filter use the packet mark on iface, so replies restored to the slot's mark pass the reverse
+    path check (strict rp_filter otherwise drops them when the main table's default is another link).
+    Per interface, and re-applied on refresh: the setting is lost when the interface is recreated."""
+    if not isinstance(iface, str) or not _IFACE_RE.match(iface) or iface in (".", ".."):
+        raise ValidationError(f"unsafe interface name: {iface!r}")
+    try:
+        (Path(SYSCTL_CONF_DIR) / iface / "src_valid_mark").write_text("1")
+    except OSError as exc:
+        log.warning("cannot enable src_valid_mark on %s: %s", iface, exc)
+
+
 def _v6_step(argv: List[str]) -> None:
     """Run an IPv6 command; a host without IPv6 support has nothing to leak, so that is not an error."""
     commands.run_checked(argv, tolerate=_V6_MISSING)
@@ -252,6 +279,7 @@ def apply_policy(slot: int, iface: str, gateway: Optional[str]) -> None:
     """Install the fwmark rules (IPv4, plus an IPv6 blackhole) and the slot's routes. Safe to repeat."""
     if not isinstance(iface, str) or not _IFACE_RE.match(iface):
         raise ValidationError(f"unsafe interface name: {iface!r}")
+    enable_src_valid_mark(iface)
     ip = _ip_bin()
     if not _rule_exists(slot):
         commands.run_checked([ip] + rule_args(slot))
