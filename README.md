@@ -236,6 +236,8 @@ The full policy, including how to report a vulnerability, is in [SECURITY.md](SE
 - **Connections opened before a shift keep their old route.** "Shift current session" applies to connections the app opens afterwards; ones it already had open stay on the old route until they reconnect. Reload a page or reopen a tab to move it.
 - **DNS in a routed running app.** Name lookups of an app routed with "Shift current session" use the system's normal route, not the chosen interface, so resolvers that only another link reaches keep working. The app's other traffic uses the chosen interface.
 - **Traffic is per interface namespace.** All apps bound to one interface share one namespace, so their DNS and bandwidth limit are shared too, and the speed on an app row is the namespace's speed. A shifted app has no counter of its own; its traffic is part of its interface's speed.
+- **A shifted app on an interface that went down.** Its new connections wait for a timeout instead of failing at once. Nothing leaks onto another interface.
+- **src_valid_mark stays on.** InterMux turns on `src_valid_mark` for an interface when it routes a running app through it, and leaves it on. It only lets the reverse-path filter use packet marks.
 - **Moving an app restarts it.** A namespace's routing belongs to its interface, so InterMux moves a bound app by starting it again on the new connection. To move an app without restarting it, use "Shift current session".
 - **Shared public IP.** Two interfaces can still show the same public IP when they use the same upstream connection.
 - **cgroup v2 is required** to route a running app (InterMux reports `cgroup v2 is required to route a running app` otherwise). Routing a running app also needs `nft`.
