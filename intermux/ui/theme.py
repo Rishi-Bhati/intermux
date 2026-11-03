@@ -19,21 +19,22 @@ log = logging.getLogger("intermux.ui")
 # ---------------------------------------------------------------------------
 
 PALETTE: Dict[str, str] = {
-    # The same tokens as the InterMux website (website/app/globals.css).
-    "bg": "#0C0D0E",
-    "surface": "#121315",
-    "surface_alt": "#17191B",
-    "border": "#1F2123",
-    "line_hi": "#33363A",
-    "text": "#E9EAEB",
-    "text_muted": "#868B91",
+    # A dimmed grey rather than near-black, so the window reads as calm instead of dark. The accent and
+    # status colours are the website's (website/app/globals.css).
+    "bg": "#24272C",
+    "surface": "#2C3036",
+    "surface_alt": "#353A41",
+    "border": "#3E444C",
+    "line_hi": "#545B65",
+    "text": "#EDEFF2",
+    "text_muted": "#AEB4BD",
     "accent": "#3A5AFF",        # fills: primary buttons, selection
-    "accent_fg": "#6680FF",     # accent used as text or a thin line on a dark surface (>= 4.5:1)
+    "accent_fg": "#93A6FF",     # accent used as text or a thin line on a dark surface (>= 4.5:1)
     "accent_text": "#FFFFFF",
     "success": "#3FD69A",       # green: InterMux is routing
     "warning": "#FFB547",
     "danger": "#FF8585",
-    "focus": "#6680FF",
+    "focus": "#93A6FF",
     "violet": "#A78BFA",
     "cyan": "#38C8F0",
     "pink": "#F472B6",
@@ -85,6 +86,12 @@ def shade(colour: str, amount: float) -> str:
     factor = min(1.0, abs(amount))
     parts = [round(c + (target - c) * factor) for c in _rgb(colour)]
     return "#{:02X}{:02X}{:02X}".format(*parts)
+
+
+def mix(a: str, b: str, t: float) -> str:
+    """Blend #RRGGBB a toward b by t (0..1)."""
+    pa, pb = _rgb(a), _rgb(b)
+    return "#{:02X}{:02X}{:02X}".format(*(round(x + (y - x) * t) for x, y in zip(pa, pb)))
 
 
 def relative_luminance(colour: str) -> float:
@@ -337,7 +344,47 @@ def apply_theme(root: Any) -> Dict[str, str]:
         )
 
     style.configure("TSeparator", background=p["border"])
+
+    # Group boxes: a titled outline around each part of the main window
+    style.configure("TLabelframe", background=p["bg"], bordercolor=p["line_hi"], lightcolor=p["line_hi"],
+                    darkcolor=p["line_hi"], relief="solid", borderwidth=1)
+    style.configure("TLabelframe.Label", background=p["bg"], foreground=p["text"], font=section)
+
+    # Tables: the body face one size down, so nine columns fit without clipping
+    cell = _fonts["cell"] = tkfont.Font(root=root, family=family, size=FONT_SIZES["small"][0], weight="normal")
+    style.configure("Treeview", background=p["surface"], fieldbackground=p["surface"], foreground=p["text"],
+                    bordercolor=p["line_hi"], lightcolor=p["line_hi"], darkcolor=p["line_hi"],
+                    borderwidth=1, relief="solid", rowheight=cell.metrics("linespace") + 14, font=cell, indent=18)
+    style.map("Treeview",
+              background=[("selected", table_selection(p))],
+              foreground=[("selected", p["text"])],
+              bordercolor=[("focus", p["focus"])], lightcolor=[("focus", p["focus"])],
+              darkcolor=[("focus", p["focus"])])
+    heading = p["surface_alt"]
+    style.configure("Treeview.Heading", background=heading, foreground=p["text_muted"], font=small,
+                    bordercolor=p["line_hi"], lightcolor=heading, darkcolor=heading, relief="flat",
+                    padding=(8, 5))
+    style.map("Treeview.Heading", background=[("active", shade(heading, 0.06))],
+              foreground=[("active", p["text"])])
+    # No dotted focus ring inside rows; the row highlight already shows the selection.
+    style.layout("Treeview.Item", [
+        ("Treeitem.padding", {"sticky": "nswe", "children": [
+            ("Treeitem.indicator", {"side": "left", "sticky": ""}),
+            ("Treeitem.image", {"side": "left", "sticky": ""}),
+            ("Treeitem.text", {"side": "left", "sticky": ""}),
+        ]}),
+    ])
     return dict(p)
+
+
+def table_selection(p: Dict[str, str]) -> str:
+    """Background of a selected table row: the accent, muted toward the surface."""
+    return mix(p["surface"], p["accent"], 0.38)
+
+
+def table_group(p: Dict[str, str]) -> str:
+    """Background of the interface rows that head each group in the Bindings table."""
+    return mix(p["surface"], p["line_hi"], 0.45)
 
 
 # ---------------------------------------------------------------------------
