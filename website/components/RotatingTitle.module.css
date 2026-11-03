@@ -1,0 +1,112 @@
+.title {
+  margin: 0;
+  font-size: clamp(2.6rem, 6.2vw, 5.5rem);
+  font-weight: 600;
+  line-height: 1.02;
+  letter-spacing: -0.04em;
+}
+
+/* Every headline sits in the same cell, so the box is as tall as the tallest and nothing jumps. */
+.stack {
+  display: grid;
+}
+
+.item {
+  grid-area: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-wrap: balance;
+}
+
+.line {
+  display: block;
+  opacity: 0;
+  transform: translateY(0.28em);
+  transition: opacity 0.5s ease, transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.soft {
+  color: var(--muted);
+}
+
+.item[data-state="in"] .line {
+  opacity: 1;
+  transform: none;
+}
+
+.item[data-state="in"] .soft {
+  transition-delay: 0.09s;
+}
+
+.item[data-state="out"] .line {
+  transform: translateY(-0.28em);
+  transition-duration: 0.35s, 0.45s;
+}
+
+/* Progress ticks: one per headline, the current one fills up until the next. */
+.ticks {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 26px;
+}
+
+.tick {
+  position: relative;
+  width: 28px;
+  height: 14px;
+  padding: 0;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.tick::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 6px;
+  height: 2px;
+  background: var(--line-hi);
+  border-radius: 1px;
+  transition: background-color 0.2s ease;
+}
+
+.tick:hover::before {
+  background: var(--muted);
+}
+
+.fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+.tick[data-active] .fill {
+  animation: fill linear forwards;
+}
+
+@keyframes fill {
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .line {
+    transition: none;
+  }
+
+  .tick[data-active] .fill {
+    animation: none;
+    transform: scaleX(1);
+  }
+}

@@ -387,6 +387,47 @@ class BindRollbackTests(unittest.TestCase):
         self.assertEqual(saved[-1], {})
 
 
+class BindFirewalldTests(unittest.TestCase):
+    class _Stop(Exception):
+        pass
+
+    def test_veth_is_trusted_before_the_dns_probe(self):
+        # The DNS probe is sent from inside the namespace, so firewalld must already forward its traffic.
+        order = mock.Mock()
+        iface = mock.Mock(gateways=["192.168.1.1"])
+        handler = mock.Mock(name="handler")
+        handler.name = "generic"
+        handler.prepare.side_effect = self._Stop
+        user = UserInfo(uid=1000, gid=1000, username="u", home="/tmp")
+        net = engine.ipaddress.IPv4Network("10.200.3.0/24")
+        with mock.patch.object(engine.netns, "ensure_namespace"), \
+                mock.patch.object(engine.netns, "ensure_veth"), \
+                mock.patch.object(engine.firewall, "enable_forwarding", return_value="1"), \
+                mock.patch.object(engine.firewall, "ensure_nat", order.ensure_nat), \
+                mock.patch.object(engine.firewall, "trust_veth", order.trust_veth), \
+                mock.patch.object(engine.routing, "ensure_policy", order.ensure_policy), \
+                mock.patch.object(engine, "configure_namespace_dns", order.dns), \
+                mock.patch.object(engine.state, "save_state"):
+            order.dns.return_value = []
+            with self.assertRaises(self._Stop):
+                engine._bind_plumbed(engine.state.State(), "/usr/bin/x", "wg0", iface, handler, net, "ns_a",
+                                     "default", user=user, env={})
+        names = [c[0] for c in order.mock_calls]
+        self.assertLess(names.index("trust_veth"), names.index("dns"))
+        order.trust_veth.assert_called_once_with(engine.netns.veth_names("wg0")[0])
+
+    def test_teardown_untrusts_the_veth_before_deleting_it(self):
+        order = mock.Mock()
+        with mock.patch.object(engine.firewall, "remove_nat"), \
+                mock.patch.object(engine.routing, "remove_policy"), \
+                mock.patch.object(engine.firewall, "untrust_veth", order.untrust_veth), \
+                mock.patch.object(engine.netns, "delete_veth", order.delete_veth), \
+                mock.patch.object(engine.netns, "delete_namespace"):
+            engine._teardown_iface("wg0", "10.200.3.0/24")
+        host_v = engine.netns.veth_names("wg0")[0]
+        self.assertEqual(order.mock_calls, [mock.call.untrust_veth(host_v), mock.call.delete_veth(host_v)])
+
+
 class BindingPidsTests(unittest.TestCase):
     def _run(self, st, b, table, uid=None, matched=()):
         handler = mock.Mock(comm_names=lambda a: [])

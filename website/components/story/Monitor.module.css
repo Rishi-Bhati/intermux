@@ -1,0 +1,269 @@
+/*
+ * Green marks anything InterMux is routing, and a light red a connection that is saturated.
+ */
+.rows {
+  --ok: var(--green);
+  --hot: var(--red);
+  --idle: #868b91;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.unit {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+.row {
+  --tone: var(--idle);
+  --status: var(--idle);
+  flex: 1;
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 20px;
+  padding: 16px 20px 14px;
+  min-height: 0;
+}
+
+.row[data-tone="ok"] {
+  --tone: var(--ok);
+  --status: var(--ok);
+}
+
+.row[data-tone="hot"] {
+  --tone: var(--hot);
+  --status: var(--hot);
+}
+
+.row + .row {
+  border-top: 1px solid var(--line);
+}
+
+/* Left: which connection, how fast it is going right now, and whether it is coping. */
+.id {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding-block: 2px;
+}
+
+.ident {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ifaceIcon {
+  display: grid;
+  place-items: center;
+  color: var(--tone);
+  transition: color 0.5s ease;
+}
+
+.ifaceName {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.statValue {
+  font-size: 19px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--tone);
+  transition: color 0.5s ease;
+}
+
+.statUnit {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--status);
+  transition: color 0.5s ease;
+}
+
+.statusWord {
+  font-size: 13px;
+}
+
+/* Right: the apps using this connection, and the graph. */
+.main {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.strip {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.chip {
+  --icon: var(--accent);
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px 0 9px;
+  font-family: var(--font-code);
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel-hi);
+  border-radius: var(--radius);
+  will-change: transform;
+  transition: background-color 0.3s ease;
+}
+
+.chip svg {
+  flex: none;
+  color: var(--icon);
+}
+
+/* While an app is travelling it rides above the rows. */
+.chip[data-moving] {
+  z-index: 4;
+  background: var(--line-hi);
+  box-shadow: 0 10px 22px -8px rgba(0, 0, 0, 0.85);
+}
+
+/* An empty place where an app can land. */
+.slot {
+  width: 30px;
+  height: 30px;
+  border: 1px dashed var(--line-hi);
+  border-radius: var(--radius);
+  opacity: 0.7;
+}
+
+.plot {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 40px;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.max {
+  position: absolute;
+  right: 0;
+  top: -14px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+/* Footer: the video call as a signal meter */
+.call {
+  --c: var(--red);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+}
+
+.call[data-good] {
+  --c: var(--green);
+}
+
+.callIcon {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.bars {
+  display: inline-flex;
+  align-items: flex-end;
+  align-self: center;
+  gap: 3px;
+  height: 16px;
+  margin-top: 1px;
+}
+
+.bars i {
+  display: block;
+  width: 5px;
+  border-radius: 1px;
+  background: var(--line-hi);
+  transition: background-color 0.45s ease;
+}
+
+.bars i[data-on] {
+  background: var(--c);
+}
+
+.latency {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--c);
+  font-variant-numeric: tabular-nums;
+  transition: color 0.5s ease;
+}
+
+.latency small {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+  letter-spacing: 0;
+}
+
+@media (max-width: 600px) {
+  .row {
+    grid-template-columns: 96px minmax(0, 1fr);
+    gap: 12px;
+    padding-inline: 14px;
+  }
+  .statusWord {
+    display: none;
+  }
+  .ifaceName {
+    font-size: 14px;
+  }
+}

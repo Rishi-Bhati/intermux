@@ -1,0 +1,222 @@
+:root {
+  --bg: #0c0d0e;
+  --panel: #121315;
+  --panel-hi: #17191b;
+  --line: #1f2123;
+  --line-hi: #33363a;
+  --text: #e9eaeb;
+  --muted: #868b91;
+  --accent: #3a5aff;
+  --accent-ink: #ffffff;
+
+  /* Supporting colours. Green means InterMux is on and routing; the rest tell apps and steps apart. */
+  --green: #3fd69a;
+  --red: #ff8585;
+  --amber: #ffb547;
+  --violet: #a78bfa;
+  --cyan: #38c8f0;
+  --pink: #f472b6;
+
+  --radius: 4px;
+  --radius-sm: 3px;
+
+  --font-body: var(--font-sans), system-ui, sans-serif;
+  --font-code: var(--font-mono), ui-monospace, "SF Mono", Menlo, monospace;
+
+  --pad-x: clamp(20px, 4.5vw, 64px);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Fine film grain, like the texture the palette was taken from. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+  opacity: 0.07;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* A very quiet grid behind everything below the hero. */
+.grid-texture {
+  position: relative;
+  isolation: isolate;
+}
+
+.grid-texture::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.032) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.032) 1px, transparent 1px);
+  background-size: 56px 56px;
+  background-position: center top;
+  /* It eases in from the hero instead of starting with a hard edge. */
+  mask-image: linear-gradient(to bottom, transparent 0, #000 220px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 220px);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--radius-sm);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Buttons shared by the hero, the install section and the closing call to action. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 20px;
+  border: 1px solid var(--line-hi);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease, filter 0.2s ease, transform 0.15s ease;
+}
+
+.btn:hover {
+  background: var(--panel-hi);
+  border-color: #464a4f;
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 8px 28px -10px rgba(58, 90, 255, 0.75);
+}
+
+.btn-primary:hover {
+  background: var(--accent);
+  border-color: transparent;
+  filter: brightness(1.1);
+}
+
+.btn small {
+  font-weight: 500;
+  font-size: 12.5px;
+  opacity: 0.72;
+}
+
+.btn .count {
+  padding-left: 10px;
+  margin-left: 2px;
+  border-left: 1px solid var(--line-hi);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* Section headings below the story share one look. */
+.eyebrow {
+  display: inline-block;
+  margin-bottom: 14px;
+  font-family: var(--font-code);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.section-title {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+  text-wrap: balance;
+}
+
+.section-lede {
+  margin: 18px 0 0;
+  max-width: 56ch;
+  font-size: clamp(1rem, 1.3vw, 1.125rem);
+  line-height: 1.55;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+section[id] {
+  scroll-margin-top: 24px;
+}

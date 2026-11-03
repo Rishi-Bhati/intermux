@@ -199,12 +199,16 @@ def _bind_plumbed(st: state.State, app_path: str, iface: str, interface: netinfo
     if st.ip_forward_prev is None:
         st.ip_forward_prev = previous
     firewall.ensure_nat(subnet, iface)
+    warnings: List[str] = []
+    if not firewall.trust_veth(host_v):
+        warnings.append("firewalld did not accept the InterMux link into its trusted zone; "
+                        "it may block this application's traffic")
     index = subnets.index_of(subnet)
     table = config.TABLE_BASE + index
     priority = config.PRIORITY_BASE + index
     routing.ensure_policy(subnet, iface, table, priority, gateway, host_v)
-    warnings = configure_namespace_dns(ns, ns_v, str(subnets.ns_ip(subnet)),
-                                       st.dns.get(iface) or namespace_dns_servers(interface))
+    warnings += configure_namespace_dns(ns, ns_v, str(subnets.ns_ip(subnet)),
+                                        st.dns.get(iface) or namespace_dns_servers(interface))
     warnings += _apply_limits(iface, st.limits.get(iface))
     state.save_state(st, config.STATE_FILE)
 
@@ -591,6 +595,7 @@ def reset(kill_apps: bool = False, uid: Optional[int] = None) -> Dict[str, Any]:
             _safe(netns.delete_namespace, ns)
     for veth in veths:
         if veth not in kept_veths:
+            _safe(firewall.untrust_veth, veth)
             _safe(netns.delete_veth, veth)
 
     rules = [r for r in routing.intermux_rules()
@@ -830,6 +835,7 @@ def _teardown_iface(iface: str, cidr: str) -> None:
     host_v, _ = netns.veth_names(iface)
     firewall.remove_nat(net, iface)
     routing.remove_policy(net, config.TABLE_BASE + index, config.PRIORITY_BASE + index)
+    _safe(firewall.untrust_veth, host_v)
     netns.delete_veth(host_v)
     netns.delete_namespace(netns.namespace_name(iface))
 
@@ -839,6 +845,7 @@ def _teardown_binding_plumbing(binding: state.Binding) -> None:
     index = subnets.index_of(net)
     firewall.remove_nat(net, binding.iface)
     routing.remove_policy(net, config.TABLE_BASE + index, config.PRIORITY_BASE + index)
+    _safe(firewall.untrust_veth, netns.veth_names(binding.iface)[0])
     netns.delete_veth(netns.veth_names(binding.iface)[0])
     netns.delete_namespace(binding.namespace)
 

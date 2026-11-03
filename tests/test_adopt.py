@@ -49,6 +49,30 @@ class NftScriptTests(unittest.TestCase):
             with self.assertRaises(ValidationError):
                 adopt.nft_script(1, adopt.group_rel(ID), bad)
 
+    def _output_rules(self, script):
+        chain = script.split("chain output {", 1)[1].split("\n  }", 1)[0]
+        return [line.strip() for line in chain.splitlines() if "socket cgroupv2" in line]
+
+    def test_dns_leaves_by_its_normal_route(self):
+        # Marking DNS sends queries for 100.100.100.100 (Tailscale), a LAN router or an IPv6 resolver out of
+        # the adopted interface, where they are unreachable: every lookup of the app then fails.
+        rules = self._output_rules(adopt.nft_script(5, adopt.group_rel(ID), "wlan0"))
+        self.assertTrue(rules[0].endswith("meta l4proto { tcp, udp } th dport 53 return"), rules)
+        self.assertTrue(rules[-1].endswith("meta mark set 0x105 ct mark set 0x105"), rules)
+
+    def test_ipv6_is_rejected_before_marking(self):
+        # A silent IPv6 blackhole makes connect() hang for minutes; a reject makes apps fall back to IPv4 at once.
+        rules = self._output_rules(adopt.nft_script(5, adopt.group_rel(ID), "wlan0"))
+        self.assertTrue(rules[1].endswith("meta nfproto ipv6 meta l4proto tcp reject with tcp reset"), rules)
+        self.assertTrue(rules[2].endswith("meta nfproto ipv6 reject with icmpx admin-prohibited"), rules)
+        self.assertEqual(len(rules), 4)
+
+    def test_reply_mark_is_restored_for_rp_filter(self):
+        script = adopt.nft_script(5, adopt.group_rel(ID), "wlan0")
+        pre = script.split("chain prerouting {", 1)[1].split("\n  }", 1)[0]
+        self.assertIn("type filter hook prerouting priority mangle;", pre)
+        self.assertIn("ct mark 0x105 meta mark set 0x105", pre)
+
 
 class CgroupTests(unittest.TestCase):
     def setUp(self):
@@ -144,7 +168,12 @@ class PolicyTests(unittest.TestCase):
     def _run(self, existing_rules):
         calls = []
         ok = mock.Mock()
-        with mock.patch.object(adopt, "_ip_bin", return_value="ip"), \
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.conf = Path(tmp.name)
+        (self.conf / "wlan0").mkdir()
+        with mock.patch.object(adopt, "SYSCTL_CONF_DIR", self.conf), \
+             mock.patch.object(adopt, "_ip_bin", return_value="ip"), \
              mock.patch.object(adopt, "_rule_exists", side_effect=lambda s, f=4: f in existing_rules), \
              mock.patch.object(adopt.commands, "run_checked",
                                side_effect=lambda argv, **k: calls.append(list(argv)) or ok):
@@ -157,6 +186,20 @@ class PolicyTests(unittest.TestCase):
         self.assertIn(["ip", "-6", "rule", "add", "fwmark", "0x101", "lookup", "2001", "priority", "2001"],
                       calls)
         self.assertIn(["ip", "-6", "route", "replace", "unreachable", "default", "table", "2001"], calls)
+
+    def test_apply_enables_src_valid_mark_on_the_interface(self):
+        self._run(set())
+        self.assertEqual((self.conf / "wlan0" / "src_valid_mark").read_text(), "1")
+
+    def test_src_valid_mark_missing_interface_is_not_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(adopt, "SYSCTL_CONF_DIR", Path(tmp)):
+            adopt.enable_src_valid_mark("gone0")
+            self.assertFalse((Path(tmp) / "gone0").exists())
+
+    def test_src_valid_mark_rejects_traversal(self):
+        for bad in ("..", ".", "a/b", ""):
+            with self.assertRaises(ValidationError):
+                adopt.enable_src_valid_mark(bad)
 
     def test_apply_is_idempotent_when_rules_exist(self):
         calls = self._run({4, 6})
