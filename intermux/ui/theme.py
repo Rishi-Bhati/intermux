@@ -40,8 +40,6 @@ PALETTE: Dict[str, str] = {
     "pink": "#F472B6",
 }
 
-# Colours that tell apps apart in the network view, in the order apps get them.
-APP_COLOURS = ("#FFB547", "#38C8F0", "#A78BFA", "#F472B6", "#3FD69A", "#6680FF", "#FF8585")
 
 COMBO_ARROW = PALETTE["text"]  # dropdown arrow colour; contrasts with surface_alt
 

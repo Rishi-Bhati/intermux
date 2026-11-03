@@ -62,10 +62,32 @@ class NftScriptTests(unittest.TestCase):
 
     def test_ipv6_is_rejected_before_marking(self):
         # A silent IPv6 blackhole makes connect() hang for minutes; a reject makes apps fall back to IPv4 at once.
+        # The rejects sit in their own chain behind an explicit IPv6 match: `nft list` prints a
+        # `meta nfproto ipv6 meta l4proto tcp reject` rule without the IPv6 part, and loading that listing
+        # again would reset every TCP connection of the app, IPv4 included.
+        script = adopt.nft_script(5, adopt.group_rel(ID), "wlan0")
+        rules = self._output_rules(script)
+        self.assertTrue(rules[1].endswith("meta nfproto ipv6 jump reject_ipv6"), rules)
+        self.assertEqual(len(rules), 3)
+        chain = script.split("chain reject_ipv6 {", 1)[1].split("\n  }", 1)[0]
+        self.assertEqual([line.strip() for line in chain.strip().splitlines()],
+                         ["meta l4proto tcp reject with tcp reset", "reject with icmpx admin-prohibited"])
+
+    def test_only_the_original_direction_is_marked(self):
+        # Replies to a connection someone else opened must leave the way the request came in.
         rules = self._output_rules(adopt.nft_script(5, adopt.group_rel(ID), "wlan0"))
-        self.assertTrue(rules[1].endswith("meta nfproto ipv6 meta l4proto tcp reject with tcp reset"), rules)
-        self.assertTrue(rules[2].endswith("meta nfproto ipv6 reject with icmpx admin-prohibited"), rules)
-        self.assertEqual(len(rules), 4)
+        self.assertIn("ct direction original meta mark set 0x105", rules[-1])
+
+    def test_loading_twice_gives_the_same_ruleset(self):
+        script = adopt.nft_script(5, adopt.group_rel(ID), "wlan0")
+        self.assertTrue(script.startswith("add table inet intermux_adopt5\ndelete table inet intermux_adopt5\n"))
+
+    def test_only_intermux_groups_are_accepted(self):
+        for bad in ("intermux/../../tmp", "user.slice", "intermux/adopt-XYZ", ""):
+            with self.assertRaises(ValidationError):
+                adopt.nft_script(5, bad, "wlan0")
+            with self.assertRaises(ValidationError):
+                adopt.read_group_pids(bad)
 
     def test_reply_mark_is_restored_for_rp_filter(self):
         script = adopt.nft_script(5, adopt.group_rel(ID), "wlan0")

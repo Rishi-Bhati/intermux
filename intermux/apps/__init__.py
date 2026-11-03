@@ -7,7 +7,7 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from intermux.errors import ConflictError, NotFoundError
 from intermux.system.session import UserInfo
@@ -108,16 +108,38 @@ class ChromiumHandler(AppHandler):
 
 
 def resolve_app_path(app: str) -> str:
-    """Return the absolute path of an application given as a name or path."""
+    """Return the absolute path of an application given as a command name, a path, or the name an
+    installed application shows in menus (for example "Firefox"). Raises NotFoundError."""
     path = os.path.expanduser(app)
     if os.path.isabs(path) or "/" in path:
         if not os.path.exists(path):
             raise NotFoundError(f"Application not found: {app}")
-        return os.path.abspath(path)
+        return _check_executable(app, os.path.abspath(path))
     found = shutil.which(app)
-    if not found:
-        raise NotFoundError(f"Application not found in PATH: {app}")
-    return os.path.abspath(found)
+    if found:
+        return _check_executable(app, os.path.abspath(found))
+    entry = _desktop_entry_named(app)
+    if entry is not None:
+        return _check_executable(app, entry)
+    raise NotFoundError(f"Application not found in PATH or among installed applications: {app}")
+
+
+def _check_executable(app: str, path: str) -> str:
+    if not os.path.isfile(path):
+        raise NotFoundError(f"Not an application (not a file): {app}")
+    if not os.access(path, os.X_OK):
+        raise NotFoundError(f"Not an application (the file is not executable): {app}")
+    return path
+
+
+def _desktop_entry_named(name: str) -> Optional[str]:
+    """The binary of the bindable installed application whose menu name is `name` (any case), if exactly one."""
+    from intermux.apps import desktop_entries
+
+    wanted = name.strip().casefold()
+    found = {entry.binary for entry in desktop_entries.scan_desktop_entries()
+             if entry.bindable and entry.binary and entry.name.casefold() == wanted}
+    return found.pop() if len(found) == 1 else None
 
 
 def get_handler(app_path: str) -> AppHandler:

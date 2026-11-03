@@ -185,13 +185,20 @@ class FirewalldTests(unittest.TestCase):
 
     VETH = "veth0_0123abcd"
 
-    def _run(self, state_ok=True, change_ok=True, installed=True):
+    def _run(self, state_ok=True, change_ok=True, installed=True, zone=""):
         calls = []
 
         def fake_run(argv, **kwargs):
             calls.append(list(argv))
-            ok = state_ok if argv[1] == "--state" else change_ok
-            return mock.Mock(ok=ok)
+            if argv[1] == "--state":
+                if state_ok is True:
+                    return mock.Mock(ok=True, returncode=0, stdout="running\n", stderr="")
+                if state_ok is False:   # what firewall-cmd prints when the daemon is stopped
+                    return mock.Mock(ok=False, returncode=252, stdout="not running\n", stderr="")
+                return mock.Mock(ok=False, returncode=1, stdout="", stderr=state_ok)
+            if argv[1].startswith("--get-zone-of-interface"):
+                return mock.Mock(ok=bool(zone), returncode=0 if zone else 2, stdout=f"{zone}\n", stderr="")
+            return mock.Mock(ok=change_ok, returncode=0 if change_ok else 1, stdout="", stderr="")
 
         which = "/usr/bin/firewall-cmd" if installed else None
         patches = (mock.patch.object(firewall, "which", return_value=which),
@@ -203,7 +210,21 @@ class FirewalldTests(unittest.TestCase):
         with p1, p2:
             self.assertTrue(firewall.trust_veth(self.VETH))
         self.assertEqual(calls, [["/usr/bin/firewall-cmd", "--state"],
+                                 ["/usr/bin/firewall-cmd", f"--get-zone-of-interface={self.VETH}"],
                                  ["/usr/bin/firewall-cmd", "--zone=trusted", f"--change-interface={self.VETH}"]])
+
+    def test_already_trusted_is_left_alone(self):
+        calls, (p1, p2) = self._run(zone="trusted")
+        with p1, p2:
+            self.assertTrue(firewall.trust_veth(self.VETH))
+        self.assertFalse([c for c in calls if "--change-interface" in " ".join(c)])
+
+    def test_unclear_state_still_tries_and_reports(self):
+        # A timeout or D-Bus error must not be mistaken for "firewalld is not running".
+        calls, (p1, p2) = self._run(state_ok="Error: COMMAND_FAILED", change_ok=False)
+        with p1, p2:
+            self.assertFalse(firewall.trust_veth(self.VETH))
+        self.assertTrue([c for c in calls if "--change-interface" in " ".join(c)])
 
     def test_refusal_is_reported(self):
         calls, (p1, p2) = self._run(change_ok=False)

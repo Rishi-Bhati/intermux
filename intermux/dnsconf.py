@@ -40,8 +40,14 @@ def parse_servers(text: str) -> List[str]:
         raise ValueError("DNS servers must be text")
     stripped = text.strip()
     for name, servers in PRESETS.items():
-        if stripped.lower() == name.lower() or stripped.startswith(f"{name}:"):
+        if stripped.lower() == name.lower():
             return list(servers)
+        if stripped.lower().startswith(f"{name.lower()}:"):
+            # "Cloudflare: 1.1.1.1, 1.0.0.1" as the GUI lists it: the addresses after the name are what counts.
+            stripped = stripped[len(name) + 1:].strip()
+            if not stripped:
+                return list(servers)
+            break
     tokens = [t for t in re.split(r"[,;\s]+", stripped) if t]
     if not tokens:
         raise ValueError("no DNS servers given")

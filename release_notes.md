@@ -20,8 +20,8 @@ and it adds DNS and speed limits for each interface, and VPN connections, from t
 * **Speed limits.** Cap the download and upload speed of an interface in Mbit/s, when you add an app to the
   queue, or later from the interface's Speed limit… button.
 * **VPN connections from the app.** The VPN connections… button connects, disconnects and imports WireGuard
-  (.conf) and OpenVPN (.ovpn) connections. A VPN connected this way only carries the apps you route through
-  it.
+  (.conf) and OpenVPN (.ovpn) connections. With "Only for apps I route through it" ticked (the default), a VPN
+  connected this way only carries the apps you route through it.
 * **Restart, move and remove.** Restart an app in its interface with the same profile, move it to another
   interface (it restarts there), or remove an interface's namespace with everything in it.
 * **Recent apps.** The Application field remembers the last 20 apps you routed, with their interface and DNS.

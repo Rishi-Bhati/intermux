@@ -16,7 +16,7 @@ from intermux.errors import InterMuxError
 from intermux.helper import client as helper_client
 from intermux.system import commands, deps, netinfo, netns, procs, shaping, traffic
 from intermux.system import session as session_mod
-from intermux.ui import connections, dialogs, graph, icons, monitor, theme  # noqa: F401 (graph: sash_colour)
+from intermux.ui import dialogs, graph, icons, monitor, theme
 from intermux.ui.tooltip import Tooltip, fit_text
 from intermux.ui.history import History, Item as HistoryItem
 from intermux.ui.worker import Worker
@@ -151,14 +151,6 @@ def ns_key(iface: str) -> str:
     return NS_PREFIX + iface
 
 
-def routed_share(routed: float, total: float) -> str:
-    """"42%" of total that went through InterMux, or "" when there is no traffic to compare. Pure."""
-    if routed <= 0 or total <= 0:
-        return ""
-    share = min(routed / total, 1.0) * 100
-    return "<1%" if share < 1 else f"{share:.0f}%"
-
-
 def safe_focus(root: Any) -> Any:
     """focus_get() that returns None instead of raising (Tk raises KeyError for combobox popdowns)."""
     try:
@@ -255,35 +247,6 @@ def interface_label(iface: Any) -> str:
     return "  ".join(part for part in (iface.name, kind, addr) if part)
 
 
-def pending_detail(item: Dict[str, Any], existing: Sequence[str]) -> str:
-    """Second line of a queued app: "via wlan0 · new namespace · DNS Cloudflare". Pure."""
-    where = "existing namespace" if item["iface"] in existing else "new namespace"
-    dns = item.get("dns", dnsconf.KEEP)
-    if isinstance(dns, list):
-        dns_text = f"DNS {dnsconf.describe(dns)}"
-    elif item["iface"] in existing:
-        dns_text = "keeps its DNS"
-    else:
-        dns_text = "automatic DNS"
-    text = f"via {item['iface']} · {where} · {dns_text}"
-    limit = item.get("limit") or {}
-    caps = [f"{arrow} {shaping.format_mbit(limit[key])}" for key, arrow in (("down", "↓"), ("up", "↑"))
-            if limit.get(key)]
-    if caps:
-        text += " · limit " + " ".join(caps)
-    return text
-
-
-def limit_ops_for(items: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """set_limit batch ops for queued items that carry a speed limit, one per interface (last wins). Pure."""
-    chosen: Dict[str, Dict[str, Any]] = {}
-    for item in items:
-        if item.get("limit"):
-            chosen[item["iface"]] = {"op": "set_limit", "iface": item["iface"],
-                                     "down": item["limit"].get("down"), "up": item["limit"].get("up")}
-    return list(chosen.values())
-
-
 def queue_add(items: List[Dict[str, Any]], item: Dict[str, Any]) -> bool:
     """Append item to the pending list unless the same interface and application is already queued. Pure."""
     for existing in items:
@@ -349,7 +312,6 @@ def _ask_choice(
     return result["value"], bool(result["checked"])
 
 
-
 # ---------------------------------------------------------------------------
 # Table rows (pure)
 # ---------------------------------------------------------------------------
@@ -374,9 +336,25 @@ def dns_text(servers: Sequence[str]) -> str:
     return dnsconf.describe(list(servers)) if servers else "auto"
 
 
+def limit_text(limit: Optional[Dict[str, Optional[float]]]) -> str:
+    """"none", "↓ 20 Mbit/s", "↓ 20 ↑ 5 Mbit/s" (one unit when both share it). Pure."""
+    limit = limit or {}
+    down, up = limit.get("down"), limit.get("up")
+    if down and up and (down >= 1) == (up >= 1):
+        unit = shaping.format_mbit(down).split()[-1]
+        number = (lambda v: shaping.format_mbit(v).split()[0])
+        return f"↓ {number(down)} ↑ {number(up)} {unit}"
+    parts = []
+    if down:
+        parts.append(f"↓ {shaping.format_mbit(down)}")
+    if up:
+        parts.append(f"↑ {shaping.format_mbit(up)}")
+    return "  ".join(parts) or "none"
+
+
 def limit_cell(limit: Optional[Dict[str, Optional[float]]]) -> str:
     """Limit column: "-" when there is none. Pure."""
-    text = connections.limit_text(limit)
+    text = limit_text(limit)
     return "-" if text == "none" else text
 
 
@@ -584,12 +562,6 @@ def initial_geometry(screen_w: int, screen_h: int, wanted_h: int = 0) -> str:
     width = max(min(DESIGN_SIZE[0], screen_w - 80), MIN_SIZE[0])
     height = max(min(wanted_h or DESIGN_SIZE[1], screen_h - 80), MIN_SIZE[1])
     return f"{width}x{height}"
-
-
-def sash_colour(palette: Dict[str, str]) -> str:
-    """The resize handles between panels: a shade between the background and the panel border. Pure."""
-    return graph.mix(palette["bg"], palette["line_hi"], 0.35)
-
 
 
 class InterMuxApp:
@@ -842,7 +814,7 @@ class InterMuxApp:
         box.rowconfigure(0, weight=1)
         self.queue_tree, self.queue_empty = self._table(
             box, ("Application", 190),
-            [("iface", "Interface", 100, False), ("dns", "DNS", 110, True), ("limit", "Speed limit", 120, False),
+            [("iface", "Interface", 100, False), ("dns", "DNS", 110, True), ("limit", "Speed limit", 145, False),
              ("policy", "If running", 175, False)],
             height=4)
         self.queue_tree.bind("<<TreeviewSelect>>", lambda _e: self._update_buttons())
@@ -1430,7 +1402,7 @@ class InterMuxApp:
             self._picked_entries[app_path] = entry
         name = entry.name if entry is not None else os.path.basename(app_path)
         try:
-            dns_value = dialogs.dns_choice_value(self.dns_var.get())
+            dns_value = dialogs.dns_field_value(self.dns_combo, self.dns_var)
         except ValueError as exc:
             self._set_status(f"Could not use the DNS servers: {exc}", "error")
             self.dns_combo.focus_set()
@@ -1505,20 +1477,21 @@ class InterMuxApp:
             else:
                 op = {"op": "bind", "iface": item["iface"], "app": item["app"],
                       "running_policy": policy, "dns": item.get("dns", dnsconf.KEEP)}
+                if item.get("limit"):
+                    op["limit"] = dict(item["limit"])   # applied before the app starts
             plan.append((item, op))
         if not plan:
             self._assigning = False
             self._set_status("Start cancelled.")
             return
-        limit_ops = limit_ops_for([item for item, _ in plan])
         self._run_mutation(
             f"Starting {len(plan)} app(s)",
             _batch_task,
-            [op for _, op in plan] + limit_ops,
-            on_done=partial(self._on_batch_done, plan, limit_ops),
+            [op for _, op in plan],
+            on_done=partial(self._on_batch_done, plan),
         )
 
-    def _on_batch_done(self, plan: List[Tuple[Dict[str, Any], Dict[str, Any]]], limit_ops: List[Dict[str, Any]],
+    def _on_batch_done(self, plan: List[Tuple[Dict[str, Any], Dict[str, Any]]],
                        results: Any, error: Optional[BaseException]) -> None:
         self._assigning = False
         if error is not None:
@@ -1527,13 +1500,9 @@ class InterMuxApp:
             return
         done: List[str] = []
         failed: List[str] = []
+        notes: List[str] = []
         results = list(results or [])
-        for op, result in zip(limit_ops, results[len(plan):]):
-            if not (isinstance(result, dict) and result.get("ok")):
-                err = result.get("error") if isinstance(result, dict) else None
-                err = err if isinstance(err, dict) else {}
-                failed.append(f"speed limit on {op['iface']} ({err.get('message') or 'failed'})")
-        for (item, _op), result in zip(plan, results[:len(plan)]):
+        for (item, op), result in zip(plan, results):
             name = item.get("name") or os.path.basename(item["app"])
             if isinstance(result, dict) and result.get("ok"):
                 if item in self._pending:
@@ -1541,6 +1510,11 @@ class InterMuxApp:
                 done.append(f"{name} on {item['iface']}")
                 self.history.add(HistoryItem(app=item["app"], name=name, iface=item["iface"],
                                              dns=item.get("dns_text", "")))
+                data = result.get("data") if isinstance(result.get("data"), dict) else {}
+                notes.extend(f"{name}: {w}" for w in data.get("warnings") or [])
+                if op["op"] == "adopt" and item.get("limit"):
+                    notes.append(f"{name}: speed limits apply to apps started on an interface, "
+                                 "not to a shifted app")
             else:
                 err = result.get("error") if isinstance(result, dict) else None
                 err = err if isinstance(err, dict) else {}
@@ -1551,6 +1525,8 @@ class InterMuxApp:
         if failed:
             prefix = f"Started {len(done)}. " if done else ""
             self._set_status(f"{prefix}Still queued after an error: " + "; ".join(failed), "error")
+        elif done and notes:
+            self._set_status("Started " + ", ".join(done) + ". Note: " + "; ".join(notes), "warning")
         elif done:
             self._set_status("Started " + ", ".join(done) + ".", "success")
         else:
@@ -1566,6 +1542,7 @@ class InterMuxApp:
         item = self.history.find(self.app_var.get().strip())
         if item is None:
             return
+        self.dns_combo.custom_mode = False
         self.dns_var.set(item.dns or dialogs.AUTO_LABEL)
         label = next((lbl for lbl, name in self._iface_map.items() if name == item.iface), None)
         if label is not None:

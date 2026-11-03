@@ -36,7 +36,8 @@ Running it again updates to the newest release.
 ## `install.ps1` (Windows)
 
 Downloads `InterMux.exe` from the newest release that has one (pre-releases included), checks it against
-the SHA-256 digest GitHub publishes for release assets, and installs it per user to
+the SHA-256 digest GitHub publishes for release assets (when GitHub has one; otherwise it says so and
+skips the check), and installs it per user to
 `%LOCALAPPDATA%\Programs\InterMux` with a Start menu shortcut and an entry in Settings > Apps (which
 uninstalls it). No admin rights are needed to install; InterMux asks for them when it starts.
 

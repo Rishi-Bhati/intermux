@@ -76,8 +76,8 @@ Names are taken from the files in `packaging/` and from the hints printed by `in
 | Distribution | Runtime packages | Optional | Extra for building from source |
 |--------------|------------------|----------|--------------------------------|
 | Arch | `iproute2 iptables polkit util-linux procps-ng xdg-utils` | `nftables curl` | `tk` (and `pyinstaller` from the AUR for the PKGBUILD) |
-| Debian / Ubuntu | `iproute2 iptables pkexec` (or `policykit-1`) `util-linux procps xdg-utils` | `nftables curl` | `python3-tk python3-venv` |
-| Fedora | `iproute iptables-nft polkit util-linux procps-ng xdg-utils` | `nftables curl` | `python3-tkinter` |
+| Debian / Ubuntu | `iproute2 iptables pkexec` (or `policykit-1`) `util-linux procps xdg-utils python3-tk` | `nftables curl` | `python3-tk python3-venv` |
+| Fedora | `iproute iptables-nft polkit util-linux procps-ng xdg-utils hicolor-icon-theme` | `nftables curl` | `python3-tkinter` |
 | openSUSE | `iproute2 iptables procps util-linux polkit xdg-utils` | `nftables curl` | `python3-tk` |
 
 There is no openSUSE package recipe in `packaging/`; the openSUSE names come from `install.sh`.
@@ -162,7 +162,7 @@ The window has three sections: **New binding**, **Queue** and **Bindings**. Drag
 | **Queue** | The applications waiting to start, with their interface, DNS, speed limit and what to do if the application is already running. **Start all** starts the whole queue and asks for your password once. **Remove** and **Clear** change the list. |
 | **Bindings** | One row per interface, with the apps routed through it listed under it. Columns: Status, PID, Download, Upload, a "Last minute" graph, Speed limit, DNS and Public IP. |
 | **Buttons under Bindings** | They follow the selected row. For an app: **Check public IP**, **Restart**, **Stop**, **Open log**, **Move to…** and **Force quit**. For a shifted app: **Release**. For an interface: **DNS servers…**, **Speed limit…** and **Remove namespace…**, and **Check public IP** while one of its apps runs. Right-click a row for the same actions. |
-| **VPN connections…** | Connect or disconnect NetworkManager VPN connections, or import a WireGuard (`.conf`) or OpenVPN (`.ovpn`) file. A VPN connected here only carries the apps you route through it; the rest of the system keeps its normal route. |
+| **VPN connections…** | Connect or disconnect NetworkManager VPN connections, or import a WireGuard (`.conf`) or OpenVPN (`.ovpn`) file. With "Only for apps I route through it" ticked (the default), a VPN connected here only carries the apps you route through it; the rest of the system keeps its normal route. |
 | **Refresh** | Reads the state again now. |
 | **Report issue** | Opens the bug report dialog (see [Troubleshooting](#troubleshooting)). |
 | **Re-add routes** | Re-adds the routes of interfaces that are back, as `intermux reconnect` does. |

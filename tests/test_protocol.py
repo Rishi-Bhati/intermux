@@ -41,6 +41,7 @@ class ValidRequestTests(unittest.TestCase):
                 "running_policy": "ask",
                 "env": {},
                 "dns": "keep",
+                "limit": None,
             },
         )
 

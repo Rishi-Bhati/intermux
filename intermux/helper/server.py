@@ -94,6 +94,7 @@ def _run_batch(ops: Sequence[Dict[str, Any]], user: "session.UserInfo") -> list:
                     env=_sanitize_bind_env(op["env"], user),
                     running_policy=op["running_policy"],
                     dns=op.get("dns", "keep"),
+                    limit=op.get("limit"),
                 )
             else:
                 data = engine.adopt(op["iface"], op["app"], user=user)
@@ -125,6 +126,7 @@ def _dispatch(action: str, params: Dict[str, Any], user: Optional["session.UserI
                 env=env,
                 running_policy=params["running_policy"],
                 dns=params["dns"],
+                limit=params.get("limit"),
             )
         if action == "stop_app":
             return engine.stop_app(params["iface"], params["app"], uid=user.uid)
@@ -188,7 +190,7 @@ def handle(raw: str, *, euid: Optional[int] = None, environ: Optional[Mapping[st
     except InterMuxError as exc:
         log.warning("action %s failed: %s", action, exc.message)
         return error_response(exc.code, exc.message, exc.data)
-    except Exception as exc:
+    except Exception:
         log.exception("action %s raised an unexpected error", action)
         return error_response("internal", "internal error; see the helper log")
 

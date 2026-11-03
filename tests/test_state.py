@@ -240,7 +240,7 @@ class AdoptionStateTests(unittest.TestCase):
 
 class StateValidationTests(unittest.TestCase):
     def _item(self, **over):
-        item = {"iface": "wlan0", "app": "/usr/bin/x", "namespace": "ns_a", "subnet": "10.200.7.0/24",
+        item = {"iface": "wlan0", "app": "/usr/bin/x", "namespace": "ns_0000000a", "subnet": "10.200.7.0/24",
                 "table": 1007, "priority": 1007}
         item.update(over)
         return item
@@ -265,7 +265,7 @@ class StateValidationTests(unittest.TestCase):
 
 class BindingPidTests(unittest.TestCase):
     def _item(self, **over):
-        item = {"iface": "wlan0", "app": "/usr/bin/x", "namespace": "ns_a", "subnet": "10.200.7.0/24",
+        item = {"iface": "wlan0", "app": "/usr/bin/x", "namespace": "ns_0000000a", "subnet": "10.200.7.0/24",
                 "table": 1007, "priority": 1007}
         item.update(over)
         return item
@@ -287,3 +287,33 @@ class BindingPidTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+from intermux import state  # noqa: E402
+
+
+class RootPathSafetyTests(unittest.TestCase):
+    """Values the root helper turns into cgroup, sysctl or nft paths must be what InterMux itself writes."""
+
+    def _adoption(self, **over):
+        item = {"id": "0123456789abcdef", "iface": "wlan0", "app": "/usr/bin/x", "slot": 1,
+                "group": "intermux/adopt-0123456789abcdef", "mark": 0x101, "table": 2001, "priority": 2001,
+                "uid": 1000, "pids": [10]}
+        item.update(over)
+        return state.state_from_dict({"version": 1, "adoptions": [item]}).adoptions
+
+    def test_valid_adoption_kept(self):
+        self.assertEqual(len(self._adoption()), 1)
+
+    def test_tampered_adoptions_are_dropped(self):
+        for over in ({"group": "intermux/../../../tmp"}, {"group": "intermux/adopt-ffffffffffffffff"},
+                     {"slot": 0}, {"slot": 201}, {"iface": "../x"}, {"iface": "a" * 16}):
+            self.assertEqual(self._adoption(**over), [], over)
+
+    def test_tampered_bindings_and_subnets_are_dropped(self):
+        binding = {"iface": "wlan0", "app": "/usr/bin/x", "namespace": "ns_0000000a",
+                   "subnet": "10.200.7.0/24", "table": 1007, "priority": 1007}
+        st = state.state_from_dict({"version": 1, "bindings": [dict(binding, namespace="../../etc")],
+                                    "subnets": {"wlan0 x": "10.200.7.0/24", "wlan0": "10.200.7.0/24"}})
+        self.assertEqual(st.bindings, [])
+        self.assertEqual(st.subnets, {"wlan0": "10.200.7.0/24"})

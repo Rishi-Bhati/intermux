@@ -47,19 +47,26 @@ def build_parser() -> argparse.ArgumentParser:
                        help="close running instances of the application and reopen it")
     p.add_argument("--dns", metavar="SERVERS",
                    help="DNS for the interface namespace: auto, a preset (cloudflare, google, quad9) or "
-                        "servers separated by commas; by default an existing namespace keeps its DNS")
+                        "up to 4 IPv4 servers separated by commas; by default an existing namespace keeps "
+                        "its DNS")
 
     sub.add_parser("status", help="show bindings, DNS, bandwidth limits and traffic")
 
     p = sub.add_parser("dns", help="change the DNS servers of an interface namespace")
     p.add_argument("--iface", required=True, metavar="IF", help="interface whose namespace to change")
     p.add_argument("servers", metavar="SERVERS",
-                   help="auto, a preset (cloudflare, google, quad9) or servers separated by commas")
+                   help="auto, a preset (cloudflare, google, quad9) or up to 4 IPv4 servers separated by "
+                        "commas")
 
-    p = sub.add_parser("limit", help="limit the bandwidth of an interface namespace (Mbit/s)")
+    p = sub.add_parser("limit", help="limit the bandwidth of an interface namespace (Mbit/s)",
+                       description="Set the download and upload limits of an interface namespace, in "
+                                   "Mbit/s from 0.064 to 100000. A direction left out has no limit, so "
+                                   "`intermux limit --iface IF` with neither option removes both.")
     p.add_argument("--iface", required=True, metavar="IF", help="interface whose namespace to limit")
-    p.add_argument("--down", type=float, metavar="MBIT", help="download limit; omit to remove it")
-    p.add_argument("--up", type=float, metavar="MBIT", help="upload limit; omit to remove it")
+    p.add_argument("--down", type=float, metavar="MBIT",
+                   help="download limit, 0.064 to 100000 Mbit/s; omit for no limit")
+    p.add_argument("--up", type=float, metavar="MBIT",
+                   help="upload limit, 0.064 to 100000 Mbit/s; omit for no limit")
 
     p = sub.add_parser("restart", help="restart an application in its namespace with the same options")
     p.add_argument("--app", required=True, metavar="APP", help="command name or path of the application")
@@ -124,6 +131,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.print_help()
         return 1
     try:
+        _check_iface_args(args)
         return _HANDLERS[args.command](args)
     except KeyboardInterrupt:
         _error("interrupted")
@@ -157,6 +165,7 @@ def _warn(msg: str) -> None:
 
 
 def _error(msg: str) -> None:
+    sys.stdout.flush()  # keep the order of progress lines and errors when both go to one pipe
     print(f"[X] {msg}", file=sys.stderr)
 
 
@@ -180,11 +189,30 @@ def _print_table(headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
         print("  ".join(cell.ljust(width) for cell, width in zip(row, widths)).rstrip())
 
 
-def _confirm(prompt: str) -> bool:
+def _check_iface_args(args: argparse.Namespace) -> None:
+    """Reject a malformed --iface / --to before any progress line is printed. Raises ValidationError."""
+    from intermux.errors import ValidationError
+    from intermux.helper import protocol
+
+    for attr, flag in (("iface", "--iface"), ("to", "--to")):
+        value = getattr(args, attr, None)
+        if value is None:
+            continue
+        try:
+            protocol.validate_iface_name(value)
+        except protocol.ValidationError:
+            raise ValidationError(f"invalid interface name for {flag}: {value!r} "
+                                  "(1 to 15 characters: letters, digits and _ . : @ -)") from None
+
+
+def _confirm(prompt: str, word: str = "") -> bool:
+    """Ask on the terminal. With `word`, only that word (any case) confirms; otherwise y or yes does."""
     try:
-        return input(prompt).strip() == "yes"
+        answer = input(prompt).strip().lower()
     except EOFError:
+        print()
         return False
+    return answer == word if word else answer in ("y", "yes")
 
 
 def _resolve_app(app_arg: str, iface: Optional[str] = None) -> str:
@@ -274,6 +302,9 @@ def _cmd_interfaces(args: argparse.Namespace) -> int:
 def _cmd_apps(args: argparse.Namespace) -> int:
     from intermux.apps import desktop_entries
 
+    if args.search is not None and not args.search.strip():
+        _error("--search needs some text to look for")
+        return 2
     entries = desktop_entries.scan_desktop_entries()
     if args.search:
         entries = desktop_entries.search_entries(entries, args.search)
@@ -298,7 +329,7 @@ def _cmd_bind(args: argparse.Namespace) -> int:
         policy = "separate"
     else:
         policy = "ask"
-    dns = parse_dns_arg(args.dns) if args.dns else "keep"
+    dns = parse_dns_arg(args.dns) if args.dns is not None else "keep"
     name = os.path.basename(app_path)
     _info(f"binding {name} to {args.iface}")
     try:
@@ -523,7 +554,7 @@ def _cmd_restart(args: argparse.Namespace) -> int:
 def _cmd_remove(args: argparse.Namespace) -> int:
     from intermux.helper import client as helper_client
 
-    if not args.yes and not _confirm(f"stop everything in the {args.iface} namespace and remove it?"):
+    if not args.yes and not _confirm(f"Stop everything in the {args.iface} namespace and remove it? [y/N] "):
         _warn("cancelled")
         return 1
     data = helper_client.call("remove_namespace", {"iface": args.iface}) or {}
@@ -582,7 +613,7 @@ def _cmd_reset(args: argparse.Namespace) -> int:
         _warn("this removes all InterMux namespaces, veth pairs, routing rules, NAT rules and bindings")
         if args.kill_apps:
             _warn("applications running inside InterMux namespaces will be terminated")
-        if not _confirm("Type 'yes' to continue: "):
+        if not _confirm("Type 'yes' to continue: ", word="yes"):
             _info("aborted; nothing was changed")
             return 1
     _info("removing everything InterMux created")
@@ -638,7 +669,15 @@ def _cmd_report(args: argparse.Namespace) -> int:
         else:
             _info(f"open this page to report: {report.REPORT_PAGE_URL}")
         return 0
-    path = bugreport.write_bug_zip(directory=Path(args.out).expanduser() if args.out else None)
+    out = Path(args.out).expanduser() if args.out else None
+    if out is not None and out.exists() and not out.is_dir():
+        _error(f"--out must be a folder, but {out} is a file")
+        return 2
+    try:
+        path = bugreport.write_bug_zip(directory=out)
+    except OSError as exc:
+        _error(f"could not save the bug report in {out or '~/intermux-reports'}: {exc.strerror or exc}")
+        return 1
     _ok(f"saved bug report: {path}")
     _info(f"upload this file in the reporting portal: {report.REPORT_PAGE_URL}")
     return 0

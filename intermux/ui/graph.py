@@ -1,18 +1,9 @@
-"""Canvas drawings for the network view: live traffic graphs, sparklines, interface glyphs and the logo.
-
-The traffic graph follows the website's monitor: a line over a fill that fades toward the bottom,
-faint gridlines at 25/50/75 %, a dashed ceiling with its value, and a dot on the newest sample.
-Tk has no alpha, so the fade is a cached gradient image with the area above the line painted over.
-"""
+"""Small drawing helpers: colour mixing, sample-to-point mapping for the inline speed graphs, and the
+interface glyph used by the VPN dialog."""
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Sequence, Tuple
-
-try:
-    import tkinter as tk
-except ImportError:  # reported by main()
-    tk = None  # type: ignore[assignment]
 
 from intermux.ui import theme
 
@@ -42,97 +33,6 @@ def series_points(values: Sequence[float], width: float, top: float, bottom: flo
 
 
 _gradients: Dict[Tuple[int, int, str, str], Any] = {}
-
-
-def _gradient(master: Any, width: int, height: int, colour: str, background: str) -> Any:
-    """A width x height image fading from 30 % colour at the top to the background at the bottom."""
-    key = (width, height, colour, background)
-    image = _gradients.get(key)
-    if image is not None:
-        return image
-    if len(_gradients) > 64:
-        _gradients.clear()
-    image = tk.PhotoImage(master=master, width=width, height=height)
-    for y in range(height):
-        fade = 0.30 * (1.0 - y / max(height - 1, 1)) ** 1.4
-        image.put(mix(background, colour, fade), to=(0, y, width, y + 1))
-    _gradients[key] = image
-    return image
-
-
-class TrafficGraph:
-    """A live download/upload graph on a Canvas. Call update() with samples oldest-first."""
-
-    TOP = 18      # room for the ceiling label
-    PAD_BOTTOM = 2
-
-    def __init__(self, master: Any, background: str, height: int = 64, show_upload: bool = True,
-                 show_label: bool = True) -> None:
-        p = theme.current_palette()
-        self.p = p
-        self.background = background
-        self.show_upload = show_upload
-        self.show_label = show_label
-        self.canvas = tk.Canvas(master, background=background, height=height, highlightthickness=0,
-                                borderwidth=0)
-        self._down: List[float] = []
-        self._up: List[float] = []
-        self._scale = 1.0
-        self._colour = p["text_muted"]
-        self._label = ""
-        self.canvas.bind("<Configure>", lambda _e: self.redraw())
-
-    def update(self, down: Sequence[float], up: Sequence[float], scale: float, colour: str, label: str) -> None:
-        self._down = list(down)
-        self._up = list(up)
-        self._scale = scale
-        self._colour = colour
-        self._label = label
-        self.redraw()
-
-    def redraw(self) -> None:
-        c = self.canvas
-        try:
-            width = c.winfo_width()
-            height = c.winfo_height()
-        except tk.TclError:
-            return
-        if width < 8 or height < 8:
-            return
-        c.delete("all")
-        p = self.p
-        top = self.TOP if self.show_label else 4
-        bottom = height - self.PAD_BOTTOM
-        colour = self._colour
-        down = series_points(self._down, width - 6, top, bottom, self._scale)
-
-        if len(down) > 1:
-            image = _gradient(c, width, height, colour, self.background)
-            c.create_image(0, 0, image=image, anchor="nw")
-            # Paint the background over everything above the line, leaving the fade below it.
-            cover = [(0, 0)] + down + [(down[-1][0], 0)]
-            c.create_polygon(*[v for pt in cover for v in pt], fill=self.background, outline="")
-            c.create_rectangle(down[-1][0], 0, width, height, fill=self.background, outline="")
-
-        grid = mix(self.background, "#FFFFFF", 0.05)
-        for fraction in (0.25, 0.5, 0.75):
-            y = round(bottom - fraction * (bottom - top)) + 0.5
-            c.create_line(0, y, width, y, fill=grid)
-        c.create_line(0, bottom + 0.5, width, bottom + 0.5, fill=mix(self.background, "#FFFFFF", 0.09))
-        c.create_line(0, top + 0.5, width, top + 0.5, fill=mix(self.background, "#FFFFFF", 0.2), dash=(4, 4))
-        if self.show_label and self._label:
-            c.create_text(width - 2, top - 2, text=self._label, anchor="se", fill=p["text_muted"],
-                          font=theme.font("eyebrow"))
-
-        if self.show_upload and len(self._up) > 1:
-            up = series_points(self._up, width - 6, top, bottom, self._scale)
-            c.create_line(*[v for pt in up for v in pt], fill=p["violet"], width=1.25)
-        if len(down) > 1:
-            c.create_line(*[v for pt in down for v in pt], fill=colour, width=2, joinstyle="round",
-                          capstyle="round")
-            x, y = down[-1]
-            c.create_oval(x - 5, y - 5, x + 5, y + 5, fill=self.background, outline="")
-            c.create_oval(x - 3.2, y - 3.2, x + 3.2, y + 3.2, fill=colour, outline="")
 
 
 # ---------------------------------------------------------------------------
@@ -200,52 +100,6 @@ def draw_kind_glyph(c: Any, kind: str, x: float, y: float, size: float, colour: 
         x0, y0 = P(8, 3.5)
         x1, y1 = P(16, 20.5)
         c.create_oval(x0, y0, x1, y1, outline=colour, width=w)
-
-
-def glyph(master: Any, kind: str, size: int, colour: str, background: str) -> Any:
-    """A Canvas showing an interface glyph."""
-    c = tk.Canvas(master, width=size, height=size, background=background, highlightthickness=0, borderwidth=0)
-    draw_kind_glyph(c, kind, size / 2, size / 2, size - 2, colour, background)
-    return c
-
-
-def draw_logo(c: Any, x: float, y: float, size: float) -> None:
-    """The InterMux mark (website/public/brand/mark.svg) at (x, y), size pixels square."""
-    p = theme.current_palette()
-    s = size / 64.0
-
-    def P(px: float, py: float) -> Tuple[float, float]:
-        return x + px * s, y + py * s
-
-    w = 8 * s
-    c.create_line(*P(12, 52), *P(12, 12), fill=p["text_muted"], width=w, capstyle="round")
-    c.create_line(*P(52, 52), *P(52, 12), fill=p["text_muted"], width=w, capstyle="round")
-    c.create_line(*P(12, 12), *P(32, 36), *P(52, 12), fill=p["accent"], width=w, capstyle="round",
-                  joinstyle="round")
-    for cx, cy, r in ((12, 12, 8), (52, 12, 8), (32, 36, 9.5)):
-        x0, y0 = P(cx - r, cy - r)
-        x1, y1 = P(cx + r, cy + r)
-        c.create_oval(x0, y0, x1, y1, fill=p["accent"], outline="")
-    for rx in (4, 44):
-        x0, y0 = P(rx, 44)
-        x1, y1 = P(rx + 16, 60)
-        c.create_rectangle(x0, y0, x1, y1, fill=p["text"], outline="")
-
-
-def logo(master: Any, size: int, background: str) -> Any:
-    c = tk.Canvas(master, width=size, height=size, background=background, highlightthickness=0, borderwidth=0)
-    draw_logo(c, 0, 0, size)
-    return c
-
-
-def status_dot(master: Any, colour: str, background: str, size: int = 8) -> Any:
-    c = tk.Canvas(master, width=size, height=size, background=background, highlightthickness=0, borderwidth=0)
-    c.create_oval(0, 0, size - 1, size - 1, fill=colour, outline="", tags=("dot",))
-    return c
-
-
-def set_dot(c: Any, colour: str) -> None:
-    c.itemconfigure("dot", fill=colour)
 
 
 def kind_for(iface: Any) -> str:

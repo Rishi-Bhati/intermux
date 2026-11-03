@@ -28,7 +28,8 @@ def bind_custom_choice(combo: Any, var: Any, hint: Any = None) -> None:
     `hint`, a label, shows how to type them while the field holds anything but Automatic or a preset.
     """
     def chosen(_event: Any = None) -> None:
-        if var.get() == CUSTOM_LABEL:
+        combo.custom_mode = var.get() == CUSTOM_LABEL   # an empty field then means "not typed yet"
+        if combo.custom_mode:
             var.set("")
             combo.focus_set()
             combo.icursor("end")
@@ -59,6 +60,14 @@ def dns_choice_label(servers: List[str]) -> str:
         return AUTO_LABEL
     name = dnsconf.preset_name(servers)
     return f"{name}: {', '.join(servers)}" if name else ", ".join(servers)
+
+
+def dns_field_value(combo: Any, var: Any) -> Any:
+    """What a DNS field set up with bind_custom_choice means. Raises ValueError when Custom… was chosen
+    but no servers were typed (an empty field would otherwise silently mean Automatic)."""
+    if getattr(combo, "custom_mode", False) and not var.get().strip():
+        raise ValueError("type the DNS servers to use, separated by commas")
+    return dns_choice_value(var.get())
 
 
 def parse_limit(text: str) -> Optional[float]:
@@ -172,10 +181,11 @@ class DnsDialog(_Modal):
                         font=theme.font("small"), anchor="w", justify="left", wraplength=420)
         hint.grid(row=2, column=0, sticky="w", pady=(6, 0))
         bind_custom_choice(combo, self.var, hint)
+        self.combo = combo
         combo.focus_set()
 
     def collect(self) -> Any:
-        return dns_choice_value(self.var.get())
+        return dns_field_value(self.combo, self.var)
 
 
 def _fmt(value: Optional[float]) -> str:

@@ -31,7 +31,10 @@ def check_mbit(value: object) -> Optional[float]:
         return None
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError("a limit must be a number of Mbit/s or null")
-    mbit = float(value)
+    try:
+        mbit = float(value)
+    except OverflowError:   # an integer too large for a float is out of range too
+        mbit = float("inf")
     if mbit != mbit or not MIN_MBIT <= mbit <= MAX_MBIT:   # NaN check, then range
         raise ValueError(f"a limit must be between {MIN_MBIT:g} and {MAX_MBIT:g} Mbit/s")
     return mbit

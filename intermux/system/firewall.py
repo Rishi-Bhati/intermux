@@ -31,8 +31,14 @@ class NatRule(NamedTuple):
     insert: bool            # True: -I (top of chain); False: -A (append)
 
 
+_IFACE_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,15}$")
+FIREWALLD_NOT_RUNNING = 252   # exit status of `firewall-cmd --state` when the daemon is stopped
+
+
 def nat_rules(subnet: IPv4Network, iface: str) -> List[NatRule]:
     """The three rules intermux needs for a namespace subnet, in apply order."""
+    if not isinstance(iface, str) or not _IFACE_RE.match(iface) or iface in (".", ".."):
+        raise ValidationError(f"invalid interface name: {iface!r}")
     s = str(subnet)
     return [
         NatRule("nat", "POSTROUTING", ("-s", s, "-o", iface, "-j", "MASQUERADE"), insert=False),
@@ -158,11 +164,22 @@ def delete_rule_line(line: str) -> None:
 
 
 def firewalld_cmd() -> Optional[str]:
-    """Path of firewall-cmd when firewalld is installed and running; None otherwise."""
+    """Path of firewall-cmd unless firewalld is not installed or reports that it is stopped.
+
+    Any other failure of `--state` (a timeout, D-Bus not up yet, a permission problem) keeps the path, so
+    the change that follows is attempted and its failure is reported, instead of firewalld being silently
+    assumed absent while it may be blocking the namespace."""
     path = which("firewall-cmd")
     if path is None:
         return None
-    return path if run([path, "--state"], timeout=15, tolerate=("not running",)).ok else None
+    result = run([path, "--state"], timeout=15, tolerate=("not running",))
+    if result.ok:
+        return path
+    text = f"{result.stdout} {result.stderr}".lower()
+    if result.returncode == FIREWALLD_NOT_RUNNING or "not running" in text:
+        return None
+    log.warning("cannot tell whether firewalld is running (%s); assuming it is", text.strip() or result.returncode)
+    return path
 
 
 def _check_host_veth(name: str) -> None:
@@ -180,6 +197,9 @@ def trust_veth(host_veth: str) -> bool:
     _check_host_veth(host_veth)
     fwcmd = firewalld_cmd()
     if fwcmd is None:
+        return True
+    current = run([fwcmd, f"--get-zone-of-interface={host_veth}"], tolerate=("no zone",))
+    if current.ok and current.stdout.strip() == TRUSTED_ZONE:
         return True
     return run([fwcmd, f"--zone={TRUSTED_ZONE}", f"--change-interface={host_veth}"]).ok
 

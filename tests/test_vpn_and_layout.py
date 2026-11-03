@@ -105,27 +105,25 @@ class TunnelDetectionTests(unittest.TestCase):
 
 
 class LayoutHelperTests(unittest.TestCase):
-    def test_limit_ops_one_per_interface(self):
-        from intermux.ui.app import limit_ops_for
-        items = [{"iface": "wlan0", "limit": {"down": 5.0, "up": None}}, {"iface": "eth0", "limit": None},
-                 {"iface": "wlan0", "limit": {"down": 10.0, "up": 2.0}}]
-        self.assertEqual(limit_ops_for(items), [{"op": "set_limit", "iface": "wlan0", "down": 10.0, "up": 2.0}])
+    def test_bind_carries_its_speed_limit(self):
+        # The limit travels with the bind so it is in force before the app starts.
+        from intermux.helper import protocol
+        _, params = protocol.validate_request({"v": 1, "action": "batch", "params": {"ops": [
+            {"op": "bind", "iface": "wlan0", "app": "/usr/bin/x", "limit": {"down": 10, "up": None}}]}})
+        self.assertEqual(params["ops"][0]["limit"], {"down": 10.0, "up": None})
+        with self.assertRaises(protocol.ValidationError):
+            protocol.validate_request({"v": 1, "action": "bind", "params": {
+                "iface": "wlan0", "app": "/usr/bin/x", "limit": {"down": 0.001}}})
+        with self.assertRaises(protocol.ValidationError):
+            protocol.validate_request({"v": 1, "action": "bind", "params": {
+                "iface": "wlan0", "app": "/usr/bin/x", "limit": {"sideways": 5}}})
 
-    def test_pending_detail_mentions_limit(self):
-        from intermux.ui.app import pending_detail
-        text = pending_detail({"iface": "wlan0", "dns": "keep", "limit": {"down": 20.0, "up": None}}, [])
-        self.assertTrue(text.endswith("limit ↓ 20 Mbit/s"))
-
-    def test_limit_text_and_meta(self):
-        from intermux.ui import connections
-        self.assertEqual(connections.limit_text(None), "none")
-        self.assertEqual(connections.limit_text({"down": 20.0, "up": 5.0}), "↓ 20 ↑ 5 Mbit/s")
-        self.assertEqual(connections.limit_text({"down": 20.0, "up": 0.5}), "↓ 20 Mbit/s  ↑ 500 kbit/s")
-        meta = connections.app_meta({"running": True, "pids": [1, 2]}, (2048.0, 0.0), "1.2.3.4", False)
-        self.assertEqual(meta, "2 processes  ·  ↓ 2.0 KB/s  ↑ 0 B/s  ·  IP 1.2.3.4")
-        self.assertEqual(connections.app_meta({"running": False, "pids": []}, (2048.0, 0.0), "", False),
-                         "not running")
-        self.assertEqual(connections.app_meta({"alive": True}, None, "", True), "moved while running")
+    def test_limit_text(self):
+        from intermux.ui.app import limit_cell, limit_text
+        self.assertEqual(limit_text(None), "none")
+        self.assertEqual(limit_text({"down": 20.0, "up": 5.0}), "↓ 20 ↑ 5 Mbit/s")
+        self.assertEqual(limit_text({"down": 20.0, "up": 0.5}), "↓ 20 Mbit/s  ↑ 500 kbit/s")
+        self.assertEqual(limit_cell({}), "-")
 
     def test_ellipsize(self):
         from intermux.ui.tooltip import ellipsize_to
@@ -134,10 +132,6 @@ class LayoutHelperTests(unittest.TestCase):
         self.assertEqual(ellipsize_to("hello world", 6, measure), "hello…")
         self.assertEqual(ellipsize_to("hello", 1, measure), "…")
 
-    def test_sash_colour(self):
-        from intermux.ui import theme
-        from intermux.ui.app import sash_colour
-        self.assertTrue(sash_colour(theme.PALETTE).startswith("#"))
 
 
 class BatchLimitTests(unittest.TestCase):

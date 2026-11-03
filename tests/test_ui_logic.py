@@ -249,7 +249,6 @@ class WheelRoutingTests(unittest.TestCase):
         return frame, labels
 
     def test_wheel_scrolls_only_the_section_under_the_pointer(self) -> None:
-        import tkinter as tk
         self.root.geometry("300x300")
         first, first_labels = self._section(200)
         second, _ = self._section(200)

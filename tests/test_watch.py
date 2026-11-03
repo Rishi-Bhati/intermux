@@ -38,7 +38,8 @@ class RunOnceTests(unittest.TestCase):
             watch.run_once(check=lambda: True, routes=lambda: True)
         adoptions.assert_called_once_with()
         idle.assert_called_once_with()
-        refresh.assert_called_once_with()
+        refresh.assert_called_once()
+        self.assertIn("full", refresh.call_args.kwargs)
 
     def test_nothing_idle_skips_the_lock_and_the_state_write(self) -> None:
         def no_lock(*_a, **_k):
@@ -56,7 +57,15 @@ class RunOnceTests(unittest.TestCase):
              mock.patch.object(watch, "refresh_adoption_routes", return_value={}):
             watch.run_once(check=lambda: False, routes=lambda: True)
         idle.assert_not_called()
-        refresh.assert_called_once_with()
+        refresh.assert_called_once()
+
+    def test_full_refresh_runs_once_a_minute(self) -> None:
+        with mock.patch.object(watch.engine, "refresh_routes", return_value={}) as refresh, \
+             mock.patch.object(watch.time, "monotonic", side_effect=[1000.0, 1010.0, 1061.0]), \
+             mock.patch.object(watch, "_last_full", [float("-inf")]):
+            for _ in range(3):
+                watch._refresh_routes()
+        self.assertEqual([c.kwargs["full"] for c in refresh.call_args_list], [True, False, True])
 
 
 class AdoptionRefreshTests(unittest.TestCase):

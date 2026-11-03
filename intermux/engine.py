@@ -6,7 +6,9 @@ import fcntl
 import ipaddress
 import logging
 import os
+import re
 import secrets
+import shutil
 import stat
 import subprocess
 import time
@@ -53,6 +55,13 @@ def configure_namespace_dns(ns: str, ns_veth: str, ns_addr: str, servers: List[s
     Needs the veth, NAT and policy route in place: the probe is sent from inside the namespace, so it only
     counts resolvers reachable through the bound interface. Returns user-facing warnings."""
     warnings: List[str] = []
+    iptables = firewall.iptables_cmd()
+    try:
+        # Let the probe reach every candidate first: the redirect left by an earlier server list would
+        # otherwise send the probe to the old first server, and its answer would count for the new one.
+        netns.ensure_dns_redirect(ns, servers, ns_veth, ns_addr, iptables)
+    except InterMuxError as exc:
+        log.warning("DNS redirect in %s failed before the probe: %s", ns, exc)
     try:
         answering = netns.probe_dns(ns, servers)
     except InterMuxError as exc:
@@ -63,7 +72,12 @@ def configure_namespace_dns(ns: str, ns_veth: str, ns_addr: str, servers: List[s
     servers = order_dns_servers(servers, answering)
     netns.write_resolv_conf(ns, servers)
     try:
-        netns.ensure_dns_redirect(ns, servers, ns_veth, ns_addr, firewall.iptables_cmd())
+        netns.write_nsswitch_conf(ns)
+    except OSError as exc:
+        log.warning("nsswitch.conf for %s failed: %s", ns, exc)
+        warnings.append("name lookups may go through the host's resolver instead of this interface's DNS")
+    try:
+        netns.ensure_dns_redirect(ns, servers, ns_veth, ns_addr, iptables)
     except InterMuxError as exc:
         log.warning("DNS redirect in %s failed: %s", ns, exc)
         warnings.append("DNS may stop working if the host rewrites /etc/resolv.conf")
@@ -104,7 +118,8 @@ def build_launch_argv(namespace: str, user: UserInfo, env: Dict[str, str], app_p
 
 def bind(app_path: str, iface: str, *, user: UserInfo, env: Dict[str, str],
          running_policy: str = "ask", dns: Any = dnsconf.KEEP,
-         keep_profile: Optional[str] = None) -> Dict[str, Any]:
+         keep_profile: Optional[str] = None,
+         limit: Optional[Dict[str, Optional[float]]] = None) -> Dict[str, Any]:
     """Set up the namespace plumbing for iface and launch app_path inside it; records the binding in state.
 
     dns is dnsconf.KEEP (keep the namespace's servers; automatic for a new one), dnsconf.AUTO (automatic)
@@ -152,6 +167,12 @@ def bind(app_path: str, iface: str, *, user: UserInfo, env: Dict[str, str],
         st.dns[iface] = dns
     elif dns == dnsconf.AUTO:
         st.dns.pop(iface, None)
+    # A limit given with the bind is in force before the app starts (it is applied with the plumbing).
+    if limit is not None:
+        if limit.get("down") or limit.get("up"):
+            st.limits[iface] = {"down": limit.get("down"), "up": limit.get("up")}
+        else:
+            st.limits.pop(iface, None)
 
     if iface in st.subnets:
         subnet = ipaddress.IPv4Network(st.subnets[iface])
@@ -495,7 +516,7 @@ def teardown_idle() -> Dict[str, Any]:
     st = state.load_state(config.STATE_FILE)
     removed: List[str] = []
     for a in list(st.adoptions):
-        if adopt_sys.read_group_pids(a.group):
+        if adopt_sys.read_group_pids_or_none(a.group) != []:   # members left, or unreadable: keep it
             continue
         _release_plumbing(a, [])
         st.adoptions.remove(a)
@@ -523,9 +544,13 @@ def teardown_idle() -> Dict[str, Any]:
     return {"removed": removed, "torn_down_ifaces": torn}
 
 
-def refresh_routes() -> Dict[str, Any]:
+def refresh_routes(full: bool = True) -> Dict[str, Any]:
     """Re-add the policy route of every bound interface whose route the kernel dropped (link flap, roam,
-    tether re-plug) or whose gateway changed. Interfaces that are down are left on their unreachable fallback."""
+    tether re-plug) or whose gateway changed. Interfaces that are down are left on their unreachable fallback.
+
+    With `full`, also re-add the NAT and forwarding rules, IPv4 forwarding and the firewalld trusted-zone
+    entry, which a firewall reload or restart removes. Each check is idempotent; the watcher runs the full
+    pass less often because it costs more."""
     st = state.load_state(config.STATE_FILE)
     try:
         current = {i.name: i for i in netinfo.list_interfaces()}
@@ -541,6 +566,14 @@ def refresh_routes() -> Dict[str, Any]:
         index = subnets.index_of(net)
         gateway = interface.gateways[0] if interface.gateways else None
         host_v = netns.veth_names(iface)[0]
+        if full and os.path.exists(f"/sys/class/net/{host_v}"):
+            _safe(firewall.enable_forwarding)
+            _safe(firewall.ensure_nat, net, iface)
+            try:
+                if not firewall.trust_veth(host_v):
+                    log.warning("firewalld did not accept %s into its trusted zone", host_v)
+            except (InterMuxError, OSError) as exc:
+                log.warning("cannot check firewalld for %s: %s", host_v, exc)
         if routing.policy_route_present(config.TABLE_BASE + index, net, iface, gateway, host_v):
             continue
         if _safe(routing.ensure_policy, net, iface, config.TABLE_BASE + index, config.PRIORITY_BASE + index,
@@ -577,8 +610,13 @@ def reset(kill_apps: bool = False, uid: Optional[int] = None) -> Dict[str, Any]:
     busy = [ns for ns in namespaces if procs.pids_in_netns(ns)]
     kept_bindings = [b for b in st.bindings if b.namespace in busy]
     dropped_bindings = [b for b in st.bindings if b.namespace not in busy]
-    kept_subnets = {b.subnet for b in kept_bindings}
-    kept_veths = {netns.veth_names(b.iface)[0] for b in kept_bindings}
+    # A busy namespace keeps its plumbing even when no binding records it (state lost, launch interrupted):
+    # its host veth shares the namespace's suffix, and its subnet may still be known from state.
+    kept_ifaces_all = {b.iface for b in kept_bindings} | {
+        iface for iface in st.subnets if netns.namespace_name(iface) in busy}
+    kept_subnets = {b.subnet for b in kept_bindings} | {
+        cidr for iface, cidr in st.subnets.items() if iface in kept_ifaces_all}
+    kept_veths = {"veth0_" + ns[len("ns_"):] for ns in busy if ns.startswith("ns_")}
 
     for a in st.adoptions:
         _safe(_release_plumbing, a, [])
@@ -590,13 +628,16 @@ def reset(kill_apps: bool = False, uid: Optional[int] = None) -> Dict[str, Any]:
     for b in dropped_bindings:
         _safe(_teardown_binding_plumbing, b)
 
-    for ns in namespaces:
-        if ns not in busy:
-            _safe(netns.delete_namespace, ns)
+    # Veths leave firewalld's trusted zone and are deleted while they still exist, before their namespace.
     for veth in veths:
         if veth not in kept_veths:
             _safe(firewall.untrust_veth, veth)
             _safe(netns.delete_veth, veth)
+    for ns in namespaces:
+        if ns not in busy:
+            _safe(netns.delete_namespace, ns)
+            _safe(_remove_tmpdirs, ns)
+    _safe(_remove_stale_etc_netns, busy)
 
     rules = [r for r in routing.intermux_rules()
              if str(routing.rule_src_network(r)) not in kept_subnets]
@@ -612,10 +653,10 @@ def reset(kill_apps: bool = False, uid: Optional[int] = None) -> Dict[str, Any]:
     # libvirt or a Tailscale exit node that also need forwarding.
     _safe(adopt_sys.sweep_leftovers)
 
-    kept_ifaces = {b.iface for b in kept_bindings}
+    kept_ifaces = kept_ifaces_all
     kept_state = state.State(
         bindings=kept_bindings,
-        subnets={b.iface: b.subnet for b in kept_bindings},
+        subnets={iface: cidr for iface, cidr in st.subnets.items() if iface in kept_ifaces},
         ip_forward_prev=st.ip_forward_prev if kept_bindings else None,
         dns={k: v for k, v in st.dns.items() if k in kept_ifaces},
         limits={k: v for k, v in st.limits.items() if k in kept_ifaces},
@@ -624,6 +665,22 @@ def reset(kill_apps: bool = False, uid: Optional[int] = None) -> Dict[str, Any]:
     return {"namespaces": [ns for ns in namespaces if ns not in busy], "veths": veths,
             "rules": len(rules), "nat_rules": len(nat_lines), "still_running": still_running,
             "kept_namespaces": busy, "kept_apps": [b.app_name for b in kept_bindings]}
+
+
+def _remove_stale_etc_netns(keep: Sequence[str]) -> None:
+    """Remove /etc/netns/ns_<hex> directories whose namespace no longer exists (left by earlier versions
+    or by a namespace deleted outside InterMux)."""
+    try:
+        entries = os.listdir(config.ETC_NETNS_DIR)
+    except OSError:
+        return
+    existing = set(netns.list_namespaces_matching())
+    for name in entries:
+        if not re.fullmatch(config.NS_NAME_RE, name) or name in keep or name in existing:
+            continue
+        path = config.ETC_NETNS_DIR / name
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path, ignore_errors=True)
 
 
 def filter_host_netns(table: Sequence[procs.Proc], pids: Sequence[int], host_netns: Optional[int]) -> List[int]:
@@ -646,8 +703,9 @@ def adopt(iface: str, app: str, *, user: UserInfo) -> Dict[str, Any]:
     if not interface.bindable:
         raise ConflictError(f"interface {iface} cannot be bound (needs an up IPv4 address and a default route)",
                             code="not_bindable")
-    if not isinstance(app, str) or not app.startswith("/") or not os.path.exists(app):
-        raise ValidationError(f"application path must be an absolute path that exists: {app}")
+    # Only the form is checked here: the helper runs as root and must not tell callers which paths exist.
+    if not isinstance(app, str) or not app.startswith("/"):
+        raise ValidationError(f"application path must be an absolute path: {app}")
 
     handler = apps.get_handler(app)
     found = procs.find_app_procs(app, handler.comm_names(app), uid=user.uid)
@@ -660,6 +718,12 @@ def adopt(iface: str, app: str, *, user: UserInfo) -> Dict[str, Any]:
     pids = filter_host_netns(table, candidates, host_netns)
     if not pids:
         raise NotFoundError(f"no running instances of {app} owned by you", code="not_running")
+    already = [pid for pid in pids if adopt_sys.pid_group(pid)]
+    pids = [pid for pid in pids if pid not in already]
+    if not pids:
+        raise ConflictError(f"{os.path.basename(app)} is already routed by InterMux; release it first",
+                            code="already_adopted")
+    started = {pid: procs.start_time(pid) for pid in pids}
 
     st = state.load_state(config.STATE_FILE)
     adopt_id = secrets.token_hex(8)
@@ -674,16 +738,18 @@ def adopt(iface: str, app: str, *, user: UserInfo) -> Dict[str, Any]:
         _safe(adopt_sys.remove_policy, slot)
 
     moved: List[int] = []
+    policy_warnings: List[str] = []
     try:
         adopt_sys.ensure_group(group)
         for pid in pids:
-            # Re-check ownership right before the write: the pid may have been reused by another user.
-            if _real_uid(pid) != user.uid:
+            # Re-check right before the write that this is still the same process of the same user:
+            # a pid that exited may have been reused, possibly by another user.
+            if _real_uid(pid) != user.uid or procs.start_time(pid) != started[pid]:
                 continue
             moved.extend(adopt_sys.move_pids(group, [pid]))
         if moved:
             adopt_sys.apply_nft(slot, group, iface)
-            adopt_sys.apply_policy(slot, iface, gateway)
+            policy_warnings = adopt_sys.apply_policy(slot, iface, gateway)
     except Exception as exc:
         rollback()
         raise ConflictError(f"could not route {os.path.basename(app)} through {iface}: {exc}",
@@ -700,8 +766,17 @@ def adopt(iface: str, app: str, *, user: UserInfo) -> Dict[str, Any]:
     )
     st.adoptions.append(record)
     state.save_state(st, config.STATE_FILE)
-    return {"adoption": asdict(record), "moved_pids": list(moved),
-            "warnings": ["DNS lookups may still use the default route"]}
+    warnings = ["connections the app already had open keep their old route until they reconnect; "
+                "new connections use " + iface,
+                "DNS lookups use the system's normal route"]
+    left = [pid for pid in pids if pid not in moved and _real_uid(pid) == user.uid]
+    if left:
+        warnings.append(f"{len(left)} process(es) of the app could not be moved and keep the old route "
+                        f"(pids {', '.join(str(p) for p in left)})")
+    if already:
+        warnings.append(f"{len(already)} process(es) were already routed by InterMux and were left as they are")
+    warnings.extend(policy_warnings)
+    return {"adoption": asdict(record), "moved_pids": list(moved), "warnings": warnings}
 
 
 def _real_uid(pid: int) -> Optional[int]:
@@ -725,6 +800,9 @@ def _release_plumbing(a: state.Adoption, pids: Sequence[int]) -> List[int]:
         log.warning("release_group %s failed: %s", a.group, exc)
     _safe(adopt_sys.remove_policy, a.slot)
     _safe(adopt_sys.delete_nft, a.slot)
+    # The slot's mark can be reused by the next adoption; drop connection entries still carrying it so
+    # their replies are not routed into the new adoption's table.
+    _safe(adopt_sys.forget_marked_connections, a.slot)
     return released
 
 
@@ -830,24 +908,58 @@ def _bound_app_pids(st: state.State, app_path: str, uid: int) -> List[int]:
 
 
 def _teardown_iface(iface: str, cidr: str) -> None:
-    net = ipaddress.IPv4Network(cidr)
-    index = subnets.index_of(net)
-    host_v, _ = netns.veth_names(iface)
-    firewall.remove_nat(net, iface)
-    routing.remove_policy(net, config.TABLE_BASE + index, config.PRIORITY_BASE + index)
-    _safe(firewall.untrust_veth, host_v)
-    netns.delete_veth(host_v)
-    netns.delete_namespace(netns.namespace_name(iface))
+    _teardown_plumbing(iface, cidr, netns.namespace_name(iface))
 
 
 def _teardown_binding_plumbing(binding: state.Binding) -> None:
-    net = ipaddress.IPv4Network(binding.subnet)
+    _teardown_plumbing(binding.iface, binding.subnet, binding.namespace)
+
+
+def _teardown_plumbing(iface: str, cidr: str, namespace: str) -> None:
+    """Remove an interface namespace with its NAT, policy route, firewalld entry and veth.
+
+    Every step is attempted even when an earlier one fails, and the veth always leaves firewalld's
+    trusted zone before it is deleted. The first failure is raised at the end."""
+    net = ipaddress.IPv4Network(cidr)
     index = subnets.index_of(net)
-    firewall.remove_nat(net, binding.iface)
-    routing.remove_policy(net, config.TABLE_BASE + index, config.PRIORITY_BASE + index)
-    _safe(firewall.untrust_veth, netns.veth_names(binding.iface)[0])
-    netns.delete_veth(netns.veth_names(binding.iface)[0])
-    netns.delete_namespace(binding.namespace)
+    host_v, _ = netns.veth_names(iface)
+    errors: List[BaseException] = []
+    for step, args in ((firewall.remove_nat, (net, iface)),
+                       (routing.remove_policy, (net, config.TABLE_BASE + index, config.PRIORITY_BASE + index)),
+                       (firewall.untrust_veth, (host_v,)),
+                       (netns.delete_veth, (host_v,)),
+                       (netns.delete_namespace, (namespace,)),
+                       (_remove_tmpdirs, (namespace,))):
+        try:
+            step(*args)
+        except (InterMuxError, OSError) as exc:
+            log.warning("%s failed while removing %s: %s", getattr(step, "__name__", step), iface, exc)
+            errors.append(exc)
+    if errors:
+        raise errors[0]
+
+
+def _remove_tmpdirs(namespace: str) -> None:
+    """Delete the per-user TMPDIRs of a namespace that is gone (/tmp/intermux-<namespace>-<uid>).
+
+    Only real directories named for that namespace and owned by the uid in their name are removed;
+    shutil.rmtree does not follow symlinks inside them."""
+    prefix = f"intermux-{namespace}-"
+    try:
+        entries = os.listdir("/tmp")
+    except OSError:
+        return
+    for entry in entries:
+        uid_text = entry[len(prefix):] if entry.startswith(prefix) else ""
+        if not uid_text.isdigit():
+            continue
+        path = os.path.join("/tmp", entry)
+        try:
+            info = os.lstat(path)
+        except OSError:
+            continue
+        if stat.S_ISDIR(info.st_mode) and info.st_uid == int(uid_text):
+            shutil.rmtree(path, ignore_errors=True)
 
 
 def _remove_rule(rule: Dict[str, Any]) -> None:

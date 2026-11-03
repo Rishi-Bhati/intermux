@@ -110,17 +110,6 @@ class MonitorHelperTests(unittest.TestCase):
         self.assertEqual(monitor.lane_state(True, True, 0, 10, 10, None), ("idle", "Idle"))
         self.assertEqual(monitor.lane_state(True, False, 0, 0, 0, None), ("idle", "No gateway"))
 
-    def test_lane_labels(self):
-        self.assertEqual(monitor.lane_title(_iface("wlan0", "wifi")), "Wi-Fi")
-        self.assertEqual(monitor.lane_title(_iface("wg0", "other")), "VPN")
-        self.assertEqual(monitor.lane_detail(_iface("eth0")), "eth0 · 192.168.1.2")
-        self.assertEqual(monitor.lane_detail(_iface("eth0", cidrs=())), "eth0 · no IPv4 address")
-
-    def test_colour_book_is_stable(self):
-        book = monitor.ColourBook(("#1", "#2"))
-        self.assertEqual([book.colour("a"), book.colour("b"), book.colour("a"), book.colour("c")],
-                         ["#1", "#2", "#1", "#1"])
-
     def test_tone_colours_exist(self):
         for tone in ("ok", "hot", "active", "idle", "off"):
             self.assertTrue(monitor.tone_colour(tone, theme.PALETTE).startswith("#"))
@@ -133,28 +122,12 @@ class MonitorHelperTests(unittest.TestCase):
 
 
 class AppHelperTests(unittest.TestCase):
-    def test_routed_share(self):
-        self.assertEqual(appmod.routed_share(25, 100), "25%")
-        self.assertEqual(appmod.routed_share(0.1, 100), "<1%")
-        self.assertEqual(appmod.routed_share(0, 100), "")
-
     def test_initial_geometry_fits_the_screen(self):
         self.assertEqual(appmod.initial_geometry(1920, 1080), "1360x900")
         self.assertEqual(appmod.initial_geometry(1366, 768), "1286x688")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class Phase2HelperTests(unittest.TestCase):
-    def test_pending_detail(self):
-        item = {"iface": "wlan0", "app": "/usr/bin/x", "dns": "keep"}
-        self.assertEqual(appmod.pending_detail(item, []), "via wlan0 · new namespace · automatic DNS")
-        self.assertEqual(appmod.pending_detail(item, ["wlan0"]), "via wlan0 · existing namespace · keeps its DNS")
-        item["dns"] = ["1.1.1.1", "1.0.0.1"]
-        self.assertEqual(appmod.pending_detail(item, ["wlan0"]), "via wlan0 · existing namespace · DNS Cloudflare")
-
     def test_namespace_settings_and_badges(self):
         from intermux import state
         st = state.State(subnets={"wlan0": "10.200.1.0/24", "eth0": "10.200.2.0/24"},
@@ -218,3 +191,7 @@ class HistoryTests(unittest.TestCase):
             self.assertEqual([i.app for i in History(path).items], ["/ok"])
             path.write_text("not json")
             self.assertEqual(History(path).items, [])
+
+
+if __name__ == "__main__":
+    unittest.main()

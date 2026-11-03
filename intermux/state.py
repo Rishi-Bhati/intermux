@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
+from intermux import config
 from intermux.config import LOCK_FILE, STATE_FILE, SUBNET_BASE_OCTET
 
 log = logging.getLogger("intermux.state")
@@ -114,7 +115,8 @@ def state_from_dict(data: Dict[str, Any]) -> State:
     raw_subnets = data.get("subnets")
     if isinstance(raw_subnets, dict):
         for iface, cidr in raw_subnets.items():
-            if isinstance(iface, str) and valid_pool_subnet(cidr):
+            if (isinstance(iface, str) and _IFACE_NAME_RE.fullmatch(iface) and iface not in (".", "..")
+                    and valid_pool_subnet(cidr)):
                 subnets[iface] = cidr
             else:
                 log.warning("ignoring malformed subnet entry: %r -> %r", iface, cidr)
@@ -207,6 +209,12 @@ def _binding_from_dict(item: Any) -> Optional[Binding]:
     if not 1 <= table <= _MAX_TABLE or not 1 <= priority <= _MAX_PRIORITY:
         log.warning("ignoring binding with out-of-range table/priority: %r", item)
         return None
+    if not _IFACE_NAME_RE.fullmatch(str(item["iface"])) or str(item["iface"]) in (".", ".."):
+        log.warning("ignoring binding with invalid interface name: %r", item)
+        return None
+    if not re.fullmatch(config.NS_NAME_RE, str(item["namespace"])):
+        log.warning("ignoring binding with invalid namespace name: %r", item)
+        return None
     raw_pid = item.get("pid")
     pid: Optional[int] = None
     if raw_pid is not None and not isinstance(raw_pid, bool):
@@ -233,6 +241,8 @@ def _binding_from_dict(item: Any) -> Optional[Binding]:
 
 
 _ADOPT_ID_RE = re.compile(r"^[0-9a-f]{8,32}$")
+_IFACE_NAME_RE = re.compile(r"^[A-Za-z0-9_.:@-]{1,15}$")
+_SLOT_RANGE = (1, 200)   # adopt.SLOT_MIN..SLOT_MAX (not imported: state must not depend on system code)
 _REQUIRED_ADOPTION_KEYS = ("id", "iface", "app", "slot", "group", "mark", "table", "priority", "uid")
 
 
@@ -262,6 +272,12 @@ def _adoption_from_dict(item: Any) -> Optional[Adoption]:
         pids = [int(p) for p in raw_pids]
     except (TypeError, ValueError):
         log.warning("ignoring adoption with non-integer fields: %r", item)
+        return None
+    # The group path, slot and interface are used for cgroup, sysctl and nft paths by the root helper:
+    # they must be exactly what InterMux itself would have written for this id.
+    if (str(item["group"]) != f"intermux/adopt-{adopt_id}" or not _SLOT_RANGE[0] <= slot <= _SLOT_RANGE[1]
+            or not _IFACE_NAME_RE.fullmatch(str(item["iface"])) or str(item["iface"]) in (".", "..")):
+        log.warning("ignoring adoption with an invalid group, slot or interface: %r", item)
         return None
     app = str(item["app"])
     return Adoption(
