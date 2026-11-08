@@ -1,0 +1,50 @@
+# Vercel Web Analytics Installation Report
+
+## Summary
+Successfully installed and configured Vercel Web Analytics for the InterMux website following the latest official documentation from https://vercel.com/docs/analytics/quickstart.
+
+## Changes Made
+
+### 1. Package Installation
+- **Added**: `@vercel/analytics` v2.0.1 to project dependencies
+- **Package Manager**: npm (used package-lock.json)
+- **Status**: Successfully installed with 349 packages added
+
+### 2. Code Configuration
+- **Modified File**: `website/app/layout.tsx`
+- **Changes**:
+  - Added import statement: `import { Analytics } from "@vercel/analytics/next";`
+  - Added `<Analytics />` component inside the `<body>` tag in the root layout
+  - Preserved all existing code structure and metadata
+
+### 3. Files Modified
+- `website/package.json` - Added @vercel/analytics dependency
+- `website/package-lock.json` - Updated with new dependency tree
+- `website/app/layout.tsx` - Integrated Analytics component
+
+## Implementation Details
+
+This is a Next.js 16.4.3 App Router project, so the Analytics component was added to the root layout file (`app/layout.tsx`) as per the official Vercel documentation for App Router projects.
+
+The Analytics component is placed at the end of the `<body>` tag to ensure it doesn't interfere with the main content rendering, following Vercel's recommended best practices.
+
+## Testing & Verification
+
+✅ **Linting**: Passed with no errors (`npm run lint`)
+✅ **Build**: Successfully compiled with Next.js (`npm run build`)
+✅ **TypeScript**: Type checking completed successfully
+✅ **Static Generation**: All 8 pages generated without issues
+
+## Next Steps
+
+To enable analytics data collection:
+1. Deploy the website to Vercel (or ensure it's already deployed)
+2. Enable Web Analytics in the Vercel dashboard under the Analytics section for this project
+3. Analytics will automatically begin tracking visitor data after deployment
+
+## Notes
+
+- The implementation uses the framework-specific import from `@vercel/analytics/next` for optimal Next.js integration
+- The Analytics component automatically handles route changes and page views
+- No additional configuration is required in the code
+- Analytics will only collect data when deployed to a Vercel environment
