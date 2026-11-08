@@ -27,6 +27,7 @@ export default async function Hero() {
         <nav className={styles.links} aria-label="Primary">
           <a href="#features" className={styles.section}>Features</a>
           <a href="#install" className={styles.section}>Install</a>
+          <Link href="/docs" className={styles.section}>Docs</Link>
           <a href="#faq" className={styles.section}>FAQ</a>
           <a href={GITHUB_URL} className={styles.github}>
             <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">

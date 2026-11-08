@@ -1,4 +1,5 @@
 import { Download, GitCommitHorizontal, GitFork, Star } from "lucide-react";
+import Link from "next/link";
 import type { ReactNode } from "react";
 import { DOCS_URL, GITHUB_URL } from "@/lib/config";
 import { getRepoData } from "@/lib/github";
@@ -60,7 +61,7 @@ export default async function Footer() {
                   <a href={file("CHANGELOG.md")}>Changelog</a>
                 </li>
                 <li>
-                  <a href={DOCS_URL}>Documentation</a>
+                  <Link href={DOCS_URL}>Documentation</Link>
                 </li>
               </ul>
             </div>

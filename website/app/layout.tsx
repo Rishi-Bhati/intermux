@@ -17,9 +17,27 @@ const mono = JetBrains_Mono({
 const description =
   "InterMux is a free, open-source network manager for Linux. Choose which connection each app uses: downloads on Ethernet, your browser on Wi-Fi, calls on your tethered phone.";
 
+/** SITE_URL on a custom domain, or the URL Vercel gives the project. */
+function siteUrl(): URL | undefined {
+  const value =
+    process.env.SITE_URL ??
+    (process.env.VERCEL_PROJECT_PRODUCTION_URL
+      ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
+      : process.env.VERCEL_URL
+        ? `https://${process.env.VERCEL_URL}`
+        : undefined);
+  if (!value) return undefined;
+  try {
+    return new URL(value.includes("://") ? value : `https://${value}`);
+  } catch {
+    return undefined;
+  }
+}
+
+const baseUrl = siteUrl();
+
 export const metadata: Metadata = {
-  // Set SITE_URL (for example https://intermux.dev) when deploying, so share cards get absolute image links.
-  metadataBase: process.env.SITE_URL ? new URL(process.env.SITE_URL) : undefined,
+  metadataBase: baseUrl,
   title: "InterMux: pick a network for every app on Linux",
   description,
   applicationName: "InterMux",

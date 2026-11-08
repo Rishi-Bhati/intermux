@@ -1,5 +1,5 @@
 export const GITHUB_URL = "https://github.com/Rishi-Bhati/intermux";
-export const DOCS_URL = "https://github.com/Rishi-Bhati/intermux#readme";
+export const DOCS_URL = "/docs";
 export const RELEASES_URL = `${GITHUB_URL}/releases`;
 export const LATEST_RELEASE_URL = `${GITHUB_URL}/releases/latest`;
 export const WINDOWS_URL = `${GITHUB_URL}/blob/main/windows/README.md`;
