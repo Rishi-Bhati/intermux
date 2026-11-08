@@ -4,6 +4,7 @@ import { GITHUB_URL, INSTALL_COMMAND, VERSION } from "@/lib/config";
 import { getRepoData } from "@/lib/github";
 import AmbientMesh from "./AmbientMesh";
 import Globe from "./Globe";
+import HeroDemo from "./HeroDemo";
 import InstallCommand from "./InstallCommand";
 import Logo from "./Logo";
 import RotatingTitle from "./RotatingTitle";
@@ -43,23 +44,28 @@ export default async function Hero() {
       </header>
 
       <div className={styles.body}>
-        <RotatingTitle />
-        <p className={styles.lede}>
-          Downloads on Ethernet, browser on Wi-Fi, calls on your phone. All at once, on Linux.
-        </p>
-        <div className={styles.ctas}>
-          <a href="#install" className="btn btn-primary">
-            <Download size={17} strokeWidth={2.2} aria-hidden="true" />
-            Install for Linux
-            <small>v{VERSION}</small>
-          </a>
-          <a href={GITHUB_URL} className="btn">
-            <Star size={16} strokeWidth={2} aria-hidden="true" />
-            Star on GitHub
-            <span className="count">{NUMBER.format(stats.stars)}</span>
-          </a>
+        <div className={styles.copy}>
+          <RotatingTitle align="start" />
+          <p className={styles.lede}>
+            Downloads on Ethernet, browser on Wi‑Fi, calls on your phone. All at once, on Linux.
+          </p>
+          <div className={styles.ctas}>
+            <a href="#install" className="btn btn-primary">
+              <Download size={17} strokeWidth={2.2} aria-hidden="true" />
+              Install for Linux
+              <small>v{VERSION}</small>
+            </a>
+            <a href={GITHUB_URL} className="btn">
+              <Star size={16} strokeWidth={2} aria-hidden="true" />
+              Star on GitHub
+              <span className="count">{NUMBER.format(stats.stars)}</span>
+            </a>
+          </div>
+          <div className={styles.install}>
+            <InstallCommand command={INSTALL_COMMAND} fit />
+          </div>
         </div>
-        <InstallCommand command={INSTALL_COMMAND} />
+        <HeroDemo />
       </div>
 
       <footer className={styles.facts}>

@@ -22,7 +22,16 @@ async function copyText(text: string) {
   }
 }
 
-export default function InstallCommand({ command, label = "Copy install command" }: { command: string; label?: string }) {
+export default function InstallCommand({
+  command,
+  label = "Copy install command",
+  fit = false,
+}: {
+  command: string;
+  label?: string;
+  /** Size the box to the command instead of the full width. */
+  fit?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
@@ -37,7 +46,7 @@ export default function InstallCommand({ command, label = "Copy install command"
   };
 
   return (
-    <div className={styles.box}>
+    <div className={styles.box} data-fit={fit || undefined}>
       <span className={styles.prompt} aria-hidden="true">
         $
       </span>

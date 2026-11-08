@@ -10,6 +10,12 @@
   transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
+.box[data-fit] {
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: 0;
+}
+
 .box:hover {
   border-color: var(--line-hi);
   background: var(--panel-hi);
@@ -72,8 +78,14 @@
   outline-offset: 2px;
 }
 
+/* Copied: a light button with dark text (white text on it was unreadable), with a green tick. */
 .copy[data-copied] {
   background: var(--text);
+  color: var(--bg);
+}
+
+.copy[data-copied] svg {
+  color: #1f9d6b;
 }
 
 @media (max-width: 480px) {

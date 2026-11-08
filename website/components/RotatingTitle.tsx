@@ -14,7 +14,7 @@ const TITLES: Array<[string, string]> = [
 const INTERVAL_MS = 3000;
 
 /** The hero headline. It cycles through a few lines; the heading text for screen readers stays fixed. */
-export default function RotatingTitle() {
+export default function RotatingTitle({ align = "center" }: { align?: "center" | "start" }) {
   const reduced = usePrefersReducedMotion();
   const [{ index, prev }, setState] = useState({ index: 0, prev: -1 });
 
@@ -28,7 +28,7 @@ export default function RotatingTitle() {
 
   return (
     <>
-      <h1 className={styles.title}>
+      <h1 className={styles.title} data-align={align}>
         <span className="sr-only">InterMux: pick a network for every app.</span>
         <span className={styles.stack} aria-hidden="true">
           {TITLES.map(([first, second], i) => (
@@ -44,7 +44,7 @@ export default function RotatingTitle() {
         </span>
       </h1>
 
-      <div className={styles.ticks} role="group" aria-label="Headline">
+      <div className={styles.ticks} data-align={align} role="group" aria-label="Headline">
         {TITLES.map(([first], i) => (
           <button
             key={first}

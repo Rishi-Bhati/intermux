@@ -66,15 +66,62 @@
   border: 1px solid var(--line);
 }
 
-/* Centered content */
+/* Copy and the demo video: stacked and centred on narrow screens, side by side on wide ones. */
 .body {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 56px;
+  padding: 24px var(--pad-x) 10svh;
+}
+
+.copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
   text-align: center;
-  padding: 24px var(--pad-x) 14svh;
   animation: rise 0.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.body > figure {
+  max-width: 820px;
+}
+
+.install {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
+@media (min-width: 1280px) {
+  .body {
+    display: grid;
+    /* The copy column never gets narrower than the install command, so the command is never cut. */
+    grid-template-columns: minmax(auto, 0.9fr) minmax(0, 1.1fr);
+    align-items: center;
+    gap: clamp(40px, 4.5vw, 88px);
+  }
+
+  .install {
+    width: max-content;
+  }
+
+  .copy {
+    align-items: flex-start;
+    text-align: left;
+  }
+
+  .copy .ctas,
+  .install {
+    justify-content: flex-start;
+  }
+
+  .body > figure {
+    max-width: none;
+  }
 }
 
 @keyframes rise {

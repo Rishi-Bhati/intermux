@@ -11,7 +11,8 @@ type Segment = string | { term: string; tip: string };
 type Block = {
   title: string;
   body: Segment[];
-  action?: { label: string; turnOn: boolean };
+  /** Show the on/off button under the text. */
+  action?: boolean;
   /** Which side of the centre line the text sits on. The diagram takes the other side. */
   side: "left" | "right";
 };
@@ -23,7 +24,7 @@ const blocks: Block[] = [
     body: [
       "Every app squeezes onto Ethernet while Wi-Fi and your phone sit idle. One big download, and your call lags.",
     ],
-    action: { label: "Turn InterMux on", turnOn: true },
+    action: true,
   },
   {
     side: "left",
@@ -31,7 +32,7 @@ const blocks: Block[] = [
     body: [
       "Each app gets its own lane. Downloads keep Ethernet, the browser takes Wi-Fi, the call moves to your phone.",
     ],
-    action: { label: "Turn InterMux off", turnOn: false },
+    action: true,
   },
   {
     side: "right",
@@ -110,23 +111,16 @@ export default function Story() {
   const bodyRefs = useRef<Array<HTMLParagraphElement | null>>([]);
 
   const [active, setActive] = useState(0);
-  // A choice made with the switch holds until the reader scrolls on to another block.
-  const [override, setOverride] = useState<{ block: number; stage: number } | null>(null);
+  // Until the reader uses a switch, the diagram follows the text: off for the first block, on after it.
+  // Once they choose, their choice holds for the whole diagram. It used to hold only for the block that
+  // was active, so a switch pressed just before the next block reached the middle of the screen undid
+  // itself a moment later.
+  const [choice, setChoice] = useState<boolean | null>(null);
 
-  // The first diagram belongs to the first two blocks; it keeps its last state once the reader moves past it.
-  const stage =
-    active === 2
-      ? override?.block === 1
-        ? override.stage
-        : 1
-      : override && override.block === active
-        ? override.stage
-        : active;
+  const stage = choice === null ? Math.min(active, 1) : choice ? 1 : 0;
   const on = stage >= 1;
 
-  const toggle = (next: boolean) => {
-    setOverride({ block: Math.min(active, 1), stage: next ? 1 : 0 });
-  };
+  const toggle = (next: boolean) => setChoice(next);
 
   const update = useCallback(() => {
     const vh = window.innerHeight;
@@ -209,14 +203,16 @@ export default function Story() {
         }}
       />
       {block.action && (
-        <button type="button" className={styles.action} onClick={() => toggle(block.action!.turnOn)}>
+        // A real toggle: its label always says what pressing it will do now. It used to be fixed
+        // ("Turn InterMux on" in the first block), so pressing it again could never turn InterMux off.
+        <button type="button" className={styles.action} onClick={() => toggle(!on)} aria-pressed={on}>
           <span
             className={styles.actionIcon}
             data-on={on || undefined}
-            data-target={block.action.turnOn ? "on" : "off"}
+            data-target={on ? "off" : "on"}
             aria-hidden="true"
           />
-          {block.action.label}
+          {on ? "Turn InterMux off" : "Turn InterMux on"}
         </button>
       )}
     </article>

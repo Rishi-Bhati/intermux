@@ -54,7 +54,9 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${sans.variable} ${mono.variable}`}>
-      <body>
+      {/* Browser extensions (dark-mode and transition tweakers) add inline styles to <body> before React
+          hydrates. suppressHydrationWarning ignores attribute differences on this element only. */}
+      <body suppressHydrationWarning>
         {children}
         <Analytics />
       </body>
