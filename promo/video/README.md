@@ -18,12 +18,24 @@ node render.js frames out/frames 3.7 9.8 14.8   # still frames, for checking
 CUT=web node render.js video out/intermux-demo-loop.mp4 60   # website cut
 ```
 
-The website cut (`?cut=web` in the browser) leaves out the title and the closing wordmark, since the page around it already shows them. It plays the steps 1.4 times slower, starts and ends on the same wide shot, and blends its last 0.7 seconds into its first, so it loops without a jump. It runs about 19 seconds.
+The website cut (`?cut=web` in the browser) leaves out the title and the closing wordmark, since the page around it already shows them. It plays the steps 1.3 times slower and, at seven key moments, slows almost to a freeze: the element being used is spotlit and a note explains it (`HOLDS` in `index.html`). It starts and ends on the same wide shot and blends its last 0.7 seconds into its first, so it loops without a jump. It runs about 38 seconds.
 
-The README uses `docs/media/intermux-demo.webp`, an animated WebP made from the full cut:
+| Pause | Note |
+|-------|------|
+| wlan0 in the Interface list | Pick the connection |
+| Firefox in the app picker | Pick the app |
+| Cloudflare in the DNS list | Give it its own DNS |
+| Firefox's row in the Queue | Line up your apps |
+| The password prompt | Start them all at once |
+| The live Bindings rows | Every app, its own lane |
+| wlan0's public IP | See where it comes out |
+
+The README uses `docs/media/intermux-demo.webp` and `docs/media/intermux-demo.mp4`, made from a clean render of the full cut. `CLEAN=1` leaves out the film grain and the background drift, which otherwise change every pixel of every frame and turn into blocky noise when compressed:
 
 ```bash
-ffmpeg -i out/intermux-demo.mp4 -vf "fps=24,scale=1280:-1:flags=lanczos" -c:v libwebp_anim -quality 60 -compression_level 6 -loop 0 ../../docs/media/intermux-demo.webp
+CLEAN=1 node render.js video out/intermux-demo-clean.mp4 60
+cp out/intermux-demo-clean.mp4 ../../docs/media/intermux-demo.mp4
+ffmpeg -i out/intermux-demo-clean.mp4 -vf "fps=30,scale=1600:-1:flags=lanczos" -c:v libwebp_anim -quality 80 -compression_level 4 -loop 0 ../../docs/media/intermux-demo.webp
 ```
 
 Set `CHROME` if Chromium is not at `/usr/bin/chromium`. The page loads Schibsted Grotesk and JetBrains Mono from Google Fonts and uses the local Noto Sans for the app window, so render with network access on a machine that has Noto Sans.

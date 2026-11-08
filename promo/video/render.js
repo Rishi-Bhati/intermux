@@ -4,6 +4,7 @@
 //   node render.js video <out.mp4> [fps]             the whole video (needs ffmpeg)
 //
 // CUT=web renders the website cut (no title or outro, slower, loops seamlessly).
+// CLEAN=1 leaves out the grain and background drift, for small, sharp compressed copies.
 //
 // Needs puppeteer-core and a Chromium at $CHROME (default /usr/bin/chromium).
 const path = require("path");
@@ -12,7 +13,8 @@ const { spawn } = require("child_process");
 const puppeteer = require("puppeteer-core");
 
 const CUT = process.env.CUT || "";
-const PAGE = "file://" + path.join(__dirname, "index.html") + "?render" + (CUT ? "&cut=" + encodeURIComponent(CUT) : "");
+const PAGE = "file://" + path.join(__dirname, "index.html") + "?render" + (CUT ? "&cut=" + encodeURIComponent(CUT) : "") +
+  (process.env.CLEAN ? "&clean" : "");
 const LOOP_FADE = 0.7;  // seconds of the end blended into the start, for the looping cut
 
 async function open() {

@@ -40,6 +40,7 @@ html, body { margin: 0; padding: 0; background: var(--site-bg); overflow: hidden
   background: radial-gradient(closest-side, rgba(63,214,154,.10), transparent 70%); }
 #grain { position: absolute; inset: -200px; z-index: 50; pointer-events: none; opacity: .06; mix-blend-mode: overlay;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
+.clean #grain { display: none; }
 #vignette { position: absolute; inset: 0; z-index: 40; pointer-events: none;
   background: radial-gradient(ellipse 85% 80% at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%); }
 
@@ -194,6 +195,16 @@ html, body { margin: 0; padding: 0; background: var(--site-bg); overflow: hidden
 .ripple { position: absolute; width: 80px; height: 80px; margin: -40px 0 0 -40px; border-radius: 50%; border: 3px solid rgba(147,166,255,.95);
   z-index: 59; opacity: 0; box-shadow: 0 0 24px rgba(58,90,255,.6); }
 
+#spot { position: absolute; left: 0; top: 0; z-index: 44; border-radius: 10px; border: 2px solid #93a6ff; pointer-events: none;
+  box-shadow: 0 0 0 4000px rgba(6,7,9,.66), 0 0 36px rgba(58,90,255,.55), inset 0 0 18px rgba(58,90,255,.25); opacity: 0; }
+#callout { position: absolute; left: 0; top: 0; z-index: 46; width: 470px; padding: 20px 24px 22px; background: rgba(14,15,17,.94);
+  border: 1px solid rgba(147,166,255,.35); border-radius: 12px; box-shadow: 0 30px 80px rgba(0,0,0,.6); opacity: 0; }
+#callout .eb { font-family: var(--mono); font-size: 15px; letter-spacing: .12em; color: var(--accent-fg); display: flex; align-items: center; gap: 10px; }
+#callout .eb i { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-fg); box-shadow: 0 0 12px var(--accent); display: block; }
+#callout b { display: block; margin-top: 10px; font-size: 34px; line-height: 1.12; font-weight: 700; letter-spacing: -0.025em; }
+#callout p { margin: 10px 0 0; font-size: 20px; line-height: 1.45; color: #a4a9b0; }
+#callout .bar { margin-top: 16px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.08); overflow: hidden; }
+#callout .bar > div { height: 100%; width: 0; background: var(--accent); }
 #caption { position: absolute; left: 72px; bottom: 64px; z-index: 45; display: flex; align-items: center; gap: 22px;
   padding: 20px 30px 20px 22px; background: rgba(12,13,14,.82); border: 1px solid rgba(255,255,255,.09); border-radius: 10px;
   box-shadow: 0 24px 60px rgba(0,0,0,.5); backdrop-filter: blur(14px); }
@@ -366,6 +377,8 @@ html, body { margin: 0; padding: 0; background: var(--site-bg); overflow: hidden
     </div>
   </div>
 
+  <div id="spot"></div>
+  <div id="callout"><div class="eb"><i></i><span id="co-eb"></span></div><b id="co-t"></b><p id="co-p"></p><div class="bar"><div id="co-bar"></div></div></div>
   <div id="caption"><span class="num" id="cap-num">01</span><div class="txt" id="cap-txt"></div></div>
 
   <svg id="cursor" viewBox="0 0 34 34"><path d="M4 3 L4 27 L10.2 21.4 L14.6 31 L19 29 L14.7 19.6 L23 19.6 Z" fill="#fff" stroke="#111" stroke-width="1.8" stroke-linejoin="round"/></svg>
@@ -396,10 +409,63 @@ const STORY = 18.0;
 // slower, and it starts and ends on the same wide shot so it can loop.
 const PARAMS = new URLSearchParams(location.search);
 const WEB = PARAMS.get("cut") === "web";
-const WEB_START = 1.9, WEB_END = 16.0, WEB_SLOW = 1.4;
-const DURATION = WEB ? (WEB_END - WEB_START) * WEB_SLOW : STORY;
+// ?clean drops the film grain, the drifting grid and the handheld drift: frames change only where
+// something moves, so compressed copies (the README's animated WebP) stay sharp.
+const CLEAN = PARAMS.has("clean");
+if (CLEAN) document.documentElement.classList.add("clean");
+const WEB_START = 1.9, WEB_END = 16.0, WEB_SLOW = 1.3;
+// Explain moments of the website cut: at story time h the video slows almost to a stop, the target is
+// spotlit and a note says what is happening. side: where the note sits relative to the target.
+const HOLDS = [
+  { h: 3.90, target: "ifWlan", pad: 6, side: "right", eb: "INTERFACE", title: "Pick the connection",
+    body: "Wi-Fi, Ethernet, your phone or a VPN. The app will use this one and nothing else." },
+  { h: 5.84, target: "tileFirefox", pad: 8, side: "left", eb: "APPLICATION", title: "Pick the app",
+    body: "Any installed app. It still runs as you, with your own profile and settings." },
+  { h: 7.36, target: "dnsCf", pad: 6, side: "right", eb: "DNS", title: "Give it its own DNS",
+    body: "DNS and a speed limit can be set for each connection." },
+  { h: 8.40, target: "qFirefox", pad: 6, side: "below", eb: "QUEUE", title: "Line up your apps",
+    body: "Queue as many as you like, each on its own connection." },
+  { h: 10.34, target: "auth", pad: 6, side: "right", eb: "ONE PASSWORD", title: "Start them all at once",
+    body: "One password for the whole queue. Your apps never run as root." },
+  { h: 12.30, target: "brows", pad: 6, side: "above", eb: "LIVE", title: "Every app, its own lane",
+    body: "qbittorrent on Ethernet, zoom on your phone, firefox on Wi-Fi, with live speed for each." },
+  { h: 14.72, target: "rowWlan", pad: 4, side: "above", eb: "PUBLIC IP", title: "See where it comes out",
+    body: "Check public IP asks from inside the lane: Firefox leaves through Wi-Fi." },
+];
+const HOLD_SPAN = 0.07, HOLD_RAMP = 0.08, HOLD_RATE = 0.04;
+const smooth = (x) => x * x * (3 - 2 * x);
+// 0..1: how deep into hold i story time t is (1 on the plateau).
+function holdWeight(i, t) {
+  const h = HOLDS[i].h;
+  if (t < h - HOLD_RAMP || t > h + HOLD_SPAN + HOLD_RAMP) return 0;
+  if (t < h) return smooth((t - (h - HOLD_RAMP)) / HOLD_RAMP);
+  if (t <= h + HOLD_SPAN) return 1;
+  return smooth(1 - (t - h - HOLD_SPAN) / HOLD_RAMP);
+}
+// Story seconds per output second at story time t.
+function storyRate(t) {
+  let w = 0;
+  for (let i = 0; i < HOLDS.length; i++) w = Math.max(w, holdWeight(i, t));
+  return (1 / WEB_SLOW) * (1 - (1 - HOLD_RATE) * w);
+}
+// Integrate once: table of (story t, output u).
+const MAP = [];
+if (WEB) {
+  let u = 0;
+  const dt = 0.0005;
+  for (let t = WEB_START; t <= WEB_END + 1e-9; t += dt) { MAP.push([t, u]); u += dt / storyRate(t + dt / 2); }
+}
+const DURATION = WEB ? MAP[MAP.length - 1][1] : STORY;
 // Output time -> story time.
-const storyTime = (u) => WEB ? WEB_START + u / WEB_SLOW : u;
+function storyTime(u) {
+  if (!WEB) return u;
+  let lo = 0, hi = MAP.length - 1;
+  if (u <= 0) return MAP[0][0];
+  if (u >= MAP[hi][1]) return MAP[hi][0];
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (MAP[mid][1] <= u) lo = mid; else hi = mid; }
+  const [t0, u0] = MAP[lo], [t1, u1] = MAP[hi];
+  return t0 + (t1 - t0) * (u - u0) / (u1 - u0);
+}
 const $ = (s) => document.querySelector(s);
 const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
 const lerp = (a, b, t) => a + (b - a) * t;
@@ -500,7 +566,7 @@ function measure() {
     ifaceCombo: "#iface-combo", ifWlan: "#iface-pop .opt:nth-child(2)", choose: "#choose-btn", tileFirefox: "#tile0",
     use: "#use-btn", dnsCombo: "#dns-combo", dnsCf: "#dns-pop .opt:nth-child(2)", add: "#add-btn", start: "#start-btn",
     pw: "#pw", auth: "#auth-btn", rowWlan: "#bg2", form: "#g-form", queue: "#g-queue", bind: "#g-bind", picker: "#picker",
-    btable: "#btable", ip2: "#ip2",
+    btable: "#btable", ip2: "#ip2", qFirefox: "#q2", brows: "#brows", auth: "#auth",
   };
   for (const [k, s] of Object.entries(sels)) {
     const r = $(s).getBoundingClientRect();
@@ -589,9 +655,9 @@ function setOpacity(el, o) { el.style.opacity = o.toFixed(3); el.style.visibilit
 // ---------------- render ----------------
 function render(t) {
   // ---- background ----
-  $("#grid").style.transform = `translate(${(-t * 6) % 56}px, ${(-t * 3) % 56}px)`;
+  if (!CLEAN) $("#grid").style.transform = `translate(${(-t * 6) % 56}px, ${(-t * 3) % 56}px)`;
   const gx = 960 + Math.sin(t * .35) * 380, gy = 540 + Math.cos(t * .27) * 220;
-  Object.assign($("#glow2").style, { left: gx + "px", top: gy + "px" });
+  Object.assign($("#glow2").style, CLEAN ? { left: "1340px", top: "700px" } : { left: gx + "px", top: gy + "px" });
   $("#grain").style.transform = `translate(${Math.floor(hash(Math.floor(t * 24)) * 180)}px, ${Math.floor(hash(Math.floor(t * 24) + 7) * 180)}px)`;
 
   // ---- intro ----
@@ -621,9 +687,17 @@ function render(t) {
   $("#world").style.filter = exit > 0 ? `blur(${exit * 14}px) brightness(${1 - exit * .5})` : "none";
 
   // ---- camera ----
-  const c = camAt(t);
+  const c = Object.assign({}, camAt(t));
+  let holdW = 0, holdI = -1;
+  if (WEB) HOLDS.forEach((_, i) => { const w = holdWeight(i, t); if (w > holdW) { holdW = w; holdI = i; } });
+  if (holdW > 0) {
+    // Lean in a little toward the spotlit element.
+    // Wide targets (whole table rows) only drift; small ones also get a slight push in.
+    const H = HOLDS[holdI], p = POS[H.target], k = E.inOut(holdW) * 0.06, wide = p.w > 900;
+    c.x = lerp(c.x, p.x, wide ? k / 3 : k); c.y = lerp(c.y, p.y, wide ? k / 3 : k); c.z *= 1 + (wide ? 0 : k);
+  }
   // A whisper of handheld drift keeps still moments alive.
-  const dx = (noise1(t * .6) - .5) * 6, dy = (noise1(t * .6 + 40) - .5) * 4;
+  const dx = CLEAN ? 0 : (noise1(t * .6) - .5) * 6, dy = CLEAN ? 0 : (noise1(t * .6 + 40) - .5) * 4;
   const tx = 960 - c.x * c.z + dx, ty = 540 - c.y * c.z + dy;
   $("#world").style.transform = `translate(${tx}px, ${ty}px) scale(${c.z})`;
   const toScreen = (p) => ({ x: tx + p.x * c.z, y: ty + p.y * c.z });
@@ -779,6 +853,35 @@ function render(t) {
     r.style.transform = `translate(${p.x}px, ${p.y}px) scale(${.25 + E.out(k) * 1.0})`;
   });
 
+  // ---- explain moments (website cut) ----
+  const spot = $("#spot"), co = $("#callout");
+  if (holdW > 0) {
+    const H = HOLDS[holdI], p = POS[H.target];
+    const box = H.target === "brows" ? { l: p.l, t: p.t, w: p.w, h: 6 * 34 } : { l: p.l, t: p.t, w: p.w, h: p.h };
+    const a = toScreen({ x: box.l, y: box.t }), b = toScreen({ x: box.l + box.w, y: box.t + box.h });
+    const pad = H.pad * c.z;
+    const r = { l: a.x - pad, t: a.y - pad, w: b.x - a.x + 2 * pad, h: b.y - a.y + 2 * pad };
+    const k = E.inOut(holdW);
+    // The ring settles onto its target from a little further out.
+    const grow = (1 - k) * 18;
+    Object.assign(spot.style, { left: (r.l - grow) + "px", top: (r.t - grow) + "px", width: (r.w + 2 * grow) + "px", height: (r.h + 2 * grow) + "px" });
+    setOpacity(spot, k);
+    $("#co-eb").textContent = H.eb; $("#co-t").textContent = H.title; $("#co-p").textContent = H.body;
+    const cw = 470, ch = co.offsetHeight || 200, gap = 28;
+    let x, y;
+    if (H.side === "right") { x = r.l + r.w + gap; y = r.t + r.h / 2 - ch / 2; }
+    else if (H.side === "left") { x = r.l - gap - cw; y = r.t + r.h / 2 - ch / 2; }
+    else if (H.side === "below") { x = r.l + r.w / 2 - cw / 2; y = r.t + r.h + gap; }
+    else { x = r.l + r.w / 2 - cw / 2; y = r.t - gap - ch; }
+    x = clamp(x, 40, 1920 - cw - 40); y = clamp(y, 40, 1080 - ch - 40);
+    const slide = (1 - k) * 26;
+    const dir = { right: [slide, 0], left: [-slide, 0], below: [0, slide], above: [0, -slide] }[H.side];
+    co.style.transform = `translate(${x + dir[0]}px, ${y + dir[1]}px)`;
+    setOpacity(co, k);
+    // Progress through the pause.
+    $("#co-bar").style.width = (clamp((t - H.h) / HOLD_SPAN) * 100).toFixed(1) + "%";
+  } else { setOpacity(spot, 0); setOpacity(co, 0); }
+
   // ---- captions ----
   const CAPS = [
     [2.75, 4.35, "01", "Choose a connection", "Wi-Fi, Ethernet, your phone or a VPN"],
@@ -789,7 +892,7 @@ function render(t) {
   ];
   const capEl = $("#caption");
   const capIn = E.out5(seg(t, 2.75, 3.15)), capOut = E.inOut(seg(t, 15.0, 15.35));
-  setOpacity(capEl, capIn * (1 - capOut));
+  setOpacity(capEl, capIn * (1 - capOut) * (1 - E.inOut(holdW)));
   capEl.style.transform = `translateY(${(1 - capIn) * 40 + capOut * 30}px)`;
   const txt = $("#cap-txt");
   if (!txt.children.length) CAPS.forEach((c) => { const d = document.createElement("div"); d.innerHTML = `<b>${c[3]}</b><span>${c[4]}</span>`; txt.appendChild(d); });
