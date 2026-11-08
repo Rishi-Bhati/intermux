@@ -31,15 +31,17 @@ The site lives in `website/` inside the main InterMux repository. The repository
 
 | Name | Required | Purpose |
 |------|----------|---------|
-| `SITE_URL` | Recommended | Public production URL, for example `https://intermux.dev`. Used for canonical and share-card URLs and for the short `https://<domain>/install` commands. |
+| `SITE_URL` | Optional | Public production URL. Defaults to `https://intermux.me`. Used for canonical and share-card URLs and for the short `https://intermux.me/install.sh` commands. |
 | `GITHUB_TOKEN` | Optional | A GitHub token with public repository read access. Raises the API rate limit and enables the star-history chart. Without it the footer falls back to the bundled snapshot. |
 
-If `SITE_URL` is unset, Vercel's deployment URL is used for absolute share-card URLs, and install commands keep pointing at the raw GitHub scripts.
+If `SITE_URL` is unset, the site uses `https://intermux.me`. Set it only for previews or a different domain.
+
+Add `intermux.me` in **Project Settings → Domains** and point its DNS at Vercel before the production deploy.
 
 ## Short install URLs
 
-`next.config.ts` redirects `/install`, `/install.sh` and `/install.ps1` to the scripts in the main repository under `get/`. Once `SITE_URL` is set, the site shows the short commands:
+`next.config.ts` redirects `/install`, `/install.sh` and `/install.ps1` to the scripts in the main repository under `get/`. The install commands on the site use the production domain:
 
 ```bash
-curl -fsSL https://<domain>/install | sh
+curl -fsSL https://intermux.me/install.sh | sh
 ```

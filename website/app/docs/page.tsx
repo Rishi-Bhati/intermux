@@ -3,7 +3,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { ArrowRight, BookOpen, Monitor, Terminal } from "lucide-react";
 import Logo from "@/components/Logo";
-import { GITHUB_URL, VERSION } from "@/lib/config";
+import { GITHUB_URL, SH_URL, VERSION } from "@/lib/config";
 import styles from "./docs.module.css";
 
 export const metadata: Metadata = {
@@ -139,7 +139,9 @@ export default function DocsPage() {
               never with <code>sudo</code>. Network changes go through a small polkit-gated helper, so a
               password prompt appears when root work is needed.
             </p>
-            <p>First, see what is available on the machine:</p>
+            <p>If it is not installed yet, the one-line installer sets it up and checks the dependencies:</p>
+            <Code>{`curl -fsSL ${SH_URL} | sh`}</Code>
+            <p>Then see what is available on the machine:</p>
             <Code>{`intermux check\nintermux interfaces\nintermux apps --search firefox`}</Code>
             <p>
               <code>check</code> reports missing tools. <code>interfaces</code> lists the connections you
@@ -320,7 +322,7 @@ export default function DocsPage() {
               stop the applications it started, and <code>--yes</code> to skip the confirmation. To remove
               the program itself:
             </p>
-            <Code>{`curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh -s -- --uninstall`}</Code>
+            <Code>{`curl -fsSL ${SH_URL} | sh -s -- --uninstall`}</Code>
           </Section>
 
           <Section id="troubleshooting">
