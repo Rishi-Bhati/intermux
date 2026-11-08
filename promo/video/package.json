@@ -1,0 +1,11 @@
+{
+  "name": "intermux-promo-video",
+  "private": true,
+  "description": "Renders the InterMux promo video from index.html",
+  "scripts": {
+    "render": "node render.js video out/intermux-demo.mp4 60"
+  },
+  "devDependencies": {
+    "puppeteer-core": "23.11.1"
+  }
+}

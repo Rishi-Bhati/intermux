@@ -9,6 +9,12 @@
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](https://www.python.org/downloads/)
 [![Status: beta](https://img.shields.io/badge/status-beta-yellow.svg)](#limitations)
 
+<br>
+
+<a href="docs/media/intermux-demo.mp4"><img src="docs/media/intermux-demo.webp" width="900" alt="InterMux demo: pick wlan0, choose Firefox, add it to the queue, press Start all, and each app runs on its own connection with live speeds and its public IP"></a>
+
+<sub>Click the animation for the full-quality video. The data in it is made up.</sub>
+
 </div>
 
 InterMux lets you choose which network connection each application uses. For example, you can keep a torrent client on Ethernet while your browser uses Wi-Fi or a phone hotspot. It runs each bound application inside its own network namespace and routes that namespace through the interface you pick. A small root helper, gated by polkit, sets up the networking. Your applications always run as your own user, so your profiles and settings are kept.
@@ -279,7 +285,8 @@ tests/         unit tests and an optional root integration test
 windows/       separate Windows edition
 install.sh, uninstall.sh, intermux_linux.spec
 SECURITY.md, CONTRIBUTING.md, CHANGELOG.md, license
-docs/          notes, such as the feature comparison with the Exordio fork
+docs/          notes, such as the feature comparison with the Exordio fork, and the demo video (docs/media)
+promo/video/   source of the demo video (an HTML animation rendered with headless Chromium)
 ```
 
 ## Contributing

@@ -1,0 +1,863 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>InterMux demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Schibsted+Grotesk:wght@400;500;600;700;800&display=block" rel="stylesheet">
+<style>
+/* Website tokens (website/app/globals.css) and app tokens (intermux/ui/theme.py). */
+:root {
+  --site-bg: #0c0d0e; --site-panel: #121315; --site-line: #1f2123; --site-line-hi: #33363a;
+  --site-text: #e9eaeb; --site-muted: #868b91;
+  --accent: #3a5aff; --accent-fg: #93a6ff;
+  --green: #3fd69a; --red: #ff8585; --amber: #ffb547; --violet: #a78bfa; --cyan: #38c8f0; --pink: #f472b6;
+
+  --bg: #24272c; --surface: #2c3036; --surface-alt: #353a41; --border: #3e444c; --line-hi: #545b65;
+  --text: #edeff2; --muted: #aeb4bd;
+  --group: #3e434b; --select: #31406f; --combo-face: #494e54;
+
+  --sans: "Schibsted Grotesk", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+  --ui: "Noto Sans", "DejaVu Sans", sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; background: var(--site-bg); overflow: hidden; }
+#stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--site-bg);
+  color: var(--site-text); font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+
+/* ---------- background ---------- */
+#bg { position: absolute; inset: 0; }
+#grid { position: absolute; inset: -120px;
+  background-image: linear-gradient(to right, rgba(255,255,255,.035) 1px, transparent 1px),
+                    linear-gradient(to bottom, rgba(255,255,255,.035) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: radial-gradient(ellipse 70% 65% at 50% 50%, #000 30%, transparent 100%); }
+#glow { position: absolute; left: 50%; top: 50%; width: 1500px; height: 1000px; margin: -500px 0 0 -750px;
+  background: radial-gradient(closest-side, rgba(58,90,255,.22), rgba(58,90,255,.05) 55%, transparent 75%); }
+#glow2 { position: absolute; width: 900px; height: 900px; margin: -450px 0 0 -450px;
+  background: radial-gradient(closest-side, rgba(63,214,154,.10), transparent 70%); }
+#grain { position: absolute; inset: -200px; z-index: 50; pointer-events: none; opacity: .06; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.9 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
+#vignette { position: absolute; inset: 0; z-index: 40; pointer-events: none;
+  background: radial-gradient(ellipse 85% 80% at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%); }
+
+/* ---------- intro ---------- */
+#intro { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 5; }
+#intro .mark { width: 76px; height: 76px; margin-bottom: 34px; }
+#intro h1 { margin: 0; font-weight: 700; font-size: 132px; line-height: 1.0; letter-spacing: -0.035em; text-align: center; }
+#intro h1 .line { display: block; overflow: hidden; padding: 0 .06em .08em; }
+#intro h1 .line > span { display: inline-block; }
+#intro h1 .l2 { color: #8f949a; }
+#intro .sub { margin-top: 40px; display: flex; gap: 14px; }
+.chip { display: inline-flex; align-items: center; gap: 12px; padding: 12px 20px; border: 1px solid var(--site-line-hi);
+  background: rgba(18,19,21,.85); border-radius: 6px; font-family: var(--mono); font-size: 22px; color: var(--site-text); }
+.chip .dot { width: 10px; height: 10px; border-radius: 50%; }
+.chip .k { color: var(--site-muted); }
+
+/* ---------- world / window ---------- */
+#world { position: absolute; left: 0; top: 0; transform-origin: 0 0; z-index: 10; }
+#win { position: absolute; left: 0; top: 0; width: 1360px; height: 1020px; background: var(--bg); border-radius: 12px;
+  overflow: hidden; font-family: var(--ui); color: var(--text); font-size: 15px;
+  box-shadow: 0 60px 140px rgba(0,0,0,.65), 0 20px 50px rgba(0,0,0,.45), 0 0 0 1px rgba(255,255,255,.07);
+  transform-origin: 50% 0%; }
+.titlebar { position: absolute; left: 0; right: 0; top: 0; height: 36px; background: #1d2024; border-bottom: 1px solid #30343a;
+  display: flex; align-items: center; justify-content: center; font-size: 13.5px; color: #c9cdd3; }
+.titlebar .appicon { width: 16px; height: 16px; margin-right: 8px; }
+.titlebar .ctrls { position: absolute; right: 12px; top: 0; height: 36px; display: flex; align-items: center; gap: 8px; }
+.titlebar .ctrls i { width: 14px; height: 14px; border-radius: 50%; background: #3a3f46; display: block; }
+.titlebar .ctrls i:last-child { background: #4a4f57; }
+.content { position: absolute; left: 0; right: 0; top: 36px; bottom: 0; padding: 0 24px; }
+
+.hdr { height: 68px; display: flex; align-items: center; }
+.hdr .title { font-weight: 700; font-size: 17px; }
+.hdr .muted { color: var(--muted); margin-left: 10px; font-size: 15px; }
+.hdr .muted.s { margin-left: 18px; }
+.hdr .sp { flex: 1; }
+.btn { display: inline-flex; align-items: center; justify-content: center; height: 32px; padding: 0 12px; font-size: 13.5px;
+  background: var(--surface-alt); color: var(--text); border: 1px solid var(--surface-alt); white-space: nowrap; }
+.btn.big { height: 42px; padding: 0 16px; font-size: 15px; }
+.btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.danger { background: var(--red); border-color: var(--red); color: var(--bg); }
+.btn.disabled { background: var(--surface); border-color: var(--surface); color: var(--line-hi); }
+.btn.hover { filter: brightness(1.12); }
+.btn.pressed { filter: brightness(.85); }
+.hdr .btn + .btn { margin-left: 8px; }
+
+.row2 { display: flex; gap: 14px; height: 476px; }
+.group { display: flex; flex-direction: column; }
+.group .gt { font-weight: 700; font-size: 16px; height: 28px; padding-left: 4px; line-height: 20px; }
+.group .gb { flex: 1; border: 1px solid var(--line-hi); padding: 10px 17px 17px; position: relative; }
+#g-form { width: 516px; }
+#g-queue { flex: 1; }
+#g-bind { margin-top: 12px; height: 352px; }
+
+.lbl { color: var(--muted); font-size: 15px; margin: 14px 0 6px; }
+.lbl.first { margin-top: 4px; }
+.combo { position: relative; height: 38px; background: var(--bg); border: 1px solid var(--line-hi); display: flex; align-items: center;
+  padding: 0 32px 0 8px; font-size: 15px; white-space: nowrap; overflow: hidden; }
+.combo .arrow { position: absolute; right: 0; top: 0; bottom: 0; width: 20px; background: var(--combo-face); }
+.combo .arrow::after { content: ""; position: absolute; left: 4px; top: 15px; border: 6px solid transparent; border-top: 7px solid var(--text); border-bottom: 0; }
+.combo.focus { border-color: var(--accent-fg); }
+.combo .ph { color: transparent; }
+.hint { color: var(--muted); font-size: 14px; line-height: 1.5; margin-top: 7px; min-height: 21px; }
+.approw { display: flex; gap: 8px; }
+.approw .combo { flex: 1; }
+.approw .btn { width: 130px; height: 42px; margin-top: -2px; font-size: 15px; }
+.opts { display: flex; align-items: flex-end; gap: 16px; margin-top: 4px; }
+.opts .dns { width: 232px; }
+.entry { width: 74px; height: 42px; background: var(--bg); border: 1px solid var(--line-hi); display: flex; align-items: center; justify-content: center; font-size: 15px; }
+.opts .small { color: var(--muted); font-size: 14px; margin: 0 2px 0 0; height: 42px; display: flex; align-items: center; }
+.check { display: flex; align-items: center; gap: 10px; margin-top: 22px; font-size: 15px; }
+.check .box { width: 16px; height: 16px; border: 1px solid var(--muted); }
+.addrow { display: flex; justify-content: flex-end; margin-top: 14px; }
+
+/* tables */
+.table { position: relative; border: 1px solid var(--line-hi); background: var(--surface); overflow: hidden; }
+.thead { display: flex; height: 34px; background: var(--surface-alt); color: var(--muted); font-size: 13.5px; align-items: center; }
+.tr { display: flex; height: 34px; align-items: center; font-size: 13.5px; position: relative; white-space: nowrap; }
+.tr > div, .thead > div { padding-left: 10px; overflow: hidden; text-overflow: clip; flex: none; }
+.tr > .c0 { display: flex; align-items: center; height: 34px; }
+.tr.grp { background: var(--group); font-weight: 700; }
+.tr.sel { background: var(--select) !important; }
+.tr .ico { display: inline-flex; width: 16px; height: 16px; border-radius: 4px; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700; color: #111; margin-right: 7px; flex: none; }
+.tri { display: inline-block; flex: none; width: 0; height: 0; border: 5px solid transparent; border-top: 6px solid var(--muted); border-bottom: 0; margin: 0 6px 0 -2px; vertical-align: 2px; }
+.empty { position: absolute; left: 0; right: 0; text-align: center; color: var(--muted); font-size: 15px; line-height: 1.5; padding: 0 60px; }
+.scroll { position: absolute; right: 0; top: 0; bottom: 0; width: 12px; background: var(--surface); border-left: 1px solid var(--border); }
+
+#qtable { height: 340px; }
+#qtable .c0 { width: 196px; } #qtable .c1 { width: 104px; } #qtable .c2 { width: 118px; } #qtable .c3 { width: 162px; } #qtable .c4 { width: 160px; }
+.qbtns { display: flex; gap: 8px; margin-top: 16px; }
+.qhint { color: var(--muted); font-size: 14.5px; margin-top: 12px; }
+
+#btable { height: 240px; }
+#btable .c0 { width: 290px; } #btable .c1 { width: 140px; } #btable .c2 { width: 80px; } #btable .c3 { width: 104px; }
+#btable .c4 { width: 92px; } #btable .c5 { width: 130px; } #btable .c6 { width: 160px; } #btable .c7 { width: 110px; } #btable .c8 { width: 140px; }
+#btable .tr .c5 { position: relative; height: 34px; }
+.spark { position: absolute; left: 8px; top: 5px; width: 114px; height: 24px; }
+.ipcell { font-family: var(--ui); }
+.bbtns { display: flex; gap: 8px; margin-top: 12px; height: 32px; }
+.bhint { color: var(--muted); font-size: 14px; margin-top: 10px; }
+
+.footer { position: absolute; left: 24px; right: 24px; bottom: 0; height: 64px; display: flex; align-items: center; }
+.footer .dot { color: #6d737c; font-size: 16px; margin-right: 10px; }
+.footer .status { flex: 1; font-size: 15px; }
+.footer .btn + .btn { margin-left: 8px; }
+
+/* popups */
+.pop { position: absolute; background: var(--surface-alt); border: 1px solid var(--line-hi); box-shadow: 0 16px 40px rgba(0,0,0,.5);
+  font-size: 15px; transform-origin: 50% 0; z-index: 20; }
+.pop .opt { height: 36px; display: flex; align-items: center; padding: 0 10px; white-space: nowrap; }
+.pop .opt.hl { background: var(--accent); color: #fff; }
+.pop .opt .m { color: var(--muted); margin-left: 10px; }
+.pop .opt.hl .m { color: #dfe5ff; }
+
+#scrim { position: absolute; inset: 0; background: rgba(8,9,11,.5); z-index: 25; }
+.dialog { position: absolute; background: var(--bg); border: 1px solid #4a5059; box-shadow: 0 40px 100px rgba(0,0,0,.6), 0 0 0 1px rgba(0,0,0,.3);
+  z-index: 30; transform-origin: 50% 50%; border-radius: 8px; overflow: hidden; }
+.dialog .dtitle { height: 34px; background: #1d2024; border-bottom: 1px solid #30343a; display: flex; align-items: center; justify-content: center; font-size: 13.5px; color: #c9cdd3; }
+
+#picker { width: 800px; height: 586px; }
+#picker .pbody { padding: 22px 24px; }
+#picker .search { display: flex; align-items: center; gap: 14px; }
+#picker .search .box { flex: 1; height: 42px; border: 1px solid var(--accent-fg); background: var(--bg); display: flex; align-items: center; padding: 0 12px; color: var(--muted); font-size: 15px; }
+#picker .search .n { color: var(--muted); font-size: 15px; }
+#picker .tiles { margin-top: 14px; border: 1px solid var(--border); background: var(--surface); height: 324px; padding: 12px; display: grid;
+  grid-template-columns: repeat(5, 136px); gap: 12px; overflow: hidden; }
+.tile { height: 132px; border: 1px solid var(--border); background: var(--surface); display: flex; flex-direction: column; align-items: center; padding-top: 14px; }
+.tile .ti { width: 46px; height: 46px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 21px; font-weight: 700; color: #15171a; }
+.tile .tn { margin-top: 11px; font-size: 15px; }
+.tile .tc { margin-top: 3px; font-size: 13.5px; color: var(--muted); }
+.tile.hover { background: var(--surface-alt); }
+.tile.sel { background: var(--select); border-color: var(--accent-fg); }
+#picker .phint { color: var(--muted); font-size: 15px; margin-top: 14px; }
+#picker .pbtns { display: flex; margin-top: 14px; align-items: center; }
+#picker .pbtns .sp { flex: 1; }
+#picker .pbtns .btn { height: 42px; font-size: 15px; padding: 0 16px; }
+#picker .pbtns .use { width: 130px; margin-left: 12px; }
+
+#auth { width: 560px; height: 300px; }
+#auth .abody { padding: 26px 30px; display: flex; gap: 22px; }
+#auth .lock { width: 52px; height: 52px; border-radius: 12px; background: rgba(58,90,255,.16); border: 1px solid rgba(147,166,255,.35); display: flex; align-items: center; justify-content: center; flex: none; }
+#auth h3 { margin: 0; font-size: 18px; font-weight: 700; }
+#auth p { margin: 6px 0 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+#auth .pw { margin-top: 18px; height: 42px; border: 1px solid var(--accent-fg); background: var(--surface); display: flex; align-items: center; padding: 0 12px; font-size: 20px; letter-spacing: 4px; }
+#auth .pw .caret { display: inline-block; width: 2px; height: 20px; background: var(--text); margin-left: 2px; }
+#auth .abtns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+#auth .abtns .btn { height: 40px; font-size: 14.5px; padding: 0 16px; }
+
+/* ---------- cursor, ripple, captions ---------- */
+#cursor { position: absolute; left: 0; top: 0; width: 40px; height: 40px; z-index: 60; transform-origin: 3px 3px; filter: drop-shadow(0 6px 10px rgba(0,0,0,.45)); }
+.ripple { position: absolute; width: 80px; height: 80px; margin: -40px 0 0 -40px; border-radius: 50%; border: 3px solid rgba(147,166,255,.95);
+  z-index: 59; opacity: 0; box-shadow: 0 0 24px rgba(58,90,255,.6); }
+
+#caption { position: absolute; left: 72px; bottom: 64px; z-index: 45; display: flex; align-items: center; gap: 22px;
+  padding: 20px 30px 20px 22px; background: rgba(12,13,14,.82); border: 1px solid rgba(255,255,255,.09); border-radius: 10px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.5); backdrop-filter: blur(14px); }
+#caption .num { align-self: flex-start; margin-top: 8px; font-family: var(--mono); font-size: 20px; color: var(--accent-fg); border: 1px solid rgba(147,166,255,.35);
+  background: rgba(58,90,255,.14); border-radius: 6px; padding: 6px 10px; }
+#caption .txt { position: relative; height: 84px; min-width: 300px; }
+#caption .txt > div { position: absolute; left: 0; top: 0; white-space: nowrap; }
+#caption .txt b { display: block; font-size: 42px; font-weight: 700; letter-spacing: -0.025em; line-height: 50px; }
+#caption .txt span { display: block; font-size: 23px; color: #9a9fa6; line-height: 32px; margin-top: 2px; }
+
+/* ---------- outro ---------- */
+#outro { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 48; }
+#outro .wordmark { width: 600px; height: 136px; }
+#outro .tag { margin-top: 34px; font-size: 54px; font-weight: 700; letter-spacing: -0.03em; }
+#outro .tag span { color: #8f949a; }
+#outro .cmd { margin-top: 48px; display: flex; align-items: center; height: 74px; border: 1px solid var(--site-line-hi); background: rgba(18,19,21,.92);
+  border-radius: 8px; padding: 0 12px 0 28px; font-family: var(--mono); font-size: 26px; min-width: 860px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+#outro .cmd .ps { color: var(--accent); margin-right: 18px; }
+#outro .cmd .typed { flex: 1; white-space: pre; }
+#outro .cmd .caret { display: inline-block; width: 13px; height: 30px; background: var(--site-text); vertical-align: -6px; }
+#outro .cmd .copy { background: var(--accent); color: #fff; font-family: var(--sans); font-size: 20px; font-weight: 600; padding: 12px 22px; border-radius: 6px; margin-left: 20px; }
+#outro .meta { margin-top: 30px; display: flex; gap: 28px; font-size: 22px; color: var(--site-muted); }
+#outro .meta b { color: var(--site-text); font-weight: 600; }
+#outro .meta i { width: 6px; height: 6px; border-radius: 50%; background: var(--site-line-hi); align-self: center; display: block; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="bg"><div id="grid"></div><div id="glow"></div><div id="glow2"></div></div>
+
+  <!-- intro -->
+  <div id="intro">
+    <svg class="mark" viewBox="0 0 64 64" fill="none" id="intro-mark">
+      <path d="M12 52V12M52 52V12" stroke="#868b91" stroke-width="8" stroke-linecap="round"/>
+      <path d="M12 12L32 36L52 12" stroke="#3a5aff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="12" cy="12" r="8" fill="#3a5aff"/><circle cx="52" cy="12" r="8" fill="#3a5aff"/><circle cx="32" cy="36" r="9.5" fill="#3a5aff"/>
+      <rect x="4" y="44" width="16" height="16" rx="3.5" fill="#e9eaeb"/><rect x="44" y="44" width="16" height="16" rx="3.5" fill="#e9eaeb"/>
+    </svg>
+    <h1>
+      <span class="line l1"><span class="w" data-i="0">Pick</span> <span class="w" data-i="1">a</span> <span class="w" data-i="2">network</span></span>
+      <span class="line l2"><span class="w" data-i="3">for</span> <span class="w" data-i="4">every</span> <span class="w" data-i="5">app.</span></span>
+    </h1>
+    <div class="sub">
+      <div class="chip" data-i="0"><span class="dot" style="background:var(--amber)"></span>qbittorrent <span class="k">→ Ethernet</span></div>
+      <div class="chip" data-i="1"><span class="dot" style="background:var(--cyan)"></span>firefox <span class="k">→ Wi-Fi</span></div>
+      <div class="chip" data-i="2"><span class="dot" style="background:var(--pink)"></span>zoom <span class="k">→ Phone</span></div>
+    </div>
+  </div>
+
+  <!-- world: the app window, under a camera -->
+  <div id="world">
+    <div id="win">
+      <div class="titlebar">
+        <svg class="appicon" viewBox="0 0 64 64" fill="none"><path d="M12 52V12M52 52V12" stroke="#868b91" stroke-width="8" stroke-linecap="round"/><path d="M12 12L32 36L52 12" stroke="#3a5aff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><rect x="4" y="44" width="16" height="16" rx="3.5" fill="#e9eaeb"/><rect x="44" y="44" width="16" height="16" rx="3.5" fill="#e9eaeb"/></svg>
+        InterMux 2.1.0
+        <div class="ctrls"><i></i><i></i><i></i></div>
+      </div>
+      <div class="content">
+        <div class="hdr">
+          <span class="title">InterMux</span><span class="muted">2.1.0</span><span class="muted s">Wayland :1</span>
+          <span class="sp"></span>
+          <span class="btn ghost">Report issue</span><span class="btn">VPN connections…</span><span class="btn">Refresh</span>
+        </div>
+
+        <div class="row2">
+          <div class="group" id="g-form">
+            <div class="gt">New binding</div>
+            <div class="gb">
+              <div class="lbl first">Interface</div>
+              <div class="combo" id="iface-combo"><span id="iface-val">enp3s0&nbsp; Ethernet&nbsp; 192.168.0.24</span><span class="arrow"></span></div>
+              <div class="hint" id="iface-hint"></div>
+              <div class="lbl">Application</div>
+              <div class="approw">
+                <div class="combo" id="app-combo"><span id="app-val"></span><span class="arrow"></span></div>
+                <span class="btn" id="choose-btn">Choose…</span>
+              </div>
+              <div class="hint" id="app-hint">Type a command such as firefox or a full path, pick a recent one, or press Choose.</div>
+              <div class="opts">
+                <div>
+                  <div class="lbl" style="margin-top:6px">DNS</div>
+                  <div class="combo dns" id="dns-combo"><span id="dns-val">Automatic</span><span class="arrow"></span></div>
+                </div>
+                <div>
+                  <div class="lbl" style="margin-top:6px">Speed limit, Mbit/s</div>
+                  <div style="display:flex; gap:8px; align-items:center">
+                    <span class="small">down</span><span class="entry"></span><span class="small" style="margin-left:6px">up</span><span class="entry"></span>
+                  </div>
+                </div>
+              </div>
+              <div class="check"><span class="box"></span>Open a separate profile if the app is already running</div>
+              <div class="addrow"><span class="btn big disabled" id="add-btn">Add to queue</span></div>
+            </div>
+          </div>
+
+          <div class="group" id="g-queue">
+            <div class="gt">Queue</div>
+            <div class="gb">
+              <div class="table" id="qtable">
+                <div class="thead"><div class="c0">Application</div><div class="c1">Interface</div><div class="c2">DNS</div><div class="c3">Speed limit</div><div class="c4">If running</div></div>
+                <div id="qrows"></div>
+                <div class="scroll"></div>
+              </div>
+              <div class="qbtns"><span class="btn" id="start-btn">Start all</span><span class="btn">Remove</span><span class="btn">Clear</span></div>
+              <div class="qhint">Start all asks for your password once for the whole queue.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="group" id="g-bind">
+          <div class="gt">Bindings</div>
+          <div class="gb">
+            <div class="table" id="btable">
+              <div class="thead"><div class="c0">Interface / application</div><div class="c1">Status</div><div class="c2">PID</div><div class="c3">Download</div><div class="c4">Upload</div><div class="c5">Last minute</div><div class="c6">Speed limit</div><div class="c7">DNS</div><div class="c8">Public IP</div></div>
+              <div id="brows"></div>
+              <div class="empty" id="bempty" style="top:112px">No apps are routed yet. Queued apps appear here after you press Start all.</div>
+              <div class="scroll"></div>
+            </div>
+            <div class="bbtns" id="bbtns"></div>
+            <div class="bhint" id="bhint">Select an app to stop, restart or move it, or an interface row to change its DNS or speed limit.</div>
+          </div>
+        </div>
+
+        <div class="footer">
+          <span class="dot" id="sdot">●</span><span class="status" id="status">Ready</span>
+          <span class="btn">Re-add routes</span><span class="btn">Remove stopped</span><span class="btn danger">Reset everything</span>
+        </div>
+      </div>
+
+      <!-- interface dropdown -->
+      <div class="pop" id="iface-pop">
+        <div class="opt" data-k="enp3s0">enp3s0&nbsp; Ethernet&nbsp; 192.168.0.24</div>
+        <div class="opt" data-k="wlan0">wlan0&nbsp; Wi-Fi&nbsp; 192.168.1.42</div>
+        <div class="opt" data-k="usb0">usb0&nbsp; USB&nbsp; 172.20.10.4</div>
+        <div class="opt" data-k="wg0">wg0&nbsp; VPN&nbsp; 10.8.0.2</div>
+      </div>
+      <!-- DNS dropdown -->
+      <div class="pop" id="dns-pop">
+        <div class="opt">Automatic</div>
+        <div class="opt">Cloudflare<span class="m">1.1.1.1</span></div>
+        <div class="opt">Google<span class="m">8.8.8.8</span></div>
+        <div class="opt">Quad9<span class="m">9.9.9.9</span></div>
+        <div class="opt">Custom…</div>
+      </div>
+
+      <div id="scrim"></div>
+      <!-- app picker -->
+      <div class="dialog" id="picker">
+        <div class="dtitle">Choose an application</div>
+        <div class="pbody">
+          <div class="search"><div class="box">Search applications</div><span class="n">12 applications</span></div>
+          <div class="tiles" id="tiles"></div>
+          <div class="phint">Click an application, then press Enter or double-click to use it.</div>
+          <div class="pbtns"><span class="btn">Browse for a file…</span><span class="sp"></span><span class="btn ghost">Cancel</span><span class="btn use disabled" id="use-btn">Use</span></div>
+        </div>
+      </div>
+
+      <!-- password prompt -->
+      <div class="dialog" id="auth">
+        <div class="dtitle">Authentication required</div>
+        <div class="abody">
+          <div class="lock"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#93a6ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></div>
+          <div style="flex:1">
+            <h3>InterMux wants to change network settings</h3>
+            <p>Starting 3 apps on their interfaces. One password for the whole queue.</p>
+            <div class="pw" id="pw"><span id="pwdots"></span><span class="caret" id="pwcaret"></span></div>
+            <div class="abtns"><span class="btn ghost">Cancel</span><span class="btn primary" id="auth-btn">Authenticate</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="caption"><span class="num" id="cap-num">01</span><div class="txt" id="cap-txt"></div></div>
+
+  <svg id="cursor" viewBox="0 0 34 34"><path d="M4 3 L4 27 L10.2 21.4 L14.6 31 L19 29 L14.7 19.6 L23 19.6 Z" fill="#fff" stroke="#111" stroke-width="1.8" stroke-linejoin="round"/></svg>
+  <div id="ripples"></div>
+
+  <!-- outro -->
+  <div id="outro">
+    <svg class="wordmark" viewBox="0 0 282 64" fill="none">
+      <g id="ow"><path d="M76 16H81.5V48H76Z" fill="#e9eaeb"/><path d="M88.5 48V26H99.5A11 11 0 0 1 110.5 37V48H105V37A5.5 5.5 0 0 0 94 37V48Z" fill="#e9eaeb"/><path d="M119.5 20V39A9 9 0 0 0 128.5 48H133V42.5H128.5A3.5 3.5 0 0 1 125 39V20Z" fill="#e9eaeb"/><path d="M116 26H133V31.5H116Z" fill="#e9eaeb"/><path d="M160 37A11 11 0 1 0 156.64 44.91L152.82 40.960A5.5 5.5 0 1 1 154.5 37Z" fill="#e9eaeb"/><path d="M138 36H160V41H138Z" fill="#e9eaeb"/><path d="M165 48V26H176A11 11 0 0 1 183.36 28.83L179.68 32.91A5.5 5.5 0 0 0 170.5 37V48Z" fill="#e9eaeb"/><path d="M191.5 48V16H197V48Z" fill="#e9eaeb"/><path d="M220 16H225.5V48H220Z" fill="#e9eaeb"/><path d="M191.5 16H198.3L208.5 32.03L218.7 16H225.5L208.5 42.71Z" fill="#e9eaeb"/><path d="M231 48V26H242A11 11 0 0 1 253 37V48H247.5V37A5.5 5.5 0 0 0 236.5 37V48Z" fill="#e9eaeb" transform="rotate(180 242 37)"/><path d="M257 26H264L280 48H273Z" fill="#3a5aff"/><path d="M273 26H280L264 48H257Z" fill="#3a5aff"/></g>
+      <g id="om"><path d="M12 52V12M52 52V12" stroke="#868b91" stroke-width="8" stroke-linecap="round"/><path d="M12 12L32 36L52 12" stroke="#3a5aff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="8" fill="#3a5aff"/><circle cx="52" cy="12" r="8" fill="#3a5aff"/><circle cx="32" cy="36" r="9.5" fill="#3a5aff"/><rect x="4" y="44" width="16" height="16" rx="3.5" fill="#e9eaeb"/><rect x="44" y="44" width="16" height="16" rx="3.5" fill="#e9eaeb"/></g>
+    </svg>
+    <div class="tag">Pick a network <span>for every app.</span></div>
+    <div class="cmd"><span class="ps">$</span><span class="typed" id="typed"></span><span class="copy">Copy</span></div>
+    <div class="meta"><span><b>intermux.me</b></span><i></i><span>Free and open source</span><i></i><span>GUI and command line</span></div>
+  </div>
+
+  <div id="vignette"></div>
+  <div id="grain"></div>
+</div>
+
+<script>
+"use strict";
+// ======================================================================
+// Everything on screen is a pure function of time: render(t) draws frame t.
+// ======================================================================
+const STORY = 18.0;
+// ?cut=web is the website cut: no title or outro (the page around it already has them), steps played
+// slower, and it starts and ends on the same wide shot so it can loop.
+const PARAMS = new URLSearchParams(location.search);
+const WEB = PARAMS.get("cut") === "web";
+const WEB_START = 1.9, WEB_END = 16.0, WEB_SLOW = 1.4;
+const DURATION = WEB ? (WEB_END - WEB_START) * WEB_SLOW : STORY;
+// Output time -> story time.
+const storyTime = (u) => WEB ? WEB_START + u / WEB_SLOW : u;
+const $ = (s) => document.querySelector(s);
+const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const E = {
+  inOut: (x) => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2,
+  out: (x) => 1 - Math.pow(1 - x, 3),
+  out5: (x) => 1 - Math.pow(1 - x, 5),
+  in: (x) => x * x * x,
+  inOutQ: (x) => x < .5 ? 16 * x ** 5 : 1 - Math.pow(-2 * x + 2, 5) / 2,
+  back: (x) => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); },
+};
+function hash(n) { const s = Math.sin(n * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); }
+function noise1(x) { const i = Math.floor(x), f = x - i; const u = f * f * (3 - 2 * f); return lerp(hash(i), hash(i + 1), u); }
+
+// ---------------- data ----------------
+const TILE_APPS = [
+  ["Firefox", "Browse the web", "F", "#ff9a5c"], ["qBittorrent", "BitTorrent client", "Q", "#7fb2ff"],
+  ["Spotify", "Music for every…", "S", "#3fd69a"], ["Zoom", "Video meetings", "Z", "#38c8f0"],
+  ["Visual Studio C…", "Code editing", "V", "#93a6ff"], ["Steam", "Games", "S", "#aeb4bd"],
+  ["Discord", "Chat", "D", "#a78bfa"], ["Chromium", "Web browser", "C", "#ffb547"],
+  ["Thunderbird", "Mail", "T", "#7fb2ff"], ["VLC", "Media player", "V", "#ffb547"],
+  ["OBS Studio", "Streaming", "O", "#f472b6"], ["Telegram", "Messaging", "T", "#38c8f0"],
+];
+const ICON = { firefox: ["F", "#ff9a5c"], qbittorrent: ["Q", "#7fb2ff"], zoom: ["Z", "#38c8f0"] };
+
+const QUEUE = [
+  { name: "qBittorrent", key: "qbittorrent", iface: "enp3s0", dns: "auto", limit: "↓ 80 ↑ 10 Mbit/s", pol: "ask me" },
+  { name: "Zoom", key: "zoom", iface: "usb0", dns: "Quad9", limit: "-", pol: "ask me" },
+  { name: "Firefox", key: "firefox", iface: "wlan0", dns: "Cloudflare", limit: "-", pol: "ask me" },
+];
+// Bindings: interface rows with one app each. Rates in bytes per second.
+const LANES = [
+  { iface: "enp3s0", label: "enp3s0&nbsp; Ethernet&nbsp; 192.168.0.24", app: "qbittorrent", pid: "48211", down: 10.1e6, up: 1.25e6,
+    limit: "↓ 80 ↑ 10 Mbit/s", dns: "auto", colour: "#3fd69a", seed: 3 },
+  { iface: "usb0", label: "usb0&nbsp; USB&nbsp; 172.20.10.4", app: "zoom", pid: "48502", down: 0.91e6, up: 0.47e6,
+    limit: "-", dns: "Quad9", colour: "#3fd69a", seed: 11 },
+  { iface: "wlan0", label: "wlan0&nbsp; Wi-Fi&nbsp; 192.168.1.42", app: "firefox", pid: "48377", down: 2.6e6, up: 0.31e6,
+    limit: "-", dns: "Cloudflare", colour: "#3fd69a", seed: 23 },
+];
+
+function fmtRate(b) {
+  const units = ["B/s", "KB/s", "MB/s", "GB/s"]; let v = b, u = 0;
+  while (v >= 1000 && u < 3) { v /= 1024; u++; }
+  return (v >= 10 || u === 0 ? Math.round(v) : v.toFixed(1)) + " " + units[u];
+}
+
+// ---------------- build static DOM ----------------
+const tiles = $("#tiles");
+TILE_APPS.forEach(([n, c, l, col], i) => {
+  const d = document.createElement("div");
+  d.className = "tile"; d.id = "tile" + i;
+  d.innerHTML = `<div class="ti" style="background:${col}">${l}</div><div class="tn">${n}</div><div class="tc">${c}</div>`;
+  tiles.appendChild(d);
+});
+const qrows = $("#qrows");
+QUEUE.forEach((q, i) => {
+  const d = document.createElement("div");
+  d.className = "tr"; d.id = "q" + i;
+  const [l, col] = ICON[q.key];
+  d.innerHTML = `<div class="c0"><span class="ico" style="background:${col}">${l}</span>${q.name}</div><div class="c1">${q.iface}</div><div class="c2">${q.dns}</div><div class="c3">${q.limit}</div><div class="c4">${q.pol}</div>`;
+  qrows.appendChild(d);
+});
+const brows = $("#brows");
+LANES.forEach((ln, i) => {
+  const g = document.createElement("div");
+  g.className = "tr grp"; g.id = "bg" + i;
+  g.innerHTML = `<div class="c0"><span class="tri"></span>${ln.label}</div><div class="c1">routing 1 app</div><div class="c2"></div>` +
+    `<div class="c3" id="bgd${i}"></div><div class="c4" id="bgu${i}"></div><div class="c5"><svg class="spark" id="sg${i}" viewBox="0 0 114 24" preserveAspectRatio="none"><path class="u" fill="none" stroke="#a78bfa" stroke-width="1"/><path class="d" fill="none" stroke="${ln.colour}" stroke-width="1.6"/></svg></div>` +
+    `<div class="c6">${ln.limit}</div><div class="c7">${ln.dns}</div><div class="c8 ipcell" id="ip${i}"></div>`;
+  const a = document.createElement("div");
+  const [l, col] = ICON[ln.app];
+  a.className = "tr"; a.id = "ba" + i;
+  a.innerHTML = `<div class="c0" style="padding-left:36px"><span class="ico" style="background:${col}">${l}</span>${ln.app}</div><div class="c1">running</div><div class="c2">${ln.pid}</div>` +
+    `<div class="c3" id="bad${i}"></div><div class="c4" id="bau${i}"></div><div class="c5"><svg class="spark" id="sa${i}" viewBox="0 0 114 24" preserveAspectRatio="none"><path class="u" fill="none" stroke="#a78bfa" stroke-width="1"/><path class="d" fill="none" stroke="${ln.colour}" stroke-width="1.6"/></svg></div>` +
+    `<div class="c6"></div><div class="c7"></div><div class="c8"></div>`;
+  brows.appendChild(g); brows.appendChild(a);
+});
+const RIPPLES = [];
+for (let i = 0; i < 4; i++) { const r = document.createElement("div"); r.className = "ripple"; $("#ripples").appendChild(r); RIPPLES.push(r); }
+
+// Popups sit under their combo boxes; dialogs centred in the window.
+function place() {
+  const w = $("#win").getBoundingClientRect();
+  const at = (sel) => { const r = $(sel).getBoundingClientRect(); return { x: r.left - w.left, y: r.top - w.top, w: r.width, h: r.height }; };
+  const ic = at("#iface-combo"), dc = at("#dns-combo");
+  Object.assign($("#iface-pop").style, { left: ic.x + "px", top: (ic.y + ic.h + 2) + "px", width: ic.w + "px" });
+  Object.assign($("#dns-pop").style, { left: dc.x + "px", top: (dc.y + dc.h + 2) + "px", width: dc.w + "px" });
+  Object.assign($("#picker").style, { left: (1360 - 800) / 2 + "px", top: "150px" });
+  Object.assign($("#auth").style, { left: (1360 - 560) / 2 + "px", top: "330px" });
+}
+
+// Window-local centre of an element (measured once, with no camera applied).
+const POS = {};
+function measure() {
+  const w = $("#win").getBoundingClientRect();
+  const sels = {
+    ifaceCombo: "#iface-combo", ifWlan: "#iface-pop .opt:nth-child(2)", choose: "#choose-btn", tileFirefox: "#tile0",
+    use: "#use-btn", dnsCombo: "#dns-combo", dnsCf: "#dns-pop .opt:nth-child(2)", add: "#add-btn", start: "#start-btn",
+    pw: "#pw", auth: "#auth-btn", rowWlan: "#bg2", form: "#g-form", queue: "#g-queue", bind: "#g-bind", picker: "#picker",
+    btable: "#btable", ip2: "#ip2",
+  };
+  for (const [k, s] of Object.entries(sels)) {
+    const r = $(s).getBoundingClientRect();
+    POS[k] = { x: r.left - w.left + r.width / 2, y: r.top - w.top + r.height / 2, w: r.width, h: r.height, l: r.left - w.left, t: r.top - w.top };
+  }
+}
+
+// ---------------- timeline ----------------
+// Camera: window-local point at the stage centre, and zoom.
+let CAM, MOVES, CLICKS;
+function buildTimeline() {
+  const P = POS;
+  const B = P.btable;
+  CAM = [
+    { t: 0.0, x: 680, y: 560, z: 0.80 },
+    { t: 2.55, x: 680, y: 530, z: 0.80 },
+    { t: 3.25, x: 320, y: 290, z: 1.70 },      // interface field
+    { t: 4.25, x: 330, y: 300, z: 1.70 },
+    { t: 4.95, x: 680, y: 470, z: 1.17 },      // picker
+    { t: 6.40, x: 680, y: 465, z: 1.20 },
+    { t: 6.95, x: 330, y: 440, z: 1.62 },      // DNS, then Add to queue
+    { t: 7.85, x: 360, y: 455, z: 1.58 },
+    { t: 8.45, x: 870, y: 330, z: 1.50 },      // queue
+    { t: 8.95, x: 860, y: 340, z: 1.46 },
+    { t: 9.35, x: 680, y: 480, z: 1.24 },      // password prompt
+    { t: 10.65, x: 680, y: 485, z: 1.26 },
+    { t: 11.35, x: 680, y: B.y + 30, z: 1.24 },  // bindings, whole table
+    { t: 13.2, x: 690, y: B.y + 30, z: 1.32 },   // slow push in while it runs
+    { t: 13.95, x: 688, y: B.y + 45, z: 1.38 },  // wlan0, Check public IP
+    { t: 15.15, x: 700, y: B.y + 35, z: 1.42 },
+    WEB ? { t: 16.0, x: 680, y: 530, z: 0.80 } : { t: 16.0, x: 680, y: 520, z: 0.70 },
+  ];  // Cursor moves: [startTime, endTime, target {x,y}] in window-local coordinates.
+  const off = (p, dx = 0, dy = 0) => ({ x: p.x + dx, y: p.y + dy });
+  MOVES = [
+    [2.45, 2.45, { x: 1080, y: 760 }],
+    [2.55, 3.30, off(P.ifaceCombo, 120, 2)],
+    [3.55, 3.95, off(P.ifWlan, 40, 0)],
+    [4.30, 4.85, off(P.choose, 6, 2)],
+    [5.25, 5.75, off(P.tileFirefox, 4, 6)],
+    [5.95, 6.35, off(P.use, 0, 2)],
+    [6.55, 6.95, off(P.dnsCombo, 30, 2)],
+    [7.12, 7.42, off(P.dnsCf, 0, 0)],
+    [7.55, 7.95, off(P.add, 6, 4)],
+    [8.15, 8.70, off(P.start, 4, 4)],
+    [9.20, 9.45, off(P.pw, 120, 6)],
+    [9.95, 10.35, off(P.auth, 4, 2)],
+    [11.0, 12.1, { x: 1000, y: 900 }],
+    [13.05, 13.55, off(P.rowWlan, -20, 2)],
+    [13.75, 14.15, { x: 0, y: 0, ref: "verify" }],
+    WEB ? [15.25, 16.0, { x: 1080, y: 760 }] : [15.2, 16.0, { x: 1500, y: 1180 }],
+  ];
+  CLICKS = [3.38, 4.02, 4.93, 5.82, 6.42, 7.0, 7.48, 8.02, 8.76, 10.42, 13.62, 14.22];
+}
+
+function camAt(t) {
+  let a = CAM[0], b = CAM[CAM.length - 1];
+  if (t <= a.t) return a; if (t >= b.t) return b;
+  for (let i = 0; i < CAM.length - 1; i++) if (t >= CAM[i].t && t <= CAM[i + 1].t) { a = CAM[i]; b = CAM[i + 1]; break; }
+  const k = E.inOut((t - a.t) / (b.t - a.t));
+  // Interpolate zoom in log space so zooms feel even.
+  return { x: lerp(a.x, b.x, k), y: lerp(a.y, b.y, k), z: Math.exp(lerp(Math.log(a.z), Math.log(b.z), k)) };
+}
+
+let verifyPos = null;
+function cursorAt(t) {
+  let pos = MOVES[0][2];
+  for (let i = 0; i < MOVES.length; i++) {
+    const [t0, t1, raw] = MOVES[i];
+    const target = raw.ref === "verify" ? verifyPos : raw;
+    if (t >= t1) { pos = target; continue; }
+    if (t > t0) {
+      const k = E.inOut((t - t0) / (t1 - t0));
+      const from = pos;
+      // A gentle arc, like a hand moving a mouse.
+      const dx = target.x - from.x, dy = target.y - from.y;
+      const bow = Math.sin(k * Math.PI) * 0.12;
+      return { x: lerp(from.x, target.x, k) - dy * bow, y: lerp(from.y, target.y, k) + dx * bow };
+    }
+    break;
+  }
+  return pos;
+}
+
+function setOpacity(el, o) { el.style.opacity = o.toFixed(3); el.style.visibility = o <= 0.001 ? "hidden" : "visible"; }
+
+// ---------------- render ----------------
+function render(t) {
+  // ---- background ----
+  $("#grid").style.transform = `translate(${(-t * 6) % 56}px, ${(-t * 3) % 56}px)`;
+  const gx = 960 + Math.sin(t * .35) * 380, gy = 540 + Math.cos(t * .27) * 220;
+  Object.assign($("#glow2").style, { left: gx + "px", top: gy + "px" });
+  $("#grain").style.transform = `translate(${Math.floor(hash(Math.floor(t * 24)) * 180)}px, ${Math.floor(hash(Math.floor(t * 24) + 7) * 180)}px)`;
+
+  // ---- intro ----
+  const introOut = E.inOut(seg(t, 1.95, 2.55));
+  const intro = $("#intro");
+  setOpacity(intro, WEB ? 0 : 1 - introOut);
+  intro.style.transform = `translateY(${-introOut * 140}px) scale(${1 - introOut * .06})`;
+  intro.style.filter = `blur(${introOut * 10}px)`;
+  const mk = E.back(seg(t, 0.05, 0.6));
+  $("#intro-mark").style.transform = `scale(${mk}) rotate(${(1 - mk) * -40}deg)`;
+  setOpacity($("#intro-mark"), seg(t, 0.05, 0.3));
+  document.querySelectorAll("#intro .w").forEach((w) => {
+    const i = +w.dataset.i, k = E.out5(seg(t, 0.18 + i * 0.075, 0.78 + i * 0.075));
+    w.style.transform = `translateY(${(1 - k) * 115}%)`;
+  });
+  document.querySelectorAll("#intro .chip").forEach((c) => {
+    const i = +c.dataset.i, k = E.out(seg(t, 0.95 + i * 0.12, 1.45 + i * 0.12));
+    setOpacity(c, k); c.style.transform = `translateY(${(1 - k) * 24}px)`;
+  });
+
+  // ---- window entrance / exit ----
+  const win = $("#win");
+  const enter = WEB ? 1 : E.out5(seg(t, 1.95, 2.95));
+  const exit = WEB ? 0 : E.inOut(seg(t, 15.2, 16.1));
+  win.style.transform = `perspective(2200px) translateY(${(1 - enter) * 900}px) rotateX(${(1 - enter) * 28}deg) scale(${lerp(0.9, 1, enter) * (1 - exit * .12)})`;
+  setOpacity($("#world"), WEB ? 1 : Math.min(seg(t, 1.95, 2.3), 1 - E.inOut(seg(t, 15.55, 16.2))));
+  $("#world").style.filter = exit > 0 ? `blur(${exit * 14}px) brightness(${1 - exit * .5})` : "none";
+
+  // ---- camera ----
+  const c = camAt(t);
+  // A whisper of handheld drift keeps still moments alive.
+  const dx = (noise1(t * .6) - .5) * 6, dy = (noise1(t * .6 + 40) - .5) * 4;
+  const tx = 960 - c.x * c.z + dx, ty = 540 - c.y * c.z + dy;
+  $("#world").style.transform = `translate(${tx}px, ${ty}px) scale(${c.z})`;
+  const toScreen = (p) => ({ x: tx + p.x * c.z, y: ty + p.y * c.z });
+
+  // ---- app state over time ----
+  // interface combo
+  const ifPop = $("#iface-pop");
+  const ifOpen = E.out(seg(t, 3.42, 3.6)) * (1 - seg(t, 4.04, 4.16));
+  setOpacity(ifPop, ifOpen); ifPop.style.transform = `scaleY(${lerp(.85, 1, ifOpen)})`;
+  ifPop.querySelectorAll(".opt").forEach((o, i) => o.classList.toggle("hl", (i === 0 && t < 3.8) || (i === 1 && t >= 3.8)));
+  $("#iface-combo").classList.toggle("focus", t > 3.38 && t < 4.4);
+  $("#iface-val").innerHTML = t >= 4.04 ? "wlan0&nbsp; Wi-Fi&nbsp; 192.168.1.42" : "enp3s0&nbsp; Ethernet&nbsp; 192.168.0.24";
+
+  // picker
+  const pk = $("#picker");
+  const pOpen = E.back(seg(t, 4.97, 5.25)) * 1, pClose = E.in(seg(t, 6.44, 6.6));
+  setOpacity(pk, Math.min(seg(t, 4.97, 5.1), 1 - pClose));
+  pk.style.transform = `scale(${lerp(.9, 1, pOpen) - pClose * .05})`;
+  $("#choose-btn").classList.toggle("pressed", t > 4.9 && t < 5.0);
+  $("#tile0").classList.toggle("hover", t > 5.6 && t < 5.82);
+  $("#tile0").classList.toggle("sel", t >= 5.82);
+  const useOn = t >= 5.82;
+  $("#use-btn").className = "btn use " + (useOn ? "primary" : "disabled") + (t > 6.4 && t < 6.48 ? " pressed" : "");
+  const picked = t >= 6.5;
+  $("#app-val").textContent = picked ? "/usr/lib/firefox/firefox" : "";
+  $("#app-hint").textContent = picked ? "Firefox   /usr/lib/firefox/firefox" : "Type a command such as firefox or a full path, pick a recent one, or press Choose.";
+
+  setOpacity($("#scrim"), Math.max(Math.min(seg(t, 4.97, 5.15), 1 - seg(t, 6.44, 6.6)), Math.min(seg(t, 8.86, 9.0), 1 - seg(t, 10.46, 10.62))));
+
+  // DNS
+  const dPop = $("#dns-pop");
+  const dOpen = E.out(seg(t, 7.04, 7.2)) * (1 - seg(t, 7.5, 7.6));
+  setOpacity(dPop, dOpen); dPop.style.transform = `scaleY(${lerp(.85, 1, dOpen)})`;
+  dPop.querySelectorAll(".opt").forEach((o, i) => o.classList.toggle("hl", (i === 0 && t < 7.3) || (i === 1 && t >= 7.3)));
+  $("#dns-combo").classList.toggle("focus", t > 7.0 && t < 7.7);
+  $("#dns-val").textContent = t >= 7.5 ? "Cloudflare" : "Automatic";
+
+  // add to queue
+  const addBtn = $("#add-btn");
+  addBtn.className = "btn big " + (picked ? "primary" : "disabled") + (t > 7.98 && t < 8.08 ? " pressed" : "");
+
+  // queue rows: two are queued already, Firefox slides in after Add to queue; all fly out on Start.
+  const started = t >= 10.45;
+  for (let i = 0; i < 3; i++) {
+    const r = $("#q" + i);
+    let o = 1, y = 0, bgc = "transparent";
+    if (i === 2) { const k = E.out5(seg(t, 8.04, 8.45)); o = k; y = (1 - k) * -18; bgc = `rgba(58,90,255,${(.35 * (1 - seg(t, 8.3, 9.4))).toFixed(3)})`; }
+    const fly = E.inOut(seg(t, 10.45 + i * .06, 10.9 + i * .06));
+    o *= 1 - fly; y += fly * 40;
+    setOpacity(r, o); r.style.transform = `translateY(${y}px)`; r.style.background = bgc;
+  }
+  $("#start-btn").className = "btn " + (t < 10.45 ? "primary" : "disabled") + (t > 8.74 && t < 8.84 ? " pressed" : "");
+
+  // password prompt
+  const au = $("#auth");
+  const aOpen = E.back(seg(t, 8.86, 9.12)), aClose = E.in(seg(t, 10.46, 10.62));
+  setOpacity(au, Math.min(seg(t, 8.86, 8.98), 1 - aClose));
+  au.style.transform = `scale(${lerp(.88, 1, aOpen) - aClose * .06})`;
+  const nDots = Math.floor(clamp((t - 9.5) / .055, 0, 10));
+  $("#pwdots").textContent = "•".repeat(nDots);
+  setOpacity($("#pwcaret"), Math.floor(t * 2.6) % 2 ? 0 : 1);
+  $("#auth-btn").classList.toggle("pressed", t > 10.4 && t < 10.5);
+
+  // bindings rows cascade in
+  setOpacity($("#bempty"), 1 - seg(t, 10.5, 10.65));
+  for (let i = 0; i < 3; i++) {
+    const ln = LANES[i];
+    const kg = E.out5(seg(t, 10.62 + i * .14, 11.05 + i * .14)), ka = E.out5(seg(t, 10.69 + i * .14, 11.12 + i * .14));
+    const g = $("#bg" + i), a = $("#ba" + i);
+    setOpacity(g, kg); g.style.transform = `translateX(${(1 - kg) * -40}px)`;
+    setOpacity(a, ka); a.style.transform = `translateX(${(1 - ka) * -40}px)`;
+    // Live rates, a new sample every half second.
+    const born = 10.7 + i * .14;
+    const tick = Math.floor((t - born) / .5);
+    const ramp = E.out(seg(t, born, born + 1.2));
+    const wob = (s) => 0.82 + 0.3 * noise1(tick * .9 + ln.seed + s) + 0.05 * Math.sin(tick + s);
+    const dg = ln.down * ramp * wob(0), ug = ln.up * ramp * wob(5);
+    $("#bgd" + i).textContent = t > born ? fmtRate(dg) : "";
+    $("#bgu" + i).textContent = t > born ? fmtRate(ug) : "";
+    $("#bad" + i).textContent = t > born ? fmtRate(dg * .96) : "";
+    $("#bau" + i).textContent = t > born ? fmtRate(ug * .93) : "";
+    // Inline graphs draw in from the left as samples arrive.
+    const reveal = seg(t, born, born + 3.2);
+    for (const [id, f] of [["#sg" + i, 1], ["#sa" + i, .95]]) {
+      const svg = $(id);
+      const pts = (base, s, scale) => {
+        const n = 46, out = [];
+        const last = Math.max(1, Math.floor(n * reveal));
+        for (let j = 0; j <= last; j++) {
+          const x = (j / n) * 114;
+          const ph = j * .55 + t * 2.2;
+          const v = base * (0.45 + 0.4 * noise1(ph + s) + 0.18 * noise1(ph * 3.1 + s * 2)) * Math.min(1, j / 5 + .2);
+          out.push(`${j ? "L" : "M"}${x.toFixed(1)},${(23 - clamp(v / scale, 0, 1) * 21).toFixed(1)}`);
+        }
+        return out.join("");
+      };
+      const scale = Math.max(ln.down, ln.up) * 1.15;
+      svg.querySelector(".d").setAttribute("d", reveal > 0 ? pts(ln.down * f, ln.seed, scale) : "");
+      svg.querySelector(".u").setAttribute("d", reveal > 0 ? pts(Math.max(ln.up * f, ln.down * .12), ln.seed + 50, scale) : "");
+    }
+  }
+  // select wlan0 row and verify its public IP
+  const selWlan = t >= 13.62;
+  $("#bg2").classList.toggle("sel", selWlan);
+  const bb = $("#bbtns");
+  const wantBtns = selWlan ? "iface" : "none";
+  if (bb.dataset.k !== wantBtns) {
+    bb.dataset.k = wantBtns;
+    bb.innerHTML = selWlan ? `<span class="btn" id="verify-btn">Check public IP</span><span class="btn">DNS servers…</span><span class="btn">Speed limit…</span><span class="btn">Remove namespace…</span>` : "";
+  }
+  if (selWlan) {
+    if (!verifyPos) {
+      const w = $("#win").getBoundingClientRect(), r = $("#verify-btn").getBoundingClientRect();
+      verifyPos = { x: (r.left + r.width / 2 - w.left) / c.z + 0, y: (r.top + r.height / 2 - w.top) / c.z };
+    }
+    $("#verify-btn").classList.toggle("pressed", t > 14.2 && t < 14.3);
+  }
+  $("#bhint").textContent = selWlan
+    ? "Check public IP asks a public service which address apps on this interface appear from. DNS, Speed limit and Remove namespace apply to every app on it."
+    : "Select an app to stop, restart or move it, or an interface row to change its DNS or speed limit.";
+  const ip = $("#ip2");
+  if (t >= 14.25 && t < 14.6) { ip.textContent = "checking" + ".".repeat(1 + Math.floor((t - 14.25) * 9) % 3); ip.style.color = "var(--muted)"; }
+  else if (t >= 14.6) { ip.textContent = "198.51.100.24"; ip.style.color = "var(--green)"; }
+  else ip.textContent = "";
+  ip.style.textShadow = t >= 14.6 ? `0 0 ${(14 * (1 - seg(t, 14.6, 15.3))).toFixed(1)}px rgba(63,214,154,.9)` : "none";
+
+  // footer status
+  let status = "Ready", dot = "#6d737c";
+  if (t >= 6.5) { status = "Application selected. Press Add to queue."; }
+  if (t >= 8.04) { status = "Added Firefox on wlan0 to the queue."; }
+  if (t >= 8.76) { status = "Starting 3 apps…"; dot = "#93a6ff"; }
+  if (t >= 10.6) { status = "Bound qbittorrent to enp3s0, zoom to usb0 and firefox to wlan0."; dot = "#3fd69a"; }
+  if (t >= 14.6) { status = "Public IP: 198.51.100.24 (wlan0)"; dot = "#3fd69a"; }
+  $("#status").textContent = status; $("#sdot").style.color = dot;
+
+  // ---- cursor ----
+  const cur = $("#cursor");
+  const cp = cursorAt(t);
+  const sp = toScreen(cp);
+  const cVis = WEB ? 1 : seg(t, 2.45, 2.7) * (1 - seg(t, 15.4, 15.8));
+  let press = 0;
+  for (const ct of CLICKS) press = Math.max(press, 1 - Math.abs(t - ct) / .09);
+  setOpacity(cur, cVis);
+  cur.style.transform = `translate(${sp.x - 3}px, ${sp.y - 3}px) scale(${1 - clamp(press) * .16})`;
+  // ripples: the most recent clicks
+  const recent = CLICKS.filter((ct) => t >= ct && t < ct + .55).slice(-RIPPLES.length);
+  RIPPLES.forEach((r, i) => {
+    const ct = recent[i];
+    if (ct === undefined) { setOpacity(r, 0); return; }
+    const k = (t - ct) / .55;
+    const p = toScreen(cursorAt(ct));
+    setOpacity(r, (1 - k) * .9 * cVis);
+    r.style.transform = `translate(${p.x}px, ${p.y}px) scale(${.25 + E.out(k) * 1.0})`;
+  });
+
+  // ---- captions ----
+  const CAPS = [
+    [2.75, 4.35, "01", "Choose a connection", "Wi-Fi, Ethernet, your phone or a VPN"],
+    [4.35, 7.6, "02", "Pick any app", "Give it its own DNS and speed limit"],
+    [7.6, 10.75, "03", "Start them all", "One password for the whole queue"],
+    [10.75, 13.45, "04", "Each app gets its own lane", "Live speed for every app"],
+    [13.45, 15.25, "05", "Check where it exits", "The public IP of each lane"],
+  ];
+  const capEl = $("#caption");
+  const capIn = E.out5(seg(t, 2.75, 3.15)), capOut = E.inOut(seg(t, 15.0, 15.35));
+  setOpacity(capEl, capIn * (1 - capOut));
+  capEl.style.transform = `translateY(${(1 - capIn) * 40 + capOut * 30}px)`;
+  const txt = $("#cap-txt");
+  if (!txt.children.length) CAPS.forEach((c) => { const d = document.createElement("div"); d.innerHTML = `<b>${c[3]}</b><span>${c[4]}</span>`; txt.appendChild(d); });
+  let curIdx = 0;
+  CAPS.forEach((c, i) => {
+    const el = txt.children[i];
+    const kin = i === 0 ? 1 : E.out5(seg(t, c[0], c[0] + .45));
+    const kout = i === CAPS.length - 1 ? 0 : E.inOut(seg(t, c[1] - .05, c[1] + .3));
+    const active = t >= c[0] - .01 && t < c[1] + .3;
+    if (t >= c[0]) curIdx = i;
+    setOpacity(el, active ? kin * (1 - kout) : 0);
+    el.style.transform = `translateY(${(1 - kin) * 34 - kout * 34}px)`;
+    el.style.filter = `blur(${((1 - kin) + kout) * 6}px)`;
+  });
+  $("#cap-num").textContent = CAPS[curIdx][2];
+  // width follows the active line
+  const active = txt.children[curIdx];
+  txt.style.width = (active.scrollWidth + 4) + "px";
+
+
+  // ---- outro ----
+  const out = $("#outro");
+  const ok = E.inOut(seg(t, 15.95, 16.55));
+  setOpacity(out, WEB ? 0 : seg(t, 15.7, 16.0));
+  $("#om").style.transform = `translate(${(1 - ok) * 109}px, 0)`;
+  $("#om").style.transformOrigin = "32px 32px";
+  // The name unrolls from behind the mark as the mark slides into place.
+  $("#ow").style.transform = `translate(${(1 - ok) * 109}px, 0)`;
+  $("#ow").style.clipPath = `inset(0 ${((1 - ok) * 100).toFixed(2)}% 0 0)`;
+  $("#ow").style.opacity = seg(t, 15.95, 16.05).toFixed(3);
+  const tg = E.out5(seg(t, 16.05, 16.6));
+  const tagEl = out.querySelector(".tag"); setOpacity(tagEl, tg); tagEl.style.transform = `translateY(${(1 - tg) * 30}px)`;
+  const cmdK = E.out5(seg(t, 16.2, 16.7));
+  const cmdEl = out.querySelector(".cmd"); setOpacity(cmdEl, cmdK); cmdEl.style.transform = `translateY(${(1 - cmdK) * 30}px)`;
+  const CMD = "curl -fsSL https://intermux.me/install.sh | sh";
+  const n = Math.floor(clamp((t - 16.45) / .022, 0, CMD.length));
+  $("#typed").innerHTML = CMD.slice(0, n) + `<span class="caret" style="opacity:${n < CMD.length || Math.floor(t * 2.4) % 2 ? 1 : 0}"></span>`;
+  const mK = E.out5(seg(t, 16.6, 17.1));
+  const meta = out.querySelector(".meta"); setOpacity(meta, mK); meta.style.transform = `translateY(${(1 - mK) * 20}px)`;
+  const ow = out.querySelector(".wordmark"); ow.style.transform = `scale(${lerp(.92, 1, ok)})`;
+}
+
+window.DURATION = DURATION;
+window.storyTime = storyTime;
+window.ready = (async () => {
+  await document.fonts.ready;
+  await Promise.all(["700 20px 'Schibsted Grotesk'", "400 20px 'JetBrains Mono'", "15px 'Noto Sans'", "bold 15px 'Noto Sans'"].map((f) => document.fonts.load(f)));
+  // measure with no transforms applied
+  $("#world").style.transform = "none"; $("#win").style.transform = "none";
+  // dialogs are measured in place
+  place();
+  measure();
+  buildTimeline();
+  window.render = render;
+  render(0);
+  return true;
+})();
+
+// Preview in a normal browser: ?t=7.5 shows one frame, otherwise it plays.
+const q = PARAMS;
+if (!q.has("render")) {
+  window.ready.then(() => {
+    if (q.has("t")) { render(parseFloat(q.get("t"))); return; }
+    const t0 = performance.now();
+    const loop = () => { const u = ((performance.now() - t0) / 1000) % (DURATION + 1); render(storyTime(Math.min(u, DURATION))); requestAnimationFrame(loop); };
+    loop();
+  });
+}
+</script>
+</body>
+</html>
