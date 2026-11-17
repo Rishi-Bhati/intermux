@@ -399,3 +399,45 @@ class ChromiumNameMatchTests(unittest.TestCase):
         from intermux.apps import chromium_family
         self.assertEqual(chromium_family("/usr/bin/operator"), ("chromium", ()))
         self.assertEqual(chromium_family("/usr/bin/brave-origin")[0], "brave")
+
+
+class ResolveInsideTests(unittest.TestCase):
+    """Root resolves profile links itself and never looks outside the user's home (review follow-up)."""
+
+    def setUp(self):
+        import os
+        import tempfile
+        self.os = os
+        self.home = os.path.realpath(tempfile.mkdtemp())
+        self.outside = tempfile.mkdtemp()
+        os.makedirs(f"{self.home}/dots/ff/prof")
+        os.makedirs(f"{self.home}/.mozilla")
+
+    def test_links_inside_home_resolve(self):
+        from intermux.apps.firefox import resolve_inside
+        self.os.symlink(f"{self.home}/dots/ff", f"{self.home}/.mozilla/firefox")
+        self.os.symlink("../dots/ff", f"{self.home}/.mozilla/rel")
+        self.assertEqual(resolve_inside(f"{self.home}/.mozilla/firefox/prof", self.home), f"{self.home}/dots/ff/prof")
+        self.assertEqual(resolve_inside(f"{self.home}/.mozilla/rel/prof", self.home), f"{self.home}/dots/ff/prof")
+
+    def test_links_outside_home_are_not_followed(self):
+        from intermux.apps.firefox import resolve_inside
+        self.os.symlink(self.outside, f"{self.home}/.mozilla/out")
+        self.os.symlink("../../..", f"{self.home}/.mozilla/up")
+        real_lstat = self.os.lstat
+
+        def guarded(p, *a, **k):
+            self.assertFalse(str(p).startswith(self.outside), f"probed outside home: {p}")
+            return real_lstat(p, *a, **k)
+
+        with mock.patch("intermux.apps.firefox.os.lstat", side_effect=guarded):
+            self.assertIsNone(resolve_inside(f"{self.home}/.mozilla/out/x", self.home))
+            self.assertIsNone(resolve_inside(f"{self.home}/.mozilla/up/etc", self.home))
+        self.assertIsNone(resolve_inside("/etc/passwd", self.home))
+        self.assertIsNone(resolve_inside(f"{self.home}/missing", self.home))
+
+    def test_link_loop_gives_up(self):
+        from intermux.apps.firefox import resolve_inside
+        self.os.symlink("b", f"{self.home}/a")
+        self.os.symlink("a", f"{self.home}/b")
+        self.assertIsNone(resolve_inside(f"{self.home}/a", self.home))

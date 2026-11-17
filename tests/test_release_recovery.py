@@ -143,7 +143,8 @@ class ReleaseRecoveryTests(unittest.TestCase):
         self._path(SLICE).mkdir(parents=True)
         with self._write_errors({self._path(ORIGIN_A) / "cgroup.procs": errno.EBUSY}):
             self.assertEqual(adopt.release_group(self.rel, origins={"10": ORIGIN_A}, uid=UID), [10])
-        self.assertTrue(self._path(ORIGIN_A).is_dir())
+        # The recreated scope stayed empty, so release removes it again rather than leaving it behind.
+        self.assertFalse(self._path(ORIGIN_A).exists())
         self.assertEqual((self._path(self.leaf) / "cgroup.procs").read_text(), "10")
 
     def test_no_writable_target_keeps_the_process_and_warns(self):
@@ -202,3 +203,19 @@ class ReleaseRecoveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReleaseLeafCleanupTests(unittest.TestCase):
+    """Leaves created for a pid that exited mid-release must not be left behind (review follow-up)."""
+
+    def test_created_leaf_is_removed_when_the_pid_could_not_be_moved(self):
+        with tempfile.TemporaryDirectory() as root:
+            app_slice = Path(root, "user.slice/user-1000.slice/user@1000.service/app.slice")
+            app_slice.mkdir(parents=True)
+            group = Path(root, adopt.GROUP_PARENT, "adopt-abcd1234")
+            group.mkdir(parents=True)
+            (group / "cgroup.procs").write_text("")
+            with mock.patch.object(adopt, "CGROUP_ROOT", root), \
+                    mock.patch.object(adopt, "_write_pid", return_value=False):
+                adopt.release_group(f"{adopt.GROUP_PARENT}/adopt-abcd1234", [4242], origins={}, uid=1000)
+            self.assertEqual(list(app_slice.iterdir()), [])

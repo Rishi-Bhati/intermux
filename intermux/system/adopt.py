@@ -228,12 +228,14 @@ def move_pids(group_rel: str, pids: Iterable[int]) -> List[int]:
     return [pid for pid in pids if _write_pid(procs_file, pid)]
 
 
-def _create_release_leaf(path: Path) -> bool:
+def _create_release_leaf(path: Path, created: Optional[List[Path]] = None) -> bool:
     """Create just one cgroup below an existing parent, or reuse an existing leaf."""
     try:
         if not path.parent.is_dir():
             return False
         path.mkdir(mode=0o755)
+        if created is not None:
+            created.append(path)
     except FileExistsError:
         return path.is_dir()
     except OSError as exc:
@@ -243,7 +245,7 @@ def _create_release_leaf(path: Path) -> bool:
 
 
 def _release_targets(group_rel: str, pid: int, origins: Dict[str, str],
-                     uid: Optional[int]) -> Iterator[Path]:
+                     uid: Optional[int], created: Optional[List[Path]] = None) -> Iterator[Path]:
     """Yield safe candidates in order, creating fallback leaves only when needed."""
     own = safe_release_target(origins.get(str(pid)), uid)
     targets: List[str] = []
@@ -261,14 +263,14 @@ def _release_targets(group_rel: str, pid: int, origins: Dict[str, str],
     recreate = own or (targets[0] if targets else None)
     if recreate is not None:
         path = Path(CGROUP_ROOT) / recreate.lstrip("/")
-        if not path.is_dir() and _create_release_leaf(path):
+        if not path.is_dir() and _create_release_leaf(path, created):
             yield path
     fallback = safe_release_target(
         f"/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/"
         f"intermux-released-{posixpath.basename(group_rel)}", uid)
     if fallback is not None:
         path = Path(CGROUP_ROOT) / fallback.lstrip("/")
-        if _create_release_leaf(path):
+        if _create_release_leaf(path, created):
             yield path
 
 
@@ -281,13 +283,21 @@ def release_group(group_rel: str, pids: Iterable[int] = (), origins: Optional[Di
             wanted.append(pid)
     origins = origins or {}
     moved: List[int] = []
+    created: List[Path] = []
     for pid in wanted:
-        for target in _release_targets(group_rel, pid, origins, uid):
+        for target in _release_targets(group_rel, pid, origins, uid, created):
             if _write_pid(target / "cgroup.procs", pid):
                 moved.append(pid)
                 break
         else:
             log.warning("leaving pid %d in %s: no writable safe release cgroup", pid, group_rel)
+    # A pid that exited mid-release leaves a leaf this call created empty. The kernel refuses to remove a
+    # cgroup that still has processes, so removing every one we created only drops the empty ones.
+    for leaf in created:
+        try:
+            leaf.rmdir()
+        except OSError:
+            pass
     if read_group_pids_or_none(group_rel) == []:
         try:
             _group_dir(group_rel).rmdir()
