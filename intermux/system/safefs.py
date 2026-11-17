@@ -6,6 +6,7 @@ import errno
 import os
 import stat
 from pathlib import Path
+from typing import Tuple
 
 from intermux.errors import ValidationError
 
@@ -28,8 +29,8 @@ def is_within(path: str, base: str) -> bool:
         return False
 
 
-def _open_child(parent_fd: int, name: str, uid: int, gid: int) -> int:
-    """Open (creating if missing) a directory named `name` under parent_fd without following symlinks."""
+def _open_child(parent_fd: int, name: str, uid: int, gid: int) -> Tuple[int, bool]:
+    """Open a directory without following symlinks, returning its fd and whether it was created."""
     created = False
     try:
         st = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
@@ -52,7 +53,7 @@ def _open_child(parent_fd: int, name: str, uid: int, gid: int) -> int:
     except BaseException:
         os.close(fd)
         raise
-    return fd
+    return fd, created
 
 
 def ensure_user_dir(path: Path, base: Path, uid: int, gid: int, mode: int = 0o700) -> None:
@@ -60,8 +61,8 @@ def ensure_user_dir(path: Path, base: Path, uid: int, gid: int, mode: int = 0o70
 
     path must lie strictly inside base. Every component below base is checked with a
     no-follow lookup relative to its parent directory fd. Created components are chowned
-    to uid/gid when running as root. The final directory gets mode, and when running as
-    root it is also chowned to uid/gid. All changes go through file descriptors.
+    to uid/gid when running as root. The final directory is changed only if created here
+    or already owned by uid. All changes go through file descriptors.
     """
     raw_path = os.path.abspath(os.fspath(path))
     raw_base = os.path.abspath(os.fspath(base))
@@ -74,9 +75,12 @@ def ensure_user_dir(path: Path, base: Path, uid: int, gid: int, mode: int = 0o70
     dirfd = os.open(os.path.realpath(raw_base), os.O_RDONLY | os.O_DIRECTORY)
     try:
         for name in Path(rel).parts:
-            child = _open_child(dirfd, name, uid, gid)
+            child, created = _open_child(dirfd, name, uid, gid)
             os.close(dirfd)
             dirfd = child
+        # A path below the user's home can still contain directories belonging to someone else.
+        if not created and os.fstat(dirfd).st_uid != uid:
+            raise ValidationError("refusing to take over a directory owned by another user", code="unsafe_path")
         if _is_root():
             os.fchown(dirfd, uid, gid)
         os.fchmod(dirfd, mode)

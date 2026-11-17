@@ -53,8 +53,8 @@ def _sanitize_bind_env(env: Mapping[str, str], user: "session.UserInfo") -> Dict
     return clean
 
 
-def _resolve_user(environ: Mapping[str, str]) -> "session.UserInfo":
-    """Identify the unprivileged user that pkexec or sudo ran the helper for."""
+def _resolve_user(environ: Mapping[str, str]) -> Optional["session.UserInfo"]:
+    """Identify the requesting user; uid zero keeps the permissions of a direct root invocation."""
     raw = environ.get("PKEXEC_UID") or environ.get("SUDO_UID")
     if not raw:
         raise PermissionDeniedError("could not determine the requesting user")
@@ -63,7 +63,7 @@ def _resolve_user(environ: Mapping[str, str]) -> "session.UserInfo":
     except ValueError as exc:
         raise PermissionDeniedError("could not determine the requesting user") from exc
     if uid == 0:
-        raise PermissionDeniedError("requests from root are not accepted")
+        return None
     return session.user_for_uid(uid)
 
 
@@ -85,7 +85,7 @@ def _run_batch(ops: Sequence[Dict[str, Any]], user: "session.UserInfo") -> list:
         log.info("batch %s %s via %s for uid %s", kind, target, op["iface"], user.uid)
         try:
             if kind == "set_limit":
-                data = engine.set_limit(op["iface"], op["down"], op["up"])
+                data = engine.set_limit(op["iface"], op["down"], op["up"], uid=user.uid)
             elif kind == "bind":
                 data = engine.bind(
                     op["app"],
@@ -145,9 +145,10 @@ def _dispatch(action: str, params: Dict[str, Any], user: Optional["session.UserI
         if action == "release_adoption":
             return engine.release_adoption(params["id"], user=user)
         if action == "set_dns":
-            return engine.set_dns(params["iface"], params["dns"])
+            return engine.set_dns(params["iface"], params["dns"], uid=user.uid if user is not None else None)
         if action == "set_limit":
-            return engine.set_limit(params["iface"], params["down"], params["up"])
+            return engine.set_limit(params["iface"], params["down"], params["up"],
+                                    uid=user.uid if user is not None else None)
         if action == "restart_app":
             return engine.restart_app(params["iface"], params["app"], user=user,
                                       env=_sanitize_bind_env(params["env"], user))
@@ -180,11 +181,10 @@ def handle(raw: str, *, euid: Optional[int] = None, environ: Optional[Mapping[st
         user: Optional["session.UserInfo"] = None
         if action in _USER_ACTIONS:
             user = _resolve_user(env)
-        elif action in ("reset", "release_adoption"):
-            try:
+        elif action in ("reset", "release_adoption", "set_dns", "set_limit"):
+            # Missing or root requesting users keep root permissions; malformed user IDs still fail.
+            if "PKEXEC_UID" in env or "SUDO_UID" in env:
                 user = _resolve_user(env)
-            except InterMuxError:
-                user = None
         log.info("action %s requested by uid %s", action, user.uid if user else "none")
         return ok_response(_dispatch(action, params, user))
     except InterMuxError as exc:
@@ -197,6 +197,7 @@ def handle(raw: str, *, euid: Optional[int] = None, environ: Optional[Mapping[st
 
 def main() -> int:
     """Read one request from stdin, write the JSON response to stdout, return the exit status."""
+    os.umask(0o022)
     logging.basicConfig(
         level=logging.INFO,
         stream=sys.stderr,

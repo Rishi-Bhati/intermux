@@ -130,7 +130,7 @@ class DefaultProfileDirTests(TempHomeTestCase):
             "[Profile0]\nPath=abc.default\nDefault=1\n", encoding="utf-8")
         self.assertEqual(default_profile_dir(str(self.home)), root / "abc.default")
 
-    def test_symlinked_native_root_does_not_hide_snap_root(self):
+    def test_finds_profile_under_symlinked_native_root_before_snap_root(self):
         elsewhere = self.home / "dotfiles" / "mozilla" / "firefox"
         (elsewhere / "linked.default").mkdir(parents=True)
         (elsewhere / "profiles.ini").write_text(
@@ -140,7 +140,36 @@ class DefaultProfileDirTests(TempHomeTestCase):
         (root / "snapprof").mkdir(parents=True)
         (root / "profiles.ini").write_text(
             "[Profile0]\nPath=snapprof\nDefault=1\n", encoding="utf-8")
-        self.assertEqual(default_profile_dir(str(self.home)), root / "snapprof")
+        self.assertEqual(default_profile_dir(str(self.home)), elsewhere / "linked.default")
+
+    def test_finds_symlinked_profile_whose_target_is_inside_home(self):
+        root = self.home / ".mozilla" / "firefox"
+        root.mkdir(parents=True)
+        target = self.home / "dotfiles" / "profile"
+        target.mkdir(parents=True)
+        os.symlink(target, root / "linked.default")
+        (root / "profiles.ini").write_text("[Profile0]\nPath=linked.default\nDefault=1\n")
+        self.assertEqual(default_profile_dir(str(self.home)), target)
+
+    def test_outside_home_profile_symlink_is_not_found_or_probed(self):
+        root = self.home / ".mozilla" / "firefox"
+        root.mkdir(parents=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            outside = Path(tmp)
+            os.symlink(outside, root / "linked.default")
+            (root / "profiles.ini").write_text("[Profile0]\nPath=linked.default\nDefault=1\n")
+            real_stat = os.stat
+
+            def stat(path, *args, **kwargs):
+                if not isinstance(path, int):
+                    probe = os.path.abspath(os.fsdecode(path))
+                    if os.path.commonpath([probe, str(outside)]) == str(outside):
+                        self.fail("profile lookup probed a path outside home: " + probe)
+                return real_stat(path, *args, **kwargs)
+
+            with mock.patch.object(os, "stat", side_effect=stat), \
+                    mock.patch.object(Path, "is_dir", side_effect=AssertionError("unexpected is_dir probe")):
+                self.assertIsNone(default_profile_dir(str(self.home)))
 
     def test_finds_profile_under_snap_root(self):
         root = self.home / "snap" / "firefox" / "common" / ".mozilla" / "firefox"
@@ -370,3 +399,45 @@ class ChromiumNameMatchTests(unittest.TestCase):
         from intermux.apps import chromium_family
         self.assertEqual(chromium_family("/usr/bin/operator"), ("chromium", ()))
         self.assertEqual(chromium_family("/usr/bin/brave-origin")[0], "brave")
+
+
+class ResolveInsideTests(unittest.TestCase):
+    """Root resolves profile links itself and never looks outside the user's home (review follow-up)."""
+
+    def setUp(self):
+        import os
+        import tempfile
+        self.os = os
+        self.home = os.path.realpath(tempfile.mkdtemp())
+        self.outside = tempfile.mkdtemp()
+        os.makedirs(f"{self.home}/dots/ff/prof")
+        os.makedirs(f"{self.home}/.mozilla")
+
+    def test_links_inside_home_resolve(self):
+        from intermux.apps.firefox import resolve_inside
+        self.os.symlink(f"{self.home}/dots/ff", f"{self.home}/.mozilla/firefox")
+        self.os.symlink("../dots/ff", f"{self.home}/.mozilla/rel")
+        self.assertEqual(resolve_inside(f"{self.home}/.mozilla/firefox/prof", self.home), f"{self.home}/dots/ff/prof")
+        self.assertEqual(resolve_inside(f"{self.home}/.mozilla/rel/prof", self.home), f"{self.home}/dots/ff/prof")
+
+    def test_links_outside_home_are_not_followed(self):
+        from intermux.apps.firefox import resolve_inside
+        self.os.symlink(self.outside, f"{self.home}/.mozilla/out")
+        self.os.symlink("../../..", f"{self.home}/.mozilla/up")
+        real_lstat = self.os.lstat
+
+        def guarded(p, *a, **k):
+            self.assertFalse(str(p).startswith(self.outside), f"probed outside home: {p}")
+            return real_lstat(p, *a, **k)
+
+        with mock.patch("intermux.apps.firefox.os.lstat", side_effect=guarded):
+            self.assertIsNone(resolve_inside(f"{self.home}/.mozilla/out/x", self.home))
+            self.assertIsNone(resolve_inside(f"{self.home}/.mozilla/up/etc", self.home))
+        self.assertIsNone(resolve_inside("/etc/passwd", self.home))
+        self.assertIsNone(resolve_inside(f"{self.home}/missing", self.home))
+
+    def test_link_loop_gives_up(self):
+        from intermux.apps.firefox import resolve_inside
+        self.os.symlink("b", f"{self.home}/a")
+        self.os.symlink("a", f"{self.home}/b")
+        self.assertIsNone(resolve_inside(f"{self.home}/a", self.home))

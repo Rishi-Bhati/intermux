@@ -48,6 +48,7 @@ class Binding:
     log_path: str = ""
     created_at: str = ""             # ISO 8601 UTC
     pid: Optional[int] = None        # pid of the launched process (session leader); None in old state
+    uid: Optional[int] = None        # requesting user; old bindings fall back to their live pid
 
 
 @dataclass
@@ -64,6 +65,7 @@ class Adoption:
     uid: int                 # owner of the adoption
     pids: List[int] = field(default_factory=list)   # snapshot at adoption time
     created_at: str = ""     # ISO 8601 UTC
+    origins: Dict[str, str] = field(default_factory=dict)   # pid -> original cgroup v2 path
 
 
 @dataclass
@@ -225,6 +227,8 @@ def _binding_from_dict(item: Any) -> Optional[Binding]:
         if pid is not None and pid <= 1:
             pid = None
     app = str(item["app"])
+    raw_uid = item.get("uid")
+    uid = raw_uid if type(raw_uid) is int and raw_uid >= 0 else None
     return Binding(
         iface=str(item["iface"]),
         app=app,
@@ -237,6 +241,7 @@ def _binding_from_dict(item: Any) -> Optional[Binding]:
         log_path=str(item.get("log_path") or ""),
         created_at=str(item.get("created_at") or ""),
         pid=pid,
+        uid=uid,
     )
 
 
@@ -280,6 +285,10 @@ def _adoption_from_dict(item: Any) -> Optional[Adoption]:
         log.warning("ignoring adoption with an invalid group, slot or interface: %r", item)
         return None
     app = str(item["app"])
+    raw_origins = item.get("origins")
+    origins = {pid: path for pid, path in raw_origins.items()
+               if isinstance(pid, str) and pid.isdigit() and isinstance(path, str)} \
+        if isinstance(raw_origins, dict) else {}
     return Adoption(
         id=adopt_id,
         iface=str(item["iface"]),
@@ -293,6 +302,7 @@ def _adoption_from_dict(item: Any) -> Optional[Adoption]:
         uid=uid,
         pids=pids,
         created_at=str(item.get("created_at") or ""),
+        origins=origins,
     )
 
 
@@ -347,9 +357,12 @@ def save_state(state: State, path: Path = STATE_FILE) -> None:
 @contextmanager
 def state_lock(path: Path = LOCK_FILE) -> Iterator[None]:
     """Exclusive flock on path for the duration of the block. Blocks until acquired."""
-    path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-    fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o644)
+    # Only the root helper and watcher use this directory; other users must not hold their lock.
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
     try:
+        os.fchmod(fd, 0o600)   # also tighten a lock created by an older version
         fcntl.flock(fd, fcntl.LOCK_EX)
         try:
             yield

@@ -34,6 +34,7 @@ GRACE = 5.0
 LAUNCH_WAIT = 1.5
 PUBLIC_DNS = ("1.1.1.1", "9.9.9.9")
 TAILSCALE_TABLE = "52"
+MAX_ADOPTIONS_PER_USER = 20
 
 
 def namespace_dns_servers(interface: netinfo.Interface) -> List[str]:
@@ -143,6 +144,13 @@ def bind(app_path: str, iface: str, *, user: UserInfo, env: Dict[str, str],
 
     handler = apps.get_handler(app_path)
     st = state.load_state(config.STATE_FILE)
+    binding = st.find_binding(iface, app_path)
+    if binding is not None:
+        _check_binding_owner(binding, user.uid,
+                             "another user is already running this app on this interface")
+    # Bind can also change these shared settings, so apply the same ownership rule as their actions.
+    if dns != dnsconf.KEEP or limit is not None:
+        _check_iface_owner(st, iface, user.uid)
     profile_mode = "default"
     running = procs.find_app_procs(app_path, handler.comm_names(app_path), uid=user.uid)
     # Anything alive inside the namespace of an existing binding of this app counts as running too:
@@ -267,6 +275,7 @@ def _bind_plumbed(st: state.State, app_path: str, iface: str, interface: netinfo
         iface=iface, app=app_path, app_name=app_name, namespace=ns, subnet=str(subnet),
         table=table, priority=priority, profile_mode=profile_mode, log_path=log_path,
         created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"), pid=proc.pid,
+        uid=user.uid,
     )
     st.bindings = [b for b in st.bindings if not (b.iface == iface and b.app == app_path)]
     st.bindings.append(binding)
@@ -280,6 +289,42 @@ def launch_handed_off(returncode: int, namespace_busy: bool) -> bool:
     return returncode == 0 and namespace_busy
 
 
+def binding_owner(b: state.Binding) -> Optional[int]:
+    """Recorded owner, or the real uid of a live launch process for older state."""
+    if b.uid is not None:
+        return b.uid
+    if b.pid is None:
+        return None
+    # Legacy launch pids can be reused; only a process still in the recorded namespace identifies its owner.
+    inode = procs.netns_inode(b.namespace)
+    if inode is None or procs._netns(b.pid) != inode:
+        return None
+    ids = procs._status_ids(b.pid)
+    return ids[1] if ids is not None else None
+
+
+def _check_binding_owner(b: state.Binding, uid: int,
+                         message: str = "this app was started by another user") -> None:
+    owner = binding_owner(b)
+    if owner is not None and owner != uid:
+        raise PermissionDeniedError(message)
+
+
+def _other_users_on_iface(st: state.State, iface: str, uid: Optional[int]) -> bool:
+    if uid is None:
+        return False
+    for b in st.bindings_for_iface(iface):
+        owner = binding_owner(b)
+        if owner is not None and owner != uid:
+            return True
+    return any(a.uid != uid for a in st.adoptions_for_iface(iface))
+
+
+def _check_iface_owner(st: state.State, iface: str, uid: Optional[int]) -> None:
+    if _other_users_on_iface(st, iface, uid):
+        raise PermissionDeniedError("other users have apps on this interface")
+
+
 def stop_app(iface: str, app: str, *, uid: Optional[int] = None) -> Dict[str, Any]:
     """Terminate the app's processes owned by uid inside the binding's namespace; the binding itself is kept."""
     if uid is None:
@@ -288,6 +333,7 @@ def stop_app(iface: str, app: str, *, uid: Optional[int] = None) -> Dict[str, An
     binding = st.find_binding(iface, app)
     if binding is None:
         raise NotFoundError(f"no binding for {app} on {iface}")
+    _check_binding_owner(binding, uid)
     pids = _binding_pids(st, binding, uid)
     if not pids:
         return {"stopped": [], "still_running": []}
@@ -387,9 +433,11 @@ def _apply_limits(iface: str, limit: Optional[Dict[str, Optional[float]]]) -> Li
     return []
 
 
-def set_limit(iface: str, down: Optional[float], up: Optional[float]) -> Dict[str, Any]:
+def set_limit(iface: str, down: Optional[float], up: Optional[float], *,
+              uid: Optional[int] = None) -> Dict[str, Any]:
     """Limit the download and upload of iface's namespace (Mbit/s; None removes that limit)."""
     st = state.load_state(config.STATE_FILE)
+    _check_iface_owner(st, iface, uid)
     _require_namespace(st, iface)
     host_v, ns_v = netns.veth_names(iface)
     shaping.set_limit(host_v, down)
@@ -402,12 +450,13 @@ def set_limit(iface: str, down: Optional[float], up: Optional[float]) -> Dict[st
     return {"iface": iface, "down": down, "up": up}
 
 
-def set_dns(iface: str, dns: Any) -> Dict[str, Any]:
+def set_dns(iface: str, dns: Any, *, uid: Optional[int] = None) -> Dict[str, Any]:
     """Change the DNS servers of iface's namespace: dnsconf.AUTO or a list of servers.
 
     resolv.conf is rewritten and stray DNS is redirected to the new servers, so apps that are already
     running pick the change up (apps with their own DNS-over-HTTPS keep using that)."""
     st = state.load_state(config.STATE_FILE)
+    _check_iface_owner(st, iface, uid)
     subnet, ns = _require_namespace(st, iface)
     if dns == dnsconf.AUTO:
         st.dns.pop(iface, None)
@@ -430,6 +479,7 @@ def restart_app(iface: str, app: str, *, user: UserInfo, env: Dict[str, str]) ->
     binding = st.find_binding(iface, app)
     if binding is None:
         raise NotFoundError(f"no binding for {app} on {iface}")
+    _check_binding_owner(binding, user.uid)
     stopped = stop_app(iface, app, uid=user.uid)
     if stopped["still_running"]:
         raise ConflictError("the application did not exit, so it was not restarted", code="still_running",
@@ -465,6 +515,11 @@ def move_app(iface: str, app: str, to: str, *, user: UserInfo, env: Dict[str, st
     binding = st.find_binding(iface, app)
     if binding is None:
         raise NotFoundError(f"no binding for {app} on {iface}")
+    _check_binding_owner(binding, user.uid)
+    destination = st.find_binding(to, app)
+    if destination is not None:
+        _check_binding_owner(destination, user.uid,
+                             "another user is already running this app on this interface")
     target = _find_interface(to)
     if not target.bindable:
         raise ConflictError(f"interface {to} cannot be bound (needs an up IPv4 address and a way out)",
@@ -584,13 +639,18 @@ def refresh_routes(full: bool = True) -> Dict[str, Any]:
 
 
 def reset(kill_apps: bool = False, uid: Optional[int] = None) -> Dict[str, Any]:
-    """Remove all InterMux plumbing and state; best effort, failures are logged and skipped.
+    """Remove InterMux plumbing and state unused by other users; root without uid resets all.
 
     kill_apps terminates processes in InterMux namespaces, but only those owned by uid (and their
     uid-owned descendants). If uid is None, no process is killed even when kill_apps is True.
     """
     _reap_launched()
     st = state.load_state(config.STATE_FILE)
+    ifaces = set(st.subnets) | {b.iface for b in st.bindings} | {a.iface for a in st.adoptions}
+    foreign_ifaces = {iface for iface in ifaces if _other_users_on_iface(st, iface, uid)}
+    foreign_namespaces = {netns.namespace_name(iface) for iface in foreign_ifaces} | {
+        b.namespace for b in st.bindings if b.iface in foreign_ifaces}
+    kept_adoptions = [a for a in st.adoptions if uid is not None and a.uid != uid]
     namespaces = _unique(netns.list_namespaces_matching() + [b.namespace for b in st.bindings])
     veths = _unique(netns.list_veths_matching() + [netns.veth_names(b.iface)[0] for b in st.bindings])
 
@@ -607,22 +667,25 @@ def reset(kill_apps: bool = False, uid: Optional[int] = None) -> Dict[str, Any]:
 
     # A namespace that still holds processes is kept: removing it would strand those apps with no
     # network, and a later reset could not find them. Their bindings, veth, policy and NAT rules stay.
-    busy = [ns for ns in namespaces if procs.pids_in_netns(ns)]
+    busy = [ns for ns in namespaces if ns in foreign_namespaces or procs.pids_in_netns(ns)]
     kept_bindings = [b for b in st.bindings if b.namespace in busy]
     dropped_bindings = [b for b in st.bindings if b.namespace not in busy]
     # A busy namespace keeps its plumbing even when no binding records it (state lost, launch interrupted):
     # its host veth shares the namespace's suffix, and its subnet may still be known from state.
-    kept_ifaces_all = {b.iface for b in kept_bindings} | {
+    kept_ifaces_all = foreign_ifaces | {b.iface for b in kept_bindings} | {
         iface for iface in st.subnets if netns.namespace_name(iface) in busy}
     kept_subnets = {b.subnet for b in kept_bindings} | {
         cidr for iface, cidr in st.subnets.items() if iface in kept_ifaces_all}
-    kept_veths = {"veth0_" + ns[len("ns_"):] for ns in busy if ns.startswith("ns_")}
+    kept_veths = {"veth0_" + ns[len("ns_"):] for ns in busy if ns.startswith("ns_")} | {
+        netns.veth_names(iface)[0] for iface in foreign_ifaces}
 
     for a in st.adoptions:
-        _safe(_release_plumbing, a, [])
+        if uid is None or a.uid == uid:
+            _safe(_release_plumbing, a, [])
+    kept_slots = {a.slot for a in kept_adoptions}
     for table_name in _safe_list(adopt_sys.list_nft_tables):
         slot_text = table_name[len("intermux_adopt"):]
-        if slot_text.isdigit():
+        if slot_text.isdigit() and int(slot_text) not in kept_slots:
             _safe(adopt_sys.delete_nft, int(slot_text))
 
     for b in dropped_bindings:
@@ -637,7 +700,7 @@ def reset(kill_apps: bool = False, uid: Optional[int] = None) -> Dict[str, Any]:
         if ns not in busy:
             _safe(netns.delete_namespace, ns)
             _safe(_remove_tmpdirs, ns)
-    _safe(_remove_stale_etc_netns, busy)
+    _safe(_remove_stale_etc_netns, _unique(busy + sorted(foreign_namespaces)))
 
     rules = [r for r in routing.intermux_rules()
              if str(routing.rule_src_network(r)) not in kept_subnets]
@@ -651,11 +714,14 @@ def reset(kill_apps: bool = False, uid: Optional[int] = None) -> Dict[str, Any]:
 
     # ip_forward is deliberately not restored (main never did): writing 0 here can cut off Docker,
     # libvirt or a Tailscale exit node that also need forwarding.
-    _safe(adopt_sys.sweep_leftovers)
+    # The global sweep has no owner information and would delete live foreign adoption rules.
+    if not kept_adoptions:
+        _safe(adopt_sys.sweep_leftovers)
 
     kept_ifaces = kept_ifaces_all
     kept_state = state.State(
         bindings=kept_bindings,
+        adoptions=kept_adoptions,
         subnets={iface: cidr for iface, cidr in st.subnets.items() if iface in kept_ifaces},
         ip_forward_prev=st.ip_forward_prev if kept_bindings else None,
         dns={k: v for k, v in st.dns.items() if k in kept_ifaces},
@@ -664,7 +730,8 @@ def reset(kill_apps: bool = False, uid: Optional[int] = None) -> Dict[str, Any]:
     state.save_state(kept_state, config.STATE_FILE)
     return {"namespaces": [ns for ns in namespaces if ns not in busy], "veths": veths,
             "rules": len(rules), "nat_rules": len(nat_lines), "still_running": still_running,
-            "kept_namespaces": busy, "kept_apps": [b.app_name for b in kept_bindings]}
+            "kept_namespaces": busy, "kept_apps": [b.app_name for b in kept_bindings],
+            "kept_for_other_users": len(foreign_ifaces)}
 
 
 def _remove_stale_etc_netns(keep: Sequence[str]) -> None:
@@ -707,6 +774,11 @@ def adopt(iface: str, app: str, *, user: UserInfo) -> Dict[str, Any]:
     if not isinstance(app, str) or not app.startswith("/"):
         raise ValidationError(f"application path must be an absolute path: {app}")
 
+    st = state.load_state(config.STATE_FILE)
+    # One caller must not exhaust the shared pool of cgroups and routing slots.
+    if sum(a.uid == user.uid for a in st.adoptions) >= MAX_ADOPTIONS_PER_USER:
+        raise ValidationError("too many adopted apps; release some first")
+
     handler = apps.get_handler(app)
     found = procs.find_app_procs(app, handler.comm_names(app), uid=user.uid)
     table = procs.list_procs()
@@ -725,15 +797,21 @@ def adopt(iface: str, app: str, *, user: UserInfo) -> Dict[str, Any]:
                             code="already_adopted")
     started = {pid: procs.start_time(pid) for pid in pids}
 
-    st = state.load_state(config.STATE_FILE)
     adopt_id = secrets.token_hex(8)
     slot = adopt_sys.pick_slot({a.slot for a in st.adoptions} | adopt_sys.kernel_slots())
     group = adopt_sys.group_rel(adopt_id)
     gateway = interface.gateways[0] if interface.gateways else None
 
+    # Snapshot scopes before any process moves, including scopes to use for children born afterwards.
+    origins: Dict[str, str] = {}
+    for pid in pids:
+        origin = adopt_sys.read_cgroup_path(pid)
+        if origin is not None:
+            origins[str(pid)] = origin
+
     def rollback() -> None:
         # Empty list: release only the real members of the group, never candidates that did not join.
-        _safe(adopt_sys.release_group, group, [])
+        _safe(adopt_sys.release_group, group, [], origins=origins, uid=user.uid)
         _safe(adopt_sys.delete_nft, slot)
         _safe(adopt_sys.remove_policy, slot)
 
@@ -765,6 +843,7 @@ def adopt(iface: str, app: str, *, user: UserInfo) -> Dict[str, Any]:
         mark=adopt_sys.slot_mark(slot), table=adopt_sys.slot_table(slot),
         priority=adopt_sys.slot_priority(slot), pids=list(moved), uid=user.uid,
         created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        origins={str(pid): origins[str(pid)] for pid in moved if str(pid) in origins},
     )
     st.adoptions.append(record)
     try:
@@ -803,7 +882,7 @@ def _release_plumbing(a: state.Adoption, pids: Sequence[int]) -> List[int]:
     """Undo an adoption's cgroup, policy and nft table; each step is attempted even if one fails."""
     released: List[int] = []
     try:
-        released = list(adopt_sys.release_group(a.group, pids))
+        released = list(adopt_sys.release_group(a.group, pids, origins=a.origins, uid=a.uid))
     except (InterMuxError, OSError) as exc:
         log.warning("release_group %s failed: %s", a.group, exc)
     _safe(adopt_sys.remove_policy, a.slot)
@@ -815,7 +894,7 @@ def _release_plumbing(a: state.Adoption, pids: Sequence[int]) -> List[int]:
 
 
 def release_adoption(adopt_id: str, *, user: Optional[UserInfo] = None) -> Dict[str, Any]:
-    """Release one adoption: pids go back to the root cgroup and the routing plumbing is removed."""
+    """Release one adoption to its owner's original scopes and remove its routing plumbing."""
     st = state.load_state(config.STATE_FILE)
     a = st.find_adoption(adopt_id)
     if a is None:
@@ -975,9 +1054,9 @@ def _remove_rule(rule: Dict[str, Any]) -> None:
     routing.remove_policy(net, int(rule["table"]), int(rule["priority"]))
 
 
-def _safe(fn: Callable[..., Any], *args: Any) -> bool:
+def _safe(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> bool:
     try:
-        fn(*args)
+        fn(*args, **kwargs)
         return True
     except (InterMuxError, OSError, KeyError, TypeError, ValueError) as exc:
         log.warning("%s%s failed: %s", fn.__name__, args, exc)

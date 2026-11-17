@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import posixpath
 import re
 import stat
 from pathlib import Path
@@ -78,30 +79,99 @@ def profile_roots(home: str) -> List[Path]:
     ]
 
 
+_MAX_LINK_HOPS = 40
+
+
+def resolve_inside(path: str, home: str) -> Optional[str]:
+    """Resolve symlinks in path one component at a time without ever looking outside home.
+
+    Like os.path.realpath, but it gives up (None) as soon as a link points outside home instead of
+    following it: this runs as root, and stat-ing user-chosen paths elsewhere would probe them.
+    Missing components also give None. `home` must already be resolved.
+    """
+    home = posixpath.normpath(home)
+    prefix = home.rstrip("/") + "/"
+
+    def inside(p: str) -> bool:
+        return p == home or p.startswith(prefix)
+
+    def parts_below_home(p: str) -> List[str]:
+        return [c for c in p[len(home):].split("/") if c]
+
+    path = posixpath.normpath(path)
+    if not path.startswith("/") or not inside(path):
+        return None
+    pending = parts_below_home(path)
+    current = home
+    hops = 0
+    while pending:
+        candidate = posixpath.normpath(posixpath.join(current, pending.pop(0)))
+        if not inside(candidate):
+            return None
+        try:
+            st = os.lstat(candidate)
+        except OSError:
+            return None
+        if not stat.S_ISLNK(st.st_mode):
+            current = candidate
+            continue
+        hops += 1
+        if hops > _MAX_LINK_HOPS:
+            return None
+        try:
+            target = os.readlink(candidate)
+        except OSError:
+            return None
+        # `current` has no links in it, so a lexical join and normpath are exact here.
+        resolved = posixpath.normpath(posixpath.join(current, target))
+        if not inside(resolved):
+            return None
+        pending = parts_below_home(resolved) + pending
+        current = home
+    return current
+
+
 PROFILES_INI_MAX = 256 * 1024
 
 
 def default_profile_dir(home: str) -> Optional[Path]:
     """Return the default profile directory, or None if none exists on disk.
 
-    profiles.ini is read without following symlinks and with a size cap.
+    Profile roots and directories may be symlinks resolving inside home. profiles.ini itself
+    is read without following symlinks and with a size cap.
     """
-    for root in profile_roots(home):
+    home = os.path.realpath(home)
+    for unresolved in profile_roots(home):
+        resolved = resolve_inside(os.fspath(unresolved), home)
+        if resolved is None:
+            continue
+        root = Path(resolved)
         ini = root / "profiles.ini"
         try:
             raw = safefs.read_file_nofollow(os.fspath(ini), home, PROFILES_INI_MAX)
         except (FileNotFoundError, NotADirectoryError):
             continue
         except ValidationError as exc:
-            # A symlinked root (for example a dotfile manager) is skipped; the other roots still count.
-            log.warning("not reading %s: %s", ini, exc)
+            # An unsafe root is skipped; another install may still have a usable profile.
+            log.warning("not reading %s: %s", unresolved / "profiles.ini", exc)
             continue
         except OSError as exc:
-            log.warning("not reading %s: %s", ini, exc)
+            log.warning("not reading %s: %s", unresolved / "profiles.ini", exc)
             return None
         profile = parse_default_profile(raw.decode("utf-8", errors="replace"), root)
-        if profile is None or not profile.is_dir():
+        if profile is None:
             return None
+        resolved_profile = resolve_inside(os.fspath(profile), home)
+        if resolved_profile is None:
+            return None
+        profile = Path(resolved_profile)
+        try:
+            # Resolve dotfile-manager links, then enforce containment before opening a directory as root.
+            # The no-follow walk also rejects links swapped in after resolution.
+            fd = safefs.open_dir_nofollow(str(profile), home)
+        except (OSError, ValidationError):
+            return None
+        os.close(fd)
         return profile
     return None
 

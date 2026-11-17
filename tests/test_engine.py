@@ -108,7 +108,7 @@ class AdoptEngineTests(unittest.TestCase):
         mocks = self._run_adopt(lambda g, p: [])
         with self.assertRaises(NotFoundError):
             engine.adopt("wlan0", "/usr/bin/x", user=self.USER)
-        mocks[14].assert_called_once_with(mock.ANY, [])
+        mocks[14].assert_called_once_with(mock.ANY, [], origins=mock.ANY, uid=self.USER.uid)
         mocks[15].assert_called_once()
         mocks[16].assert_called_once()
         mocks[9].assert_not_called()
@@ -118,7 +118,7 @@ class AdoptEngineTests(unittest.TestCase):
         mocks[12].side_effect = ConflictError("boom")
         with self.assertRaises(ConflictError):
             engine.adopt("wlan0", "/usr/bin/x", user=self.USER)
-        mocks[14].assert_called_once_with(mock.ANY, [])
+        mocks[14].assert_called_once_with(mock.ANY, [], origins=mock.ANY, uid=self.USER.uid)
 
     def test_other_users_pid_skipped(self):
         self._run_adopt(lambda g, p: list(p), real_uid=2000)

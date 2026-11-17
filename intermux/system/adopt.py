@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+import posixpath
 import re
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Set
 
 from intermux.errors import InterMuxError, MissingToolError, ValidationError
 from intermux.system import commands
@@ -164,6 +165,35 @@ def pid_group(pid: int) -> Optional[str]:
     return None
 
 
+def parse_cgroup_v2_path(text: str) -> Optional[str]:
+    """Return the unified hierarchy path from /proc/<pid>/cgroup, if present."""
+    for line in text.splitlines():
+        if line.startswith("0::"):
+            return line[3:]
+    return None
+
+
+def read_cgroup_path(pid: int, proc_dir: str = "/proc") -> Optional[str]:
+    """Read a process's cgroup v2 path; vanished or unreadable processes give None."""
+    try:
+        with open(Path(proc_dir) / str(pid) / "cgroup", encoding="utf-8", errors="replace") as fh:
+            return parse_cgroup_v2_path(fh.read())
+    except OSError:
+        return None
+
+
+def safe_release_target(path: Optional[str], uid: int) -> Optional[str]:
+    """Accept only normalized paths within the owner's slice, outside InterMux groups."""
+    if (not isinstance(path, str) or not isinstance(uid, int) or isinstance(uid, bool) or uid < 0
+            or not path.startswith(f"/user.slice/user-{uid}.slice/")
+            or posixpath.normpath(path) != path or ".." in path.split("/") or "\x00" in path):
+        return None
+    # Reject InterMux parents even when nested within a user's slice.
+    if f"/{GROUP_PARENT}/" in path + "/":
+        return None
+    return path
+
+
 def forget_marked_connections(slot: int) -> None:
     """Delete conntrack entries carrying the slot's mark (needs the conntrack tool; skipped without it)."""
     conntrack = commands.which("conntrack")
@@ -178,8 +208,8 @@ def ensure_group(group_rel: str) -> None:
     """Create the parent and group cgroup directories if missing; cgroup v2 is required."""
     if not (Path(CGROUP_ROOT) / "cgroup.controllers").exists():
         raise InterMuxError("cgroup v2 is required to route a running app", code="cgroup_v1")
-    (Path(CGROUP_ROOT) / GROUP_PARENT).mkdir(exist_ok=True)
-    _group_dir(group_rel).mkdir(exist_ok=True)
+    (Path(CGROUP_ROOT) / GROUP_PARENT).mkdir(mode=0o755, exist_ok=True)
+    _group_dir(group_rel).mkdir(mode=0o755, exist_ok=True)
 
 
 def _write_pid(procs_file: Path, pid: int) -> bool:
@@ -198,15 +228,77 @@ def move_pids(group_rel: str, pids: Iterable[int]) -> List[int]:
     return [pid for pid in pids if _write_pid(procs_file, pid)]
 
 
-def release_group(group_rel: str, pids: Iterable[int] = ()) -> List[int]:
-    """Move pids (and anything still in the group) to the root cgroup, then remove the group."""
+def _create_release_leaf(path: Path, created: Optional[List[Path]] = None) -> bool:
+    """Create just one cgroup below an existing parent, or reuse an existing leaf."""
+    try:
+        if not path.parent.is_dir():
+            return False
+        path.mkdir(mode=0o755)
+        if created is not None:
+            created.append(path)
+    except FileExistsError:
+        return path.is_dir()
+    except OSError as exc:
+        log.debug("cannot create release cgroup %s: %s", path, exc)
+        return False
+    return True
+
+
+def _release_targets(group_rel: str, pid: int, origins: Dict[str, str],
+                     uid: Optional[int], created: Optional[List[Path]] = None) -> Iterator[Path]:
+    """Yield safe candidates in order, creating fallback leaves only when needed."""
+    own = safe_release_target(origins.get(str(pid)), uid)
+    targets: List[str] = []
+    for origin in ([own] if own is not None else []) + list(origins.values()):
+        target = safe_release_target(origin, uid)
+        if target is not None and target not in targets:
+            targets.append(target)
+    for target in targets:
+        path = Path(CGROUP_ROOT) / target.lstrip("/")
+        if path.is_dir():
+            yield path
+
+    # Empty systemd scopes vanish. Recreate one level; parents with controllers reject pids with EBUSY,
+    # so fall back to a leaf under the user's app.slice rather than putting processes in a parent slice.
+    recreate = own or (targets[0] if targets else None)
+    if recreate is not None:
+        path = Path(CGROUP_ROOT) / recreate.lstrip("/")
+        if not path.is_dir() and _create_release_leaf(path, created):
+            yield path
+    fallback = safe_release_target(
+        f"/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/"
+        f"intermux-released-{posixpath.basename(group_rel)}", uid)
+    if fallback is not None:
+        path = Path(CGROUP_ROOT) / fallback.lstrip("/")
+        if _create_release_leaf(path, created):
+            yield path
+
+
+def release_group(group_rel: str, pids: Iterable[int] = (), origins: Optional[Dict[str, str]] = None,
+                  uid: Optional[int] = None) -> List[int]:
+    """Return members to their owner's original scopes; never escape the user's slice."""
     wanted: List[int] = []
     for pid in list(pids) + read_group_pids(group_rel):
         if pid not in wanted:
             wanted.append(pid)
-    root_procs = Path(CGROUP_ROOT) / "cgroup.procs"
-    moved = [pid for pid in wanted if _write_pid(root_procs, pid)]
-    if not read_group_pids(group_rel) or not moved:
+    origins = origins or {}
+    moved: List[int] = []
+    created: List[Path] = []
+    for pid in wanted:
+        for target in _release_targets(group_rel, pid, origins, uid, created):
+            if _write_pid(target / "cgroup.procs", pid):
+                moved.append(pid)
+                break
+        else:
+            log.warning("leaving pid %d in %s: no writable safe release cgroup", pid, group_rel)
+    # A pid that exited mid-release leaves a leaf this call created empty. The kernel refuses to remove a
+    # cgroup that still has processes, so removing every one we created only drops the empty ones.
+    for leaf in created:
+        try:
+            leaf.rmdir()
+        except OSError:
+            pass
+    if read_group_pids_or_none(group_rel) == []:
         try:
             _group_dir(group_rel).rmdir()
         except OSError as exc:
