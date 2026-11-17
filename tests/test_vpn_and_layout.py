@@ -50,6 +50,47 @@ class NmParsingTests(unittest.TestCase):
         self.assertIn("ipv4.never-default", first)
         self.assertEqual(second[-3:], ["connection", "up", "u-1"])
 
+    def test_old_networkmanager_without_wireguard_properties(self):
+        # NetworkManager before 1.42 rejects wireguard.ip4-auto-default-route; connecting must still work.
+        conn = nm.VpnConnection("W", "u-1", "wireguard", "", False)
+        bad = mock.Mock(ok=False, stdout="", stderr="Error: invalid property 'wireguard.ip4-auto-default-route'\n")
+        ok = mock.Mock(ok=True, stdout="", stderr="")
+        with mock.patch.object(nm.commands, "which", return_value="/usr/bin/nmcli"), \
+                mock.patch.object(nm.commands, "run", side_effect=[bad, ok, ok]) as run:
+            nm.connect(conn)
+        calls = [call[0][0] for call in run.call_args_list]
+        self.assertIn("wireguard.ip4-auto-default-route", calls[0])
+        self.assertNotIn("wireguard.ip4-auto-default-route", calls[1])
+        self.assertIn("ipv4.never-default", calls[1])
+        self.assertEqual(calls[2][-3:], ["connection", "up", "u-1"])
+
+    def test_other_modify_errors_still_fail_for_openvpn(self):
+        conn = nm.VpnConnection("W", "u-1", "vpn", "", False)
+        bad = mock.Mock(ok=False, stdout="", stderr="Error: no such connection\n")
+        with mock.patch.object(nm.commands, "which", return_value="/usr/bin/nmcli"), \
+                mock.patch.object(nm.commands, "run", return_value=bad) as run:
+            with self.assertRaises(nm.InterMuxError):
+                nm.connect(conn)
+        self.assertEqual(len(run.call_args_list), 1)
+
+    def test_import_builds_the_nmcli_command(self):
+        out = mock.Mock(ok=True, stdout="Connection 'm' (0f7b0c2e-1a2b-4c3d-9e8f-001122334455) successfully added.\n",
+                        stderr="")
+        with mock.patch.object(nm.commands, "which", return_value="/usr/bin/nmcli"), \
+                mock.patch.object(nm.commands, "run", return_value=out) as run:
+            nm.import_file("/tmp/m.ovpn")
+            nm.import_file("/tmp/w.CONF")
+        self.assertEqual(run.call_args_list[0][0][0],
+                         ["/usr/bin/nmcli", "connection", "import", "type", "openvpn", "file", "/tmp/m.ovpn"])
+        self.assertEqual(run.call_args_list[1][0][0][4:], ["wireguard", "file", "/tmp/w.CONF"])
+
+    def test_disconnect_command(self):
+        ok = mock.Mock(ok=True, stdout="", stderr="")
+        with mock.patch.object(nm.commands, "which", return_value="/usr/bin/nmcli"), \
+                mock.patch.object(nm.commands, "run", return_value=ok) as run:
+            nm.disconnect(nm.VpnConnection("W", "u-1", "vpn", "tun0", True))
+        self.assertEqual(run.call_args_list[0][0][0], ["/usr/bin/nmcli", "connection", "down", "u-1"])
+
     def test_connect_without_apps_only_does_not_modify(self):
         conn = nm.VpnConnection("W", "u-1", "vpn", "", False)
         ok = mock.Mock(ok=True, stdout="", stderr="")

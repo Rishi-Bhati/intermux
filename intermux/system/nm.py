@@ -95,10 +95,13 @@ def list_vpns() -> List[VpnConnection]:
     return parse_connections(out)
 
 
-def private_args(kind: str) -> List[str]:
-    """nmcli modify arguments that keep a VPN from taking over the system's default route. Pure."""
+def private_args(kind: str, extras: bool = True) -> List[str]:
+    """nmcli modify arguments that keep a VPN from taking over the system's default route. Pure.
+
+    The wireguard.*-auto-default-route properties only exist in NetworkManager 1.42 and newer; older
+    versions reject the whole command because of them, and honour ipv4.never-default alone (extras=False)."""
     args = ["ipv4.never-default", "yes", "ipv6.never-default", "yes"]
-    if kind == "wireguard":
+    if kind == "wireguard" and extras:
         args += ["wireguard.ip4-auto-default-route", "no", "wireguard.ip6-auto-default-route", "no"]
     return args
 
@@ -107,8 +110,14 @@ def connect(conn: VpnConnection, apps_only: bool = True) -> None:
     """Bring the connection up; with apps_only, first make it never the default route."""
     nmcli = _nmcli()
     if apps_only:
-        _check([nmcli, "connection", "modify", conn.uuid] + private_args(conn.type),
-               f"could not configure {conn.name}")
+        modify = [nmcli, "connection", "modify", conn.uuid]
+        try:
+            _check(modify + private_args(conn.type), f"could not configure {conn.name}")
+        except InterMuxError:
+            if conn.type != "wireguard":
+                raise
+            # An older NetworkManager does not know the wireguard.* properties: set the common ones only.
+            _check(modify + private_args(conn.type, extras=False), f"could not configure {conn.name}")
     _check([nmcli, "--wait", str(int(UP_TIMEOUT)), "connection", "up", conn.uuid],
            f"could not connect {conn.name}", timeout=UP_TIMEOUT + 10)
 
