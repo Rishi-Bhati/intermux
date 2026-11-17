@@ -13,13 +13,16 @@
 # bundled-runtime packages.
 
 Name:           intermux
-Version:        2.2.0
-Release:        1%{?dist}
+Version:        3.0.0
+# Pre-release: the release is 0.1.beta1, sorted before 3.0.0 final by rpm.
+Release:        0.1.beta1%{?dist}
 Summary:        Bind individual applications to specific network interfaces
 License:        MIT
 URL:            https://github.com/Rishi-Bhati/intermux
 # Linux releases are tagged linux-v<version> (the plain v<version> tags are the Windows edition)
-Source0:        %{url}/archive/refs/tags/linux-v%{version}.tar.gz#/%{name}-%{version}.tar.gz
+# This pre-release is tagged linux-v3.0.0-beta.1, so the tag is set here and not built from %{version}.
+%global tag linux-v3.0.0-beta.1
+Source0:        %{url}/archive/refs/tags/%{tag}.tar.gz#/%{name}-%{version}.tar.gz
 
 BuildRequires:  python3-pyinstaller
 BuildRequires:  python3-tkinter
@@ -48,7 +51,7 @@ Changing network configuration requires administrator authentication
 through polkit.
 
 %prep
-%autosetup -n %{name}-linux-v%{version}
+%autosetup -n %{name}-%{tag}
 
 %build
 # Keep PyInstaller's cache in the build tree (mock has no usable $HOME)
@@ -134,6 +137,8 @@ fi
 %{_presetdir}/90-intermux.preset
 
 %changelog
+* Wed Nov 18 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 3.0.0-0.1.beta1
+- 3.0.0 beta 1 (pre-release): background daemon intermuxd (user socket unit), tray intermux-tray, window refresh on daemon events, intermux events command; Rust parts built from source
 * Wed Nov 18 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.2.0-1
 - 2.2.0: opt-in "Don't ask for my password" (sudo intermux passwordless on|off, polkit rule for the intermux group, local active sessions only); installers ask once; security hardening of the root helper
 * Tue Nov 17 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.1.1-1

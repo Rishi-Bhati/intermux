@@ -1,3 +1,15 @@
+intermux (3.0.0~beta1) unstable; urgency=medium
+
+  * 3.0.0 beta 1 (pre-release): background daemon intermuxd, started
+    by systemd when needed, that reports interfaces, routed apps and traffic.
+  * New tray intermux-tray with speed limits, Restart and Stop, and
+    notifications when a route is lost or restored.
+  * The window refreshes on daemon events; new command intermux events.
+  * Rust daemon and tray are built and installed; user units and the tray
+    desktop entry are added.
+
+ -- Rishi-Bhati <bhatirishi5@gmail.com>  Wed, 18 Nov 2026 12:00:00 +0530
+
 intermux (2.2.0) unstable; urgency=medium
 
   * 2.2.0: opt-in "Don't ask for my password" through the intermux group and

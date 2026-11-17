@@ -7,6 +7,29 @@ Earlier releases are described in [release_notes.md](release_notes.md).
 
 ## [Unreleased]
 
+## [3.0.0-beta.1] — 2026-11-18
+
+This is a pre-release for testing. 2.2.0 remains the stable release.
+
+### Added
+
+- **Background daemon (beta).** `intermuxd` runs as your user, not as root. systemd starts it on demand through a user socket unit (`intermuxd.socket`), and the installer enables it for all users. It watches interfaces, your routed apps and their traffic, and tells the window, the tray and the CLI when something changes. It never changes anything itself. The protocol is in `docs/daemon-protocol.md`.
+- **Tray (beta).** `intermux-tray` is shown as "InterMux tray" in the application menu. Its icon shows how many apps are routed, with an amber dot when a connection with your apps needs attention. Its tooltip shows live speeds. Its menu lists each interface with its status and speed, your apps with Restart and Stop (Release for shifted apps), speed-limit presets (No limit, 1, 5, 10, 25, 50 and 100 Mbit/s), Open InterMux, Start at sign-in and Quit. It sends notifications when a connection with your apps drops or comes back, and when one of your apps exits. On a desktop without a tray area, such as stock GNOME without the AppIndicator extension, it keeps running and only sends notifications. With passwordless mode (2.2.0), its actions do not ask for a password.
+- **`intermux events`.** A new command prints live events from the daemon: `intermux events [--topics interfaces,bindings,traffic] [--json]`.
+- **Packaging and CI.** The Linux bundle includes the Rust daemon and tray. Systemd user units and the tray's desktop entry are installed. The Arch, Fedora and Debian recipes build the Rust parts, and CI builds and tests the Rust code.
+
+### Changed
+
+- **Window.** It refreshes as soon as the daemon reports a change. Opening InterMux again brings the open window to the front instead of opening a second window. The status line says when one of your apps exits. Without the daemon, the window works as before.
+- **Installer.** The one-line installer never picks a pre-release. A pre-release is installed only with `--version 3.0.0-beta.1`.
+
+### Known limitations
+
+- There are no saved setups yet. They come in 3.0.0.
+- The traffic graphs in the window still sample on their own.
+- The daemon starts at the next login after install, or when the tray or the window first needs it.
+- The window's daemon features need the daemon binary that the pre-built bundle includes.
+
 ## [2.2.0] — 2026-11-18
 
 ### Added

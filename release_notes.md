@@ -1,5 +1,40 @@
 # InterMux Release Notes
 
+## v3.0.0-beta.1 — Background daemon and tray (beta)
+
+This is a beta for testing. Version 2.2.0 remains the stable release, so install this beta only if you want to help test it.
+
+### What's new
+
+* **Background daemon.** `intermuxd` runs as you, not as root. systemd starts it when the tray or the window needs it. It keeps a live view of your interfaces, your routed apps and their traffic, and it never changes anything itself.
+* **Tray.** "InterMux tray" is in the application menu. Its icon shows how many apps are routed, with an amber dot when a connection with your apps needs attention, and its tooltip shows live speeds. The menu lists each interface with its status and speed, your apps with Restart and Stop, speed-limit presets, Open InterMux, Start at sign-in and Quit. With passwordless mode (2.2.0) its actions do not ask for a password. On a desktop without a tray area, such as stock GNOME without the AppIndicator extension, it keeps running and only sends notifications.
+* **Notifications.** You are told when a connection with your apps drops or comes back, and when one of your apps exits.
+* **A live window.** The window refreshes as soon as the daemon reports a change. Opening InterMux again brings the open window to the front instead of opening a second one. The status line says when an app exits.
+* **`intermux events`.** A new command prints live events from the daemon, for example `intermux events --topics interfaces,bindings,traffic --json`.
+
+### Install the beta
+
+Install it with the one-line installer, using the beta's version number:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh -s -- --version 3.0.0-beta.1
+```
+
+The installer never picks a pre-release unless `--version` names it. To go back to 2.2.0, run the same command with `--version 2.2.0`.
+
+### Known limitations
+
+* There are no saved setups yet. They come in 3.0.0.
+* The traffic graphs in the window still sample on their own.
+* The daemon starts at the next login after install, or when the tray or the window first needs it.
+* The window's daemon features need the daemon binary that the pre-built bundle includes.
+
+### Feedback
+
+Use the **Report issue** button in the window, or run `intermux report` in a terminal. Either one writes a bug report zip. Nothing is uploaded, so attach the zip to your report yourself.
+
+---
+
 ## v2.2.0 — No more password prompts (opt-in)
 
 InterMux 2.2 can make its network changes without asking for your password, if you turn that on. It is off by default, and the root helper is tightened so that users on a shared computer cannot change each other's apps.

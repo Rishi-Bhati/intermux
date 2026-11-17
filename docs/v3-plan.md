@@ -53,11 +53,11 @@ Decisions taken by the maintainer agent. Record them as decided.
 
 Checklist for 3.0.0-beta.1. Update it as work lands.
 
-- [ ] Daemon: `intermuxd` implements `docs/daemon-protocol.md` (protocol 1).
-- [ ] Python client and window: daemon client, event-driven refresh, single instance, `intermux events`.
-- [ ] Tray: `intermux-tray` with the menu, notifications and the start-at-sign-in toggle.
-- [ ] Packaging and CI: user units, Rust binaries built in ubuntu:22.04, shared fixtures in both test suites.
-- [ ] Docs: `docs/daemon-protocol.md`, `docs/state-format.md`, `docs/HANDOFF.md`, and this plan.
+- [x] Daemon: `intermuxd` implements `docs/daemon-protocol.md` (protocol 1).
+- [x] Python client and window: daemon client, event-driven refresh, single instance, `intermux events`.
+- [x] Tray: `intermux-tray` with the menu, notifications and the start-at-sign-in toggle.
+- [x] Packaging and CI: user units, Rust binaries built in ubuntu:22.04, shared fixtures in both test suites.
+- [x] Docs: `docs/daemon-protocol.md`, `docs/state-format.md`, `docs/HANDOFF.md`, and this plan.
 - [ ] Beta release: 3.0.0-beta.1 published as a GitHub pre-release.
 
 ## Risks

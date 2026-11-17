@@ -157,6 +157,18 @@ sudo ./uninstall.sh --force  # remove files even if the reset step fails
 
 The script stops the watcher, resets all bindings and stops the running bound apps, removes the installed files, and removes state and runtime data. With `--force` the files are removed even if the reset fails, which can leave namespaces and NAT rules behind.
 
+### Trying the 3.0 beta
+
+Version 3.0.0-beta.1 is a pre-release for testing. It adds a background daemon, `intermuxd`, which runs as your user, keeps a live view of your interfaces, routed apps and traffic, and is started by systemd when the tray or the window needs it. It also adds a tray icon, shown as "InterMux tray" in the application menu, with your routed apps, live speeds and quick actions, and a new `intermux events` command. Version 2.2.0 remains the stable release.
+
+Install the beta with:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh -s -- --version 3.0.0-beta.1
+```
+
+To go back to 2.2.0, run the same command with `--version 2.2.0`. The one-line installer never installs a pre-release unless `--version` names it.
+
 ## Usage
 
 ### GUI

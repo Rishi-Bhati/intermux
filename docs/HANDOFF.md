@@ -9,8 +9,8 @@ a directory, a command or a branch changes. The v3 status checklist is in `docs/
 InterMux routes individual desktop applications through a network interface that the user chooses on Linux.
 Each bound application runs in its own network namespace, connected to the host by a veth pair, and policy
 routing sends that namespace out through the chosen interface. A root helper, started through pkexec, makes the
-network changes, and the applications run as the user who started them. Release 2.2.0 is the current Linux
-edition; the 3.0 work (a background daemon and a tray icon) is in progress.
+network changes, and the applications run as the user who started them. Release 2.2.0 is the current stable Linux
+edition. 3.0.0-beta.1 is a pre-release for testing that adds a background daemon and a tray icon.
 
 ## Repository map
 
@@ -37,20 +37,22 @@ Python package `intermux/` (standard library only, Python 3.9 or newer):
 
 Other directories:
 
-- `rust/`: the 3.0 Rust code. `rust/intermux-common` (protocol types, state model, shared parsing),
-  `rust/intermuxd` (the user daemon), and `rust/intermux-tray` (planned; ksni tray). This directory is not on
-  `main` yet. It is being written on `feat/v3-daemon`.
-- `tests/`: the unittest suite. `test_netns_integration.py` is the opt-in root test. `tests/fixtures/` is planned
-  for 3.0.0-beta.1 and is not in the tree yet.
-- `packaging/linux/`: the polkit policy (`org.intermux.policy`), desktop entry, icon, AppStream metadata,
-  `intermux-watch.service` and its preset, and `README-install.txt` (shipped in the release tarball).
+- `rust/`: the 3.0 Rust code, one Cargo workspace (`rust/README.md`). `rust/intermux-common` (protocol types, state
+  model, shared parsing), `rust/intermuxd` (the user daemon), and `rust/intermux-tray` (the ksni tray, binary
+  `intermux-tray`). It is on `feat/v3-beta` and is not on `main` yet.
+- `tests/`: the unittest suite. `test_netns_integration.py` is the opt-in root test. `tests/fixtures/` holds the
+  interface and state files that both the Python and the Rust tests load. `tests/e2e/` holds the Docker end-to-end
+  scripts (see `tests/e2e/README.md`).
+- `packaging/linux/`: the polkit policy (`org.intermux.policy`), desktop entries (`intermux.desktop`,
+  `intermux-tray.desktop`), icon, AppStream metadata, `intermux-watch.service` and its preset, the daemon's user units
+  (`intermuxd.socket`, `intermuxd.service`), and `README-install.txt` (shipped in the release tarball).
 - `packaging/arch/`, `packaging/debian/`, `packaging/fedora/`: distribution recipes. They are starting points and
   are not published to any repository.
 - `intermux_linux.spec`: the PyInstaller spec for the Linux bundle.
 - `install.sh`, `uninstall.sh`: the system installer and remover, run from the release tarball or a source tree.
 - `get/`: the one-line installers (`install.sh` for Linux, `install.ps1` for Windows).
-- `.github/workflows/`: `ci.yml` (unit tests on Python 3.9 and 3.12, the netns integration test, packaging
-  lint), `build_linux.yml` (builds the bundle and attaches it to a published release), `build_windows.yml`.
+- `.github/workflows/`: `ci.yml` (unit tests on Python 3.9 and 3.12, the netns integration test, a Rust job with
+  `cargo test` and clippy, packaging lint), `build_linux.yml` (builds the bundle and attaches it to a published release), `build_windows.yml`.
 - `windows/`: the Windows edition, a separate code base. It stays in the 2.x line.
 - `docs/`: `daemon-protocol.md`, `state-format.md`, `v3-plan.md`, `HANDOFF.md`, `fork-feature-parity.md`, and
   `media/` (the demo video).
@@ -63,7 +65,7 @@ Other directories:
 - Python unit tests (no root): `xvfb-run -a python3 -m unittest discover -s tests -t .`. CI runs the same
   discovery on Python 3.9 and 3.12 without `xvfb-run`.
 - Byte-compile check, as CI does: `python3 -m compileall -q intermux tests`.
-- Rust (once `rust/` is on the branch): `cd rust && cargo test`.
+- Rust, as CI does: `cd rust && cargo test --locked` and `cargo clippy --locked --all-targets -- -D warnings`.
 - Window: `python3 -m intermux`, as your normal user. The root guard refuses to start the window as root.
 - CLI: `python3 -m intermux <command>`, as your normal user. `python3 -m intermux --help` lists the commands.
 - Helper: never run it by hand except through pkexec or sudo. Both set `PKEXEC_UID` or `SUDO_UID`, and the helper
@@ -111,7 +113,7 @@ the next release. Replace `X.Y.Z` with the version.
    - `pyproject.toml`: `version`.
    - `intermux/config.py`: `VERSION`.
    - `packaging/debian/changelog`: a new top entry.
-   - `packaging/fedora/intermux.spec`: `Version`, `Release: 1`, and a new `%changelog` entry.
+   - `packaging/fedora/intermux.spec`: `Version`, `Release`, and a new `%changelog` entry.
    - `packaging/linux/intermux.metainfo.xml`: a new `<release version="X.Y.Z" date="YYYY-MM-DD"/>` line.
    - `packaging/arch/PKGBUILD`: `pkgver`.
    - `README.md`: the line "Version X.Y.Z is the Linux edition".
@@ -129,8 +131,8 @@ the next release. Replace `X.Y.Z` with the version.
 5. Test the install. Unpack the tarball in ubuntu:22.04 and debian:12 containers and run `install.sh` as root.
    Check that the bundle runs and that `uninstall.sh --force` removes it.
 6. Test polkit end to end in Docker on ubuntu:22.04, debian:12, fedora:41 and archlinux:latest. The harness
-   (`polkit-e2e.sh` and `run-all.sh`) is not in the repository yet. At the time of writing it exists only in the
-   scratchpad, which is temporary. Add it to the repository before relying on it again.
+   (`polkit-e2e.sh` and `run-all.sh`) is in `tests/e2e/`, with the other Docker scripts. See `tests/e2e/README.md`
+   for how to run them.
 7. Push `main`. Then create the release and the tag from `main`. Write the notes section to a temporary file outside
    the repository:
    ```
@@ -153,6 +155,22 @@ the next release. Replace `X.Y.Z` with the version.
 11. Test `makepkg` in an archlinux:latest container. Run it as a normal user, because makepkg refuses to run as
     root. `pyinstaller` is an AUR package (it is in `makedepends`), so the container needs it before `makepkg`
     runs.
+
+### Pre-release versions
+
+Pre-releases (3.0.0-beta.1 is the first) use a different spelling in each place, because each format has its own
+rules. Tag the release `linux-v3.0.0-beta.1` in all cases.
+
+- `pyproject.toml`: PEP 440, `3.0.0b1`. `intermux/config.py` `VERSION` keeps the release name, `3.0.0-beta.1`.
+  `get/install.sh` reads the installed version from `intermux --version`.
+- `packaging/debian/changelog`: `3.0.0~beta1`. The `~` sorts a pre-release before the final release.
+- `packaging/fedora/intermux.spec`: `Version: 3.0.0` and `Release: 0.1.beta1%{?dist}`. The spec sets the tag with
+  `%global tag`, because `linux-v%{version}` would name a tag that does not exist.
+- `packaging/arch/PKGBUILD`: pacman versions cannot contain `-`, so `pkgver=3.0.0beta1`, and `_tag` is set to
+  `linux-v3.0.0-beta.1` explicitly.
+- `packaging/linux/intermux.metainfo.xml`: `version="3.0.0~beta1" type="development"`.
+- Publish with `gh release create ... --prerelease`. The one-line installer skips pre-releases unless `--version`
+  names one.
 
 ## Security rules for contributors
 
@@ -207,14 +225,15 @@ the next release. Replace `X.Y.Z` with the version.
 - The plan, decisions and the 3.0.0-beta.1 checklist: `docs/v3-plan.md` (Status section).
 - The daemon contract, which all v3 code follows: `docs/daemon-protocol.md`.
 - The state file reference: `docs/state-format.md`.
-- Branches. At the time of writing, each of the four branches points at `c7f957f` (the protocol document), so check
-  `git log` for progress.
-  - `feat/v3-beta`: the 3.0.0-beta.1 integration branch: packaging, CI and the pre-release.
-  - `feat/v3-daemon`: `intermuxd` and `rust/intermux-common`, as specified in `docs/daemon-protocol.md`.
-  - `feat/v3-client`: the Python daemon client (`intermux/daemon_client.py`), `intermux events`, and the window as
-    a daemon client.
-  - `feat/v3-docs`: the v3 plan, the state format reference and this handoff guide.
-- `intermux-tray` has no branch yet. The plan puts it in 3.0.0-beta.1.
+- Branches. `feat/v3-beta` is the 3.0.0-beta.1 integration branch. It contains these feature branches, each merged
+  into it: `feat/v3-daemon` (`intermuxd` and `rust/intermux-common`, as specified in `docs/daemon-protocol.md`),
+  `feat/v3-client` (the Python daemon client in `intermux/daemon_client.py`, `intermux events`, and the window as a
+  daemon client), `feat/v3-tray` (`rust/intermux-tray`), `feat/v3-pkg` (user units, packaging and CI), and
+  `feat/v3-docs` (the v3 plan, the state format reference and this handoff guide).
+- `feat/v3-release` is `feat/v3-beta` plus the installer rule that skips pre-releases unless `--version` names one,
+  and the release commit that sets the 3.0.0-beta.1 versions, notes and checklist. It is the branch the release
+  steps above use, as `feat/2.2` was for 2.2.0.
+- The beta is not released until the Beta release item in `docs/v3-plan.md` is ticked.
 
 ## Where specs live
 

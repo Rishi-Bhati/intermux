@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-VERSION = "2.2.0"
+VERSION = "3.0.0-beta.1"
 
 STATE_DIR = Path("/var/lib/intermux")
 STATE_FILE = STATE_DIR / "state.json"
