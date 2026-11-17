@@ -154,3 +154,27 @@ class BatchLimitTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SashCursorTests(unittest.TestCase):
+    """The resize arrow belongs to the gaps between sections only (Tk leaves it on the paned window)."""
+
+    def test_sections_set_their_own_cursor(self):
+        try:
+            import tkinter as tk
+            root = tk.Tk()
+        except Exception as exc:  # no display in this environment
+            self.skipTest(f"no display: {exc}")
+        root.withdraw()
+        try:
+            from intermux.ui import app as app_module
+            with mock.patch.object(app_module.InterMuxApp, "refresh_all", lambda self: None):
+                window = app_module.InterMuxApp(root)
+            # Tk defines the sash cursor on the paned window and never takes it off while the pointer
+            # is over a child; a section without a cursor of its own would inherit the stale arrow.
+            for box in (window._form_box, window._bindings_box, window._form_box.master.winfo_children()[1]):
+                self.assertEqual(str(box.cget("cursor")), app_module.GROUP_CURSOR)
+            self.assertEqual(str(window.vpane.cget("sashcursor")), "sb_v_double_arrow")
+            self.assertEqual(str(window.hpane.cget("sashcursor")), "sb_h_double_arrow")
+        finally:
+            root.destroy()

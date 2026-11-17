@@ -205,6 +205,7 @@ KIND_LABELS = {
 NO_IFACE_TEXT = "No bindable interface found. Connect to a network and press Refresh."
 TABLE_ICON = 16
 SASH_WIDTH = 12              # the gaps between sections; drag them to resize
+GROUP_CURSOR = "arrow"       # the pointer inside a section; see _group
 GROUP_PAD = 16               # inside each section's outline
 FIELD_GAP = 14               # between fields in the form
 FORM_MIN_WIDTH = 380
@@ -705,7 +706,12 @@ class InterMuxApp:
             pass
 
     def _group(self, parent: Any, title: str) -> Any:
-        box = ttk.Labelframe(parent, text=f" {title} ", padding=(GROUP_PAD, 8, GROUP_PAD, GROUP_PAD))
+        # An explicit cursor matters: Tk puts the resize arrow on the paned window itself while the pointer is
+        # over a sash and only takes it off again on motion over the pane's own area, never over a child. A box
+        # without a cursor of its own (and every widget in it) would inherit the stale arrow once the pointer
+        # moves off the gap, so the arrow would show all over the form.
+        box = ttk.Labelframe(parent, text=f" {title} ", padding=(GROUP_PAD, 8, GROUP_PAD, GROUP_PAD),
+                             cursor=GROUP_CURSOR)
         box.columnconfigure(0, weight=1)
         return box
 
