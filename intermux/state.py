@@ -357,9 +357,12 @@ def save_state(state: State, path: Path = STATE_FILE) -> None:
 @contextmanager
 def state_lock(path: Path = LOCK_FILE) -> Iterator[None]:
     """Exclusive flock on path for the duration of the block. Blocks until acquired."""
-    path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
-    fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o644)
+    # Only the root helper and watcher use this directory; other users must not hold their lock.
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
     try:
+        os.fchmod(fd, 0o600)   # also tighten a lock created by an older version
         fcntl.flock(fd, fcntl.LOCK_EX)
         try:
             yield
