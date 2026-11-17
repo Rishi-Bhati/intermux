@@ -159,9 +159,14 @@ class CgroupTests(unittest.TestCase):
         adopt.ensure_group(self.rel)
         procs = self.root / self.rel / "cgroup.procs"
         procs.write_text("20\n21\n")
-        moved = adopt.release_group(self.rel, [22])
+        origin = "/user.slice/user-1000.slice/app.slice/x.scope"
+        target = self.root / origin.lstrip("/") / "cgroup.procs"
+        target.parent.mkdir(parents=True)
+        target.write_text("")
+        moved = adopt.release_group(self.rel, [22], origins={"20": origin}, uid=1000)
         self.assertEqual(sorted(moved), [20, 21, 22])
-        self.assertTrue((self.root / "cgroup.procs").is_file())
+        self.assertEqual(target.read_text(), "21")
+        self.assertFalse((self.root / "cgroup.procs").exists())
 
     def test_release_missing_group(self):
         self.assertEqual(adopt.release_group(self.rel), [])

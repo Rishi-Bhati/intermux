@@ -64,6 +64,7 @@ class Adoption:
     uid: int                 # owner of the adoption
     pids: List[int] = field(default_factory=list)   # snapshot at adoption time
     created_at: str = ""     # ISO 8601 UTC
+    origins: Dict[str, str] = field(default_factory=dict)   # pid -> original cgroup v2 path
 
 
 @dataclass
@@ -280,6 +281,10 @@ def _adoption_from_dict(item: Any) -> Optional[Adoption]:
         log.warning("ignoring adoption with an invalid group, slot or interface: %r", item)
         return None
     app = str(item["app"])
+    raw_origins = item.get("origins")
+    origins = {pid: path for pid, path in raw_origins.items()
+               if isinstance(pid, str) and pid.isdigit() and isinstance(path, str)} \
+        if isinstance(raw_origins, dict) else {}
     return Adoption(
         id=adopt_id,
         iface=str(item["iface"]),
@@ -293,6 +298,7 @@ def _adoption_from_dict(item: Any) -> Optional[Adoption]:
         uid=uid,
         pids=pids,
         created_at=str(item.get("created_at") or ""),
+        origins=origins,
     )
 
 

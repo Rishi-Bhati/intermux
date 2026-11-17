@@ -731,9 +731,16 @@ def adopt(iface: str, app: str, *, user: UserInfo) -> Dict[str, Any]:
     group = adopt_sys.group_rel(adopt_id)
     gateway = interface.gateways[0] if interface.gateways else None
 
+    # Snapshot scopes before any process moves, including scopes to use for children born afterwards.
+    origins: Dict[str, str] = {}
+    for pid in pids:
+        origin = adopt_sys.read_cgroup_path(pid)
+        if origin is not None:
+            origins[str(pid)] = origin
+
     def rollback() -> None:
         # Empty list: release only the real members of the group, never candidates that did not join.
-        _safe(adopt_sys.release_group, group, [])
+        _safe(adopt_sys.release_group, group, [], origins=origins, uid=user.uid)
         _safe(adopt_sys.delete_nft, slot)
         _safe(adopt_sys.remove_policy, slot)
 
@@ -765,6 +772,7 @@ def adopt(iface: str, app: str, *, user: UserInfo) -> Dict[str, Any]:
         mark=adopt_sys.slot_mark(slot), table=adopt_sys.slot_table(slot),
         priority=adopt_sys.slot_priority(slot), pids=list(moved), uid=user.uid,
         created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        origins={str(pid): origins[str(pid)] for pid in moved if str(pid) in origins},
     )
     st.adoptions.append(record)
     try:
@@ -803,7 +811,7 @@ def _release_plumbing(a: state.Adoption, pids: Sequence[int]) -> List[int]:
     """Undo an adoption's cgroup, policy and nft table; each step is attempted even if one fails."""
     released: List[int] = []
     try:
-        released = list(adopt_sys.release_group(a.group, pids))
+        released = list(adopt_sys.release_group(a.group, pids, origins=a.origins, uid=a.uid))
     except (InterMuxError, OSError) as exc:
         log.warning("release_group %s failed: %s", a.group, exc)
     _safe(adopt_sys.remove_policy, a.slot)
@@ -815,7 +823,7 @@ def _release_plumbing(a: state.Adoption, pids: Sequence[int]) -> List[int]:
 
 
 def release_adoption(adopt_id: str, *, user: Optional[UserInfo] = None) -> Dict[str, Any]:
-    """Release one adoption: pids go back to the root cgroup and the routing plumbing is removed."""
+    """Release one adoption to its owner's original scopes and remove its routing plumbing."""
     st = state.load_state(config.STATE_FILE)
     a = st.find_adoption(adopt_id)
     if a is None:
@@ -975,9 +983,9 @@ def _remove_rule(rule: Dict[str, Any]) -> None:
     routing.remove_policy(net, int(rule["table"]), int(rule["priority"]))
 
 
-def _safe(fn: Callable[..., Any], *args: Any) -> bool:
+def _safe(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> bool:
     try:
-        fn(*args)
+        fn(*args, **kwargs)
         return True
     except (InterMuxError, OSError, KeyError, TypeError, ValueError) as exc:
         log.warning("%s%s failed: %s", fn.__name__, args, exc)

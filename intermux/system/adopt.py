@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+import posixpath
 import re
 from pathlib import Path
-from typing import Any, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional, Set
 
 from intermux.errors import InterMuxError, MissingToolError, ValidationError
 from intermux.system import commands
@@ -164,6 +165,35 @@ def pid_group(pid: int) -> Optional[str]:
     return None
 
 
+def parse_cgroup_v2_path(text: str) -> Optional[str]:
+    """Return the unified hierarchy path from /proc/<pid>/cgroup, if present."""
+    for line in text.splitlines():
+        if line.startswith("0::"):
+            return line[3:]
+    return None
+
+
+def read_cgroup_path(pid: int, proc_dir: str = "/proc") -> Optional[str]:
+    """Read a process's cgroup v2 path; vanished or unreadable processes give None."""
+    try:
+        with open(Path(proc_dir) / str(pid) / "cgroup", encoding="utf-8", errors="replace") as fh:
+            return parse_cgroup_v2_path(fh.read())
+    except OSError:
+        return None
+
+
+def safe_release_target(path: Optional[str], uid: int) -> Optional[str]:
+    """Accept only normalized paths within the owner's slice, outside InterMux groups."""
+    if (not isinstance(path, str) or not isinstance(uid, int) or isinstance(uid, bool) or uid < 0
+            or not path.startswith(f"/user.slice/user-{uid}.slice/")
+            or posixpath.normpath(path) != path or ".." in path.split("/") or "\x00" in path):
+        return None
+    # Reject InterMux parents even when nested within a user's slice.
+    if f"/{GROUP_PARENT}/" in path + "/":
+        return None
+    return path
+
+
 def forget_marked_connections(slot: int) -> None:
     """Delete conntrack entries carrying the slot's mark (needs the conntrack tool; skipped without it)."""
     conntrack = commands.which("conntrack")
@@ -198,15 +228,26 @@ def move_pids(group_rel: str, pids: Iterable[int]) -> List[int]:
     return [pid for pid in pids if _write_pid(procs_file, pid)]
 
 
-def release_group(group_rel: str, pids: Iterable[int] = ()) -> List[int]:
-    """Move pids (and anything still in the group) to the root cgroup, then remove the group."""
+def release_group(group_rel: str, pids: Iterable[int] = (), origins: Optional[Dict[str, str]] = None,
+                  uid: Optional[int] = None) -> List[int]:
+    """Return members to their owner's original scopes; never escape the user's slice."""
     wanted: List[int] = []
     for pid in list(pids) + read_group_pids(group_rel):
         if pid not in wanted:
             wanted.append(pid)
-    root_procs = Path(CGROUP_ROOT) / "cgroup.procs"
-    moved = [pid for pid in wanted if _write_pid(root_procs, pid)]
-    if not read_group_pids(group_rel) or not moved:
+    origins = origins or {}
+    fallback = next((target for target in (safe_release_target(p, uid) for p in origins.values())
+                     if target is not None), None)
+    moved: List[int] = []
+    for pid in wanted:
+        target = safe_release_target(origins.get(str(pid)), uid) or fallback
+        if target is None:
+            # Old state has no origins. Staying put is safer than escaping systemd's resource limits.
+            log.info("leaving pid %d in %s: no safe original cgroup", pid, group_rel)
+            continue
+        if _write_pid(Path(CGROUP_ROOT) / target.lstrip("/") / "cgroup.procs", pid):
+            moved.append(pid)
+    if read_group_pids_or_none(group_rel) == []:
         try:
             _group_dir(group_rel).rmdir()
         except OSError as exc:
