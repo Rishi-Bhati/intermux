@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=InterMux tray
+Comment=Status and quick controls for InterMux
+Exec=/usr/lib/intermux/intermux-tray
+Icon=intermux
+Categories=Network;
+Terminal=false
