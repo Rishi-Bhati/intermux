@@ -1,5 +1,5 @@
 [workspace]
-members = ["intermux-common", "intermuxd"]
+members = ["intermux-common", "intermuxd", "intermux-tray"]
 resolver = "2"
 
 [workspace.package]

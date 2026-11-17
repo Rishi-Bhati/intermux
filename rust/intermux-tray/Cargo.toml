@@ -1,0 +1,15 @@
+[package]
+name = "intermux-tray"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+intermux-common = { path = "../intermux-common" }
+tokio.workspace = true
+serde_json.workspace = true
+log.workspace = true
+env_logger = { version = "0.11", default-features = false }
+nix = { version = "0.30", features = ["user", "signal", "fs", "process"] }
+ksni = { version = "0.3", default-features = false, features = ["tokio"] }
+zbus = { version = "5", default-features = false, features = ["tokio"] }
