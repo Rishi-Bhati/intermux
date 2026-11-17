@@ -56,7 +56,7 @@ class HelperOwnershipPathsTests(unittest.TestCase):
     def test_invalid_requesting_user_cannot_bypass_ownership_checks(self):
         actions = dict(self.SETTINGS, reset={}, release_adoption={"id": "0123456789abcdef"})
         for action, params in actions.items():
-            for raw_uid in ("garbage", "", "0"):
+            for raw_uid in ("garbage", ""):
                 with self.subTest(action=action, uid=raw_uid), \
                         mock.patch.object(server, "_dispatch") as dispatch:
                     response = server.handle(_request(action, params),
@@ -64,6 +64,24 @@ class HelperOwnershipPathsTests(unittest.TestCase):
                 self.assertFalse(response["ok"])
                 self.assertEqual(response["error"]["code"], "permission_denied")
                 dispatch.assert_not_called()
+
+    def test_zero_requesting_uid_has_root_reset_and_settings_permissions(self):
+        actions = dict(self.SETTINGS, reset={"kill_apps": True}, release_adoption={"id": "0123456789abcdef"})
+        for action, params in actions.items():
+            for env_key in ("PKEXEC_UID", "SUDO_UID"):
+                with self.subTest(action=action, env=env_key), \
+                        mock.patch.object(server.session, "user_for_uid") as resolve, \
+                        mock.patch.object(server.state, "state_lock", return_value=mock.MagicMock()), \
+                        mock.patch.object(server.engine, action, return_value={}) as fn:
+                    response = server.handle(_request(action, params), euid=0, environ={env_key: "0"})
+                    self.assertTrue(response["ok"], response)
+                    if action == "reset":
+                        fn.assert_called_once_with(kill_apps=False, uid=None)
+                    elif action == "release_adoption":
+                        fn.assert_called_once_with(params["id"], user=None)
+                    else:
+                        self.assertIsNone(fn.call_args.kwargs["uid"])
+                    resolve.assert_not_called()
 
     def test_batch_limits_pass_the_requesting_uid(self):
         with mock.patch.object(server.engine, "set_limit", return_value={}) as limit:

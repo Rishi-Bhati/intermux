@@ -53,8 +53,8 @@ def _sanitize_bind_env(env: Mapping[str, str], user: "session.UserInfo") -> Dict
     return clean
 
 
-def _resolve_user(environ: Mapping[str, str]) -> "session.UserInfo":
-    """Identify the unprivileged user that pkexec or sudo ran the helper for."""
+def _resolve_user(environ: Mapping[str, str]) -> Optional["session.UserInfo"]:
+    """Identify the requesting user; uid zero keeps the permissions of a direct root invocation."""
     raw = environ.get("PKEXEC_UID") or environ.get("SUDO_UID")
     if not raw:
         raise PermissionDeniedError("could not determine the requesting user")
@@ -63,7 +63,7 @@ def _resolve_user(environ: Mapping[str, str]) -> "session.UserInfo":
     except ValueError as exc:
         raise PermissionDeniedError("could not determine the requesting user") from exc
     if uid == 0:
-        raise PermissionDeniedError("requests from root are not accepted")
+        return None
     return session.user_for_uid(uid)
 
 
@@ -182,7 +182,7 @@ def handle(raw: str, *, euid: Optional[int] = None, environ: Optional[Mapping[st
         if action in _USER_ACTIONS:
             user = _resolve_user(env)
         elif action in ("reset", "release_adoption", "set_dns", "set_limit"):
-            # Only a root invocation with no requesting-user environment may bypass ownership checks.
+            # Missing or root requesting users keep root permissions; malformed user IDs still fail.
             if "PKEXEC_UID" in env or "SUDO_UID" in env:
                 user = _resolve_user(env)
         log.info("action %s requested by uid %s", action, user.uid if user else "none")
