@@ -11,3 +11,4 @@ Run on a Linux host with Docker (no sudo needed). They never touch the host's ne
 Note: `installtest.sh` binds through the real kernel of the host (namespaces, nftables). On a host whose kernel
 was upgraded but not rebooted, modules such as `nft_socket` may be missing; reboot rather than loading modules
 by hand.
+| `daemon-e2e.sh` (+ `Dockerfile.systemd`) | 3.0: inside a container running systemd: user units installed and enabled globally, `intermuxd.socket` active for a lingering user, socket 0600 in a 0700 dir, socket activation, `intermux events` sees `binding.started`, `interface.status`, `binding.stopped` and `app.exited` for a real bind through the helper, the tray runs headless without crashing and is single-instance, uninstall removes and disables everything. | see the header of the script |
