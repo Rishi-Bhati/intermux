@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "subnets": {
+    "wlan0": "10.200.7.0/24"
+  },
+  "bindings": [
+    {
+      "iface": "wlan0",
+      "app": "/usr/bin/firefox",
+      "app_name": "firefox",
+      "namespace": "ns_1a2b3c4d",
+      "subnet": "10.200.7.0/24",
+      "table": 1007,
+      "priority": 1007,
+      "profile_mode": "default",
+      "log_path": "/home/u/.local/state/intermux/logs/firefox-wlan0.log",
+      "created_at": "2026-10-13T00:00:00+00:00",
+      "pid": 4242,
+      "uid": 1000
+    }
+  ],
+  "adoptions": [
+    {
+      "id": "a87f9e9dfa6450ab",
+      "iface": "wlan0",
+      "app": "/usr/bin/sleep",
+      "app_name": "sleep",
+      "slot": 1,
+      "group": "intermux/adopt-a87f9e9dfa6450ab",
+      "mark": 257,
+      "table": 2001,
+      "priority": 2001,
+      "uid": 1000,
+      "pids": [
+        192
+      ],
+      "created_at": "",
+      "origins": {
+        "192": "/user.slice/test.scope"
+      }
+    }
+  ],
+  "ip_forward_prev": "0",
+  "dns": {
+    "wlan0": [
+      "1.1.1.1",
+      "9.9.9.9"
+    ]
+  },
+  "limits": {
+    "wlan0": {
+      "down": 20.0,
+      "up": null
+    }
+  }
+}
