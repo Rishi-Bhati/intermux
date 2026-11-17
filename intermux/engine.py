@@ -34,6 +34,7 @@ GRACE = 5.0
 LAUNCH_WAIT = 1.5
 PUBLIC_DNS = ("1.1.1.1", "9.9.9.9")
 TAILSCALE_TABLE = "52"
+MAX_ADOPTIONS_PER_USER = 20
 
 
 def namespace_dns_servers(interface: netinfo.Interface) -> List[str]:
@@ -763,6 +764,11 @@ def adopt(iface: str, app: str, *, user: UserInfo) -> Dict[str, Any]:
     if not isinstance(app, str) or not app.startswith("/"):
         raise ValidationError(f"application path must be an absolute path: {app}")
 
+    st = state.load_state(config.STATE_FILE)
+    # One caller must not exhaust the shared pool of cgroups and routing slots.
+    if sum(a.uid == user.uid for a in st.adoptions) >= MAX_ADOPTIONS_PER_USER:
+        raise ValidationError("too many adopted apps; release some first")
+
     handler = apps.get_handler(app)
     found = procs.find_app_procs(app, handler.comm_names(app), uid=user.uid)
     table = procs.list_procs()
@@ -781,7 +787,6 @@ def adopt(iface: str, app: str, *, user: UserInfo) -> Dict[str, Any]:
                             code="already_adopted")
     started = {pid: procs.start_time(pid) for pid in pids}
 
-    st = state.load_state(config.STATE_FILE)
     adopt_id = secrets.token_hex(8)
     slot = adopt_sys.pick_slot({a.slot for a in st.adoptions} | adopt_sys.kernel_slots())
     group = adopt_sys.group_rel(adopt_id)
