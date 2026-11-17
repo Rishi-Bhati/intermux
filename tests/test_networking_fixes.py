@@ -143,3 +143,30 @@ class AdoptionRoutingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SetnsFallbackTests(unittest.TestCase):
+    """os.setns only exists from Python 3.12; the release bundle runs an older Python and uses libc."""
+
+    def _without_os_setns(self):
+        saved = getattr(netns.os, "setns", None)
+        if saved is not None:
+            delattr(netns.os, "setns")
+            self.addCleanup(setattr, netns.os, "setns", saved)
+
+    def test_calls_libc_when_os_setns_is_missing(self):
+        self._without_os_setns()
+        fake = mock.Mock()
+        fake.setns.return_value = 0
+        with mock.patch("ctypes.CDLL", return_value=fake):
+            netns._setns(7)
+        fake.setns.assert_called_once_with(7, 0x40000000)
+
+    def test_libc_failure_raises_oserror(self):
+        self._without_os_setns()
+        fake = mock.Mock()
+        fake.setns.return_value = -1
+        with mock.patch("ctypes.CDLL", return_value=fake), mock.patch("ctypes.get_errno", return_value=1):
+            with self.assertRaises(OSError) as ctx:
+                netns._setns(7)
+        self.assertEqual(ctx.exception.errno, 1)

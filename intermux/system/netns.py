@@ -327,6 +327,22 @@ def dns_probe_ok(reply: bytes) -> bool:
     return qid == _PROBE_QUERY_ID and bool(flags & 0x8000) and (flags & 0xF) in (0, 3)
 
 
+_CLONE_NEWNET = 0x40000000
+
+
+def _setns(fd: int, nstype: int = _CLONE_NEWNET) -> None:
+    """os.setns, which only exists from Python 3.12; older Pythons (the release bundle) call libc directly."""
+    if hasattr(os, "setns"):
+        os.setns(fd, nstype)
+        return
+    import ctypes
+    import ctypes.util
+    libc = ctypes.CDLL(ctypes.util.find_library("c") or "libc.so.6", use_errno=True)
+    if libc.setns(fd, nstype) != 0:
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
+
+
 def _netns_socket(namespace: str) -> socket.socket:
     """A UDP socket created inside `namespace` (setns in a helper thread; the socket keeps its namespace)."""
     box: Dict[str, Any] = {}
@@ -336,15 +352,15 @@ def _netns_socket(namespace: str) -> socket.socket:
             own = os.open("/proc/thread-self/ns/net", os.O_RDONLY)
             target = os.open(str(config.NETNS_DIR / namespace), os.O_RDONLY)
             try:
-                os.setns(target, os.CLONE_NEWNET)
+                _setns(target)
                 try:
                     box["sock"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 finally:
-                    os.setns(own, os.CLONE_NEWNET)
+                    _setns(own)
             finally:
                 os.close(own)
                 os.close(target)
-        except (OSError, AttributeError) as exc:
+        except OSError as exc:
             box["error"] = exc
 
     thread = threading.Thread(target=worker, name="intermux-dns-probe")
