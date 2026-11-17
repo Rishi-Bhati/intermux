@@ -512,5 +512,77 @@ class TestCLIEvents(unittest.TestCase):
             self.assertIn("the InterMux daemon is not running and could not be started", stderr_buf.getvalue())
 
 
+class TestUIAppIntegration(unittest.TestCase):
+    """Test suite for GUI integration with intermuxd."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.daemon = FakeDaemon(self.temp_dir.name)
+
+    def tearDown(self) -> None:
+        self.daemon.close()
+        self.temp_dir.cleanup()
+
+    def test_gui_event_queue_debounce_schedules_single_refresh(self) -> None:
+        """Several queued events schedule only a single debounced refresh 150ms later."""
+        # Create an instance with dummy __init__ attributes
+        app = object.__new__(ui_app.InterMuxApp)
+        app._daemon_events = queue.Queue()
+        app._debounce_after_id = None
+        app._last_event_refresh = 0.0
+        app._set_status = mock.MagicMock()
+
+        scheduled_calls: list[tuple[int, Any]] = []
+
+        fake_root = mock.MagicMock()
+
+        def fake_after(ms: int, callback: Any) -> str:
+            scheduled_calls.append((ms, callback))
+            return f"after-{len(scheduled_calls)}"
+
+        fake_root.after.side_effect = fake_after
+        app.root = fake_root
+        app.refresh_snapshot = mock.MagicMock()
+
+        # Enqueue multiple events
+        app._daemon_events.put(("interface.added", {"name": "wlan0"}))
+        app._daemon_events.put(("route.lost", {"interface": "wlan0"}))
+        app._daemon_events.put(("binding.started", {"iface": "wlan0"}))
+        app._daemon_events.put(("adoption.started", {"id": "1"}))
+        app._daemon_events.put(("app.exited", {"app_name": "firefox", "iface": "wlan0"}))
+        app._daemon_events.put(("client.reconnected", {}))
+
+        # Drain events directly
+        app._drain_events()
+
+        # Only one 150ms debounced refresh should be scheduled
+        debounce_afters = [call for call in scheduled_calls if call[0] == 150]
+        self.assertEqual(len(debounce_afters), 1)
+
+        # Trigger the scheduled callback
+        _, cb = debounce_afters[0]
+        cb()
+
+        # Verify refresh_snapshot was called once and last_event_refresh was updated
+        app.refresh_snapshot.assert_called_once()
+        self.assertGreater(app._last_event_refresh, 0.0)
+
+        # Verify app.exited updated status line
+        app._set_status.assert_called_with("firefox on wlan0 has exited")
+
+    def test_gui_main_already_running_raises_and_exits_0(self) -> None:
+        """main() exits 0 without creating Tk window if daemon reports raised=true."""
+        self.daemon.gui_raised = True
+
+        with mock.patch("intermux.daemon_client.socket_path", return_value=self.daemon.sock_path):
+            with mock.patch("os.path.exists", return_value=True):
+                with mock.patch("tkinter.Tk", side_effect=AssertionError("tk.Tk should not be called")):
+                    stdout_buf = io.StringIO()
+                    with mock.patch("sys.stdout", stdout_buf):
+                        ret = ui_app.main()
+                    self.assertEqual(ret, 0)
+                    self.assertIn("InterMux is already open; bringing it to the front.", stdout_buf.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
