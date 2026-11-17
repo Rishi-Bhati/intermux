@@ -45,6 +45,14 @@ class UninstallScriptTests(unittest.TestCase):
         self.assertIn(marker, text)
         self.assertIn('rm -f -- "$POLKIT_RULE" "$POLKIT_PKLA" "$PASSWORDLESS_MARKER"', text)
 
+    def test_uninstall_disables_socket_and_removes_units(self) -> None:
+        text = (ROOT / "uninstall.sh").read_text()
+        self.assertIn("systemctl --global disable intermuxd.socket", text)
+        self.assertIn("intermuxd.socket", text)
+        self.assertIn("intermuxd.service", text)
+        self.assertIn("intermux-tray.desktop", text)
+        self.assertIn("systemctl daemon-reload", text)
+
 
 class InstallScriptTests(unittest.TestCase):
     def test_install_script_flags_and_passwordless_command(self) -> None:
@@ -58,6 +66,19 @@ class InstallScriptTests(unittest.TestCase):
         self.assertIn("read -r answer </dev/tty", text)
         self.assertIn("Don't ask for your password for InterMux? [y/N]", text)
         self.assertIn("/dev/tty", text)
+
+    def test_install_script_daemon_units_and_socket(self) -> None:
+        text = (ROOT / "install.sh").read_text()
+        self.assertIn('if [ -f "$INSTALL_LIB/intermuxd" ]; then', text)
+        idx_guard = text.index('if [ -f "$INSTALL_LIB/intermuxd" ]; then')
+        end_guard = text.index("fi", idx_guard)
+        block = text[idx_guard:end_guard]
+        self.assertIn("intermuxd.socket", block)
+        self.assertIn("intermuxd.service", block)
+        self.assertIn("intermux-tray.desktop", block)
+        self.assertIn("systemctl --global enable intermuxd.socket", block)
+        # Ensure systemctl --global enable is only within that conditional block
+        self.assertEqual(text.count("systemctl --global enable intermuxd.socket"), 1)
 
 
 class GetInstallScriptTests(unittest.TestCase):
@@ -133,6 +154,61 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("passwordless off --all", fedora)
         self.assertIn("if [ $1 -eq 0 ]", fedora)
         self.assertIn("/usr/lib/intermux/intermux", fedora)
+
+    def test_new_unit_files_and_desktop_file_exist_with_exact_lines(self) -> None:
+        socket_file = ROOT / "packaging/linux/intermuxd.socket"
+        self.assertTrue(socket_file.is_file(), "packaging/linux/intermuxd.socket must exist")
+        socket_text = socket_file.read_text()
+        self.assertIn("[Unit]", socket_text)
+        self.assertIn("Description=InterMux daemon socket", socket_text)
+        self.assertIn("Documentation=https://github.com/Rishi-Bhati/intermux", socket_text)
+        self.assertIn("[Socket]", socket_text)
+        self.assertIn("ListenStream=%t/intermux/daemon.sock", socket_text)
+        self.assertIn("SocketMode=0600", socket_text)
+        self.assertIn("DirectoryMode=0700", socket_text)
+        self.assertIn("[Install]", socket_text)
+        self.assertIn("WantedBy=sockets.target", socket_text)
+
+        service_file = ROOT / "packaging/linux/intermuxd.service"
+        self.assertTrue(service_file.is_file(), "packaging/linux/intermuxd.service must exist")
+        service_text = service_file.read_text()
+        self.assertIn("[Unit]", service_text)
+        self.assertIn("Description=InterMux daemon (watches interfaces and routed apps for the tray and window)", service_text)
+        self.assertIn("Requires=intermuxd.socket", service_text)
+        self.assertIn("After=intermuxd.socket", service_text)
+        self.assertIn("[Service]", service_text)
+        self.assertIn("ExecStart=/usr/lib/intermux/intermuxd", service_text)
+        self.assertIn("Restart=on-failure", service_text)
+        self.assertIn("RestartSec=2", service_text)
+        self.assertIn("[Install]", service_text)
+        self.assertIn("Also=intermuxd.socket", service_text)
+
+        desktop_file = ROOT / "packaging/linux/intermux-tray.desktop"
+        self.assertTrue(desktop_file.is_file(), "packaging/linux/intermux-tray.desktop must exist")
+        desktop_text = desktop_file.read_text()
+        self.assertIn("Type=Application", desktop_text)
+        self.assertIn("Name=InterMux tray", desktop_text)
+        self.assertIn("Comment=Status and quick controls for InterMux", desktop_text)
+        self.assertIn("Exec=/usr/lib/intermux/intermux-tray", desktop_text)
+        self.assertIn("Icon=intermux", desktop_text)
+        self.assertIn("Categories=Network;", desktop_text)
+        self.assertIn("Terminal=false", desktop_text)
+
+    def test_build_linux_copies_both_binaries_before_checksum_step(self) -> None:
+        text = (ROOT / ".github/workflows/build_linux.yml").read_text()
+        self.assertIn("intermuxd", text)
+        self.assertIn("intermux-tray", text)
+        idx_daemon = text.index("intermuxd dist/intermux/")
+        idx_tray = text.index("intermux-tray dist/intermux/")
+        idx_checksum = text.index("- name: Package and checksum")
+        self.assertLess(idx_daemon, idx_checksum, "intermuxd copy step must appear before checksum step")
+        self.assertLess(idx_tray, idx_checksum, "intermux-tray copy step must appear before checksum step")
+
+    def test_pkgbuild_has_cargo_in_makedepends(self) -> None:
+        pkgbuild = (ROOT / "packaging/arch/PKGBUILD").read_text()
+        match = re.search(r"makedepends=\(([^)]+)\)", pkgbuild)
+        self.assertIsNotNone(match, "PKGBUILD must define makedepends")
+        self.assertIn("'cargo'", match.group(1))
 
 
 if __name__ == "__main__":
