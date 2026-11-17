@@ -6,7 +6,7 @@ import logging
 import posixpath
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Set
 
 from intermux.errors import InterMuxError, MissingToolError, ValidationError
 from intermux.system import commands
@@ -228,6 +228,50 @@ def move_pids(group_rel: str, pids: Iterable[int]) -> List[int]:
     return [pid for pid in pids if _write_pid(procs_file, pid)]
 
 
+def _create_release_leaf(path: Path) -> bool:
+    """Create just one cgroup below an existing parent, or reuse an existing leaf."""
+    try:
+        if not path.parent.is_dir():
+            return False
+        path.mkdir(mode=0o755)
+    except FileExistsError:
+        return path.is_dir()
+    except OSError as exc:
+        log.debug("cannot create release cgroup %s: %s", path, exc)
+        return False
+    return True
+
+
+def _release_targets(group_rel: str, pid: int, origins: Dict[str, str],
+                     uid: Optional[int]) -> Iterator[Path]:
+    """Yield safe candidates in order, creating fallback leaves only when needed."""
+    own = safe_release_target(origins.get(str(pid)), uid)
+    targets: List[str] = []
+    for origin in ([own] if own is not None else []) + list(origins.values()):
+        target = safe_release_target(origin, uid)
+        if target is not None and target not in targets:
+            targets.append(target)
+    for target in targets:
+        path = Path(CGROUP_ROOT) / target.lstrip("/")
+        if path.is_dir():
+            yield path
+
+    # Empty systemd scopes vanish. Recreate one level; parents with controllers reject pids with EBUSY,
+    # so fall back to a leaf under the user's app.slice rather than putting processes in a parent slice.
+    recreate = own or (targets[0] if targets else None)
+    if recreate is not None:
+        path = Path(CGROUP_ROOT) / recreate.lstrip("/")
+        if not path.is_dir() and _create_release_leaf(path):
+            yield path
+    fallback = safe_release_target(
+        f"/user.slice/user-{uid}.slice/user@{uid}.service/app.slice/"
+        f"intermux-released-{posixpath.basename(group_rel)}", uid)
+    if fallback is not None:
+        path = Path(CGROUP_ROOT) / fallback.lstrip("/")
+        if _create_release_leaf(path):
+            yield path
+
+
 def release_group(group_rel: str, pids: Iterable[int] = (), origins: Optional[Dict[str, str]] = None,
                   uid: Optional[int] = None) -> List[int]:
     """Return members to their owner's original scopes; never escape the user's slice."""
@@ -236,17 +280,14 @@ def release_group(group_rel: str, pids: Iterable[int] = (), origins: Optional[Di
         if pid not in wanted:
             wanted.append(pid)
     origins = origins or {}
-    fallback = next((target for target in (safe_release_target(p, uid) for p in origins.values())
-                     if target is not None), None)
     moved: List[int] = []
     for pid in wanted:
-        target = safe_release_target(origins.get(str(pid)), uid) or fallback
-        if target is None:
-            # Old state has no origins. Staying put is safer than escaping systemd's resource limits.
-            log.info("leaving pid %d in %s: no safe original cgroup", pid, group_rel)
-            continue
-        if _write_pid(Path(CGROUP_ROOT) / target.lstrip("/") / "cgroup.procs", pid):
-            moved.append(pid)
+        for target in _release_targets(group_rel, pid, origins, uid):
+            if _write_pid(target / "cgroup.procs", pid):
+                moved.append(pid)
+                break
+        else:
+            log.warning("leaving pid %d in %s: no writable safe release cgroup", pid, group_rel)
     if read_group_pids_or_none(group_rel) == []:
         try:
             _group_dir(group_rel).rmdir()
