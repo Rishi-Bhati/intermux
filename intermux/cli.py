@@ -126,6 +126,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_off_group = p_off.add_mutually_exclusive_group()
     p_off_group.add_argument("--user", metavar="NAME", help="remove a specific user")
     p_off_group.add_argument("--all", action="store_true", help="remove all users, rule files and the group")
+
+    p = sub.add_parser("events", help="print live events from the InterMux daemon")
+    p.add_argument("--topics", default="interfaces,bindings", metavar="LIST",
+                   help="comma separated list of topics (default: interfaces,bindings)")
+    p.add_argument("--json", action="store_true", help="print raw event objects one per line")
     return parser
 
 
@@ -744,6 +749,56 @@ def _cmd_passwordless(args: argparse.Namespace) -> int:
     return 2
 
 
+def _events_stop_condition() -> bool:
+    """Hook for tests to stop the events loop."""
+    return False
+
+
+# Aliases for patching stop condition in tests
+_stop_condition = _events_stop_condition
+stop_condition = _events_stop_condition
+
+
+def _cmd_events(args: argparse.Namespace) -> int:
+    import json
+    import time
+    from intermux import daemon_client
+
+    if not daemon_client.ensure_daemon():
+        _error("the InterMux daemon is not running and could not be started")
+        return 1
+
+    raw_topics = getattr(args, "topics", "interfaces,bindings") or "interfaces,bindings"
+    topics = [t.strip() for t in raw_topics.split(",") if t.strip()]
+
+    def handle_event(event: str, data: dict) -> None:
+        if getattr(args, "json", False):
+            obj = {"v": 1, "event": event, "data": data}
+            print(json.dumps(obj))
+        else:
+            ts = time.strftime("%H:%M:%S")
+            items = " ".join(f"{k}={v}" for k, v in data.items())
+            if items:
+                print(f"{ts} {event} {items}")
+            else:
+                print(f"{ts} {event}")
+        sys.stdout.flush()
+
+    client = daemon_client.DaemonClient("cli", on_event=handle_event)
+    try:
+        client.connect()
+        client.subscribe(topics)
+        client.start_reconnecting(topics)
+        stop_fn = getattr(args, "stop_condition", None) or _events_stop_condition
+        while not stop_fn():
+            time.sleep(0.05)
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        client.close()
+    return 0
+
+
 _HANDLERS: Dict[str, Handler] = {
     "interfaces": _cmd_interfaces,
     "apps": _cmd_apps,
@@ -765,4 +820,5 @@ _HANDLERS: Dict[str, Handler] = {
     "reconnect": _cmd_reconnect,
     "move": _cmd_move,
     "passwordless": _cmd_passwordless,
+    "events": _cmd_events,
 }

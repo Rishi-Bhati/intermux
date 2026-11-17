@@ -453,5 +453,64 @@ while True:
                     pass
 
 
+class TestCLIEvents(unittest.TestCase):
+    """Test suite for 'intermux events' CLI sub-command."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.daemon = FakeDaemon(self.temp_dir.name)
+
+    def tearDown(self) -> None:
+        self.daemon.close()
+        self.temp_dir.cleanup()
+
+    def test_cli_events_json_output(self) -> None:
+        """intermux events --json prints one JSON object per event from the daemon."""
+        with mock.patch("intermux.daemon_client.socket_path", return_value=self.daemon.sock_path):
+            with mock.patch("intermux.daemon_client.ensure_daemon", return_value=True):
+                events_printed: list[str] = []
+                stop_signal = threading.Event()
+
+                def fake_stop() -> bool:
+                    return stop_signal.is_set()
+
+                # Send an event after a brief delay
+                def send_delayed() -> None:
+                    time.sleep(0.15)
+                    self.daemon.send_event("interface.added", {"name": "wlan0"})
+                    # Wait for event to be processed then signal stop
+                    time.sleep(0.2)
+                    stop_signal.set()
+
+                t = threading.Thread(target=send_delayed)
+                t.start()
+
+                stdout_buf = io.StringIO()
+                with mock.patch("sys.stdout", stdout_buf):
+                    with mock.patch("intermux.cli._events_stop_condition", side_effect=fake_stop):
+                        ret = cli.main(["events", "--json", "--topics", "interfaces"])
+
+                t.join(timeout=2.0)
+                self.assertEqual(ret, 0)
+
+                output = stdout_buf.getvalue().strip()
+                lines = [l for l in output.splitlines() if l.strip()]
+                self.assertTrue(len(lines) >= 1)
+
+                parsed = json.loads(lines[0])
+                self.assertEqual(parsed.get("v"), 1)
+                self.assertEqual(parsed.get("event"), "interface.added")
+                self.assertEqual(parsed.get("data"), {"name": "wlan0"})
+
+    def test_cli_events_daemon_unavailable(self) -> None:
+        """intermux events reports error and returns 1 if daemon is not running."""
+        with mock.patch("intermux.daemon_client.ensure_daemon", return_value=False):
+            stderr_buf = io.StringIO()
+            with mock.patch("sys.stderr", stderr_buf):
+                ret = cli.main(["events"])
+            self.assertEqual(ret, 1)
+            self.assertIn("the InterMux daemon is not running and could not be started", stderr_buf.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
