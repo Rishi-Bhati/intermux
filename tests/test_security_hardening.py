@@ -312,7 +312,9 @@ class F2OwnershipTests(unittest.TestCase):
         self.assertEqual(engine.binding_owner(_binding(uid=OTHER_UID, pid=_dead_pid())), OTHER_UID)
 
     def test_without_uid_the_live_pid_gives_the_owner(self):
-        self.assertEqual(engine.binding_owner(_binding(pid=os.getpid())), os.getuid())
+        inode = os.stat("/proc/self/ns/net").st_ino
+        with mock.patch.object(engine.procs, "netns_inode", return_value=inode):
+            self.assertEqual(engine.binding_owner(_binding(pid=os.getpid())), os.getuid())
 
     def test_without_uid_and_a_dead_pid_nobody_owns_it(self):
         self.assertIsNone(engine.binding_owner(_binding(pid=_dead_pid())))
@@ -339,6 +341,7 @@ class F2OwnershipTests(unittest.TestCase):
     def test_stop_app_refuses_an_owner_found_from_a_live_pid(self):
         st = state.State(bindings=[_binding(pid=os.getpid())])
         terminate = self._stop_patches(st)
+        _patch(self, engine.procs, "netns_inode", return_value=os.stat("/proc/self/ns/net").st_ino)
         with self.assertRaises(PermissionDeniedError):
             engine.stop_app("wlan0", "/usr/bin/x", uid=os.getuid() + 1)
         terminate.assert_not_called()

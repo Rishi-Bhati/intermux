@@ -74,6 +74,42 @@ class HelperOwnershipPathsTests(unittest.TestCase):
 
 
 class InterfaceOwnershipPathsTests(unittest.TestCase):
+    def test_legacy_binding_owner_requires_the_recorded_namespace(self):
+        b = _binding(None)
+        b.pid = 123
+        for inode, expected in ((77, USER.uid), (88, None), (None, None)):
+            with self.subTest(inode=inode), \
+                    mock.patch.object(engine.procs, "_status_ids", return_value=(1, USER.uid)), \
+                    mock.patch.object(engine.procs, "_netns", return_value=inode), \
+                    mock.patch.object(engine.procs, "netns_inode", return_value=77):
+                self.assertEqual(engine.binding_owner(b), expected)
+
+    def test_legacy_binding_with_a_missing_namespace_has_no_owner(self):
+        b = _binding(None)
+        b.pid = 123
+        with mock.patch.object(engine.procs, "_status_ids", return_value=(1, USER.uid)), \
+                mock.patch.object(engine.procs, "_netns", return_value=None), \
+                mock.patch.object(engine.procs, "netns_inode", return_value=None):
+            self.assertIsNone(engine.binding_owner(b))
+
+    def test_move_refused_at_destination_leaves_the_source_app_running(self):
+        source = _binding(USER.uid)
+        destination = _binding(2000)
+        destination.iface = "eth0"
+        destination.namespace = netns.namespace_name("eth0")
+        st = state.State(bindings=[source, destination])
+        with mock.patch.object(engine.state, "load_state", return_value=st), \
+                mock.patch.object(engine, "_find_interface", return_value=mock.Mock(bindable=True)), \
+                mock.patch.object(engine, "stop_app", return_value={"stopped": [], "still_running": []}) as stop, \
+                mock.patch.object(engine, "_bind_again", side_effect=PermissionDeniedError("another user")) as bind, \
+                mock.patch.object(engine.state, "save_state") as save:
+            with self.assertRaises(PermissionDeniedError):
+                engine.move_app(source.iface, source.app, destination.iface, user=USER, env={})
+        stop.assert_not_called()
+        bind.assert_not_called()
+        save.assert_not_called()
+        self.assertEqual(st.bindings, [source, destination])
+
     def test_bind_cannot_change_shared_settings_through_a_different_app(self):
         for settings in ({"dns": ["9.9.9.9"]}, {"dns": "auto"}, {"limit": {"down": 5.0, "up": None}}):
             st = state.State(bindings=[_binding(2000)])

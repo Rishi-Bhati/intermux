@@ -293,7 +293,13 @@ def binding_owner(b: state.Binding) -> Optional[int]:
     """Recorded owner, or the real uid of a live launch process for older state."""
     if b.uid is not None:
         return b.uid
-    ids = procs._status_ids(b.pid) if b.pid is not None else None
+    if b.pid is None:
+        return None
+    # Legacy launch pids can be reused; only a process still in the recorded namespace identifies its owner.
+    inode = procs.netns_inode(b.namespace)
+    if inode is None or procs._netns(b.pid) != inode:
+        return None
+    ids = procs._status_ids(b.pid)
     return ids[1] if ids is not None else None
 
 
@@ -510,6 +516,10 @@ def move_app(iface: str, app: str, to: str, *, user: UserInfo, env: Dict[str, st
     if binding is None:
         raise NotFoundError(f"no binding for {app} on {iface}")
     _check_binding_owner(binding, user.uid)
+    destination = st.find_binding(to, app)
+    if destination is not None:
+        _check_binding_owner(destination, user.uid,
+                             "another user is already running this app on this interface")
     target = _find_interface(to)
     if not target.bindable:
         raise ConflictError(f"interface {to} cannot be bound (needs an up IPv4 address and a way out)",
