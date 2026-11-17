@@ -574,7 +574,9 @@ class TestUIAppIntegration(unittest.TestCase):
         """main() exits 0 without creating Tk window if daemon reports raised=true."""
         self.daemon.gui_raised = True
 
-        with mock.patch("intermux.daemon_client.socket_path", return_value=self.daemon.sock_path):
+        # main() refuses to run as root, and CI containers run the suite as root.
+        with mock.patch("intermux.daemon_client.socket_path", return_value=self.daemon.sock_path), \
+                mock.patch.object(ui_app.os, "geteuid", return_value=1000):
             with mock.patch("os.path.exists", return_value=True):
                 with mock.patch("tkinter.Tk", side_effect=AssertionError("tk.Tk should not be called")):
                     stdout_buf = io.StringIO()
