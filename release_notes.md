@@ -1,5 +1,54 @@
 # InterMux Release Notes
 
+## v2.2.0 — No more password prompts (opt-in)
+
+InterMux 2.2 can make its network changes without asking for your password, if you turn that on. It is off by default, and the root helper is tightened so that users on a shared computer cannot change each other's apps.
+
+### What's new
+
+* **Don't ask for my password (opt-in).** When it is on, InterMux makes its changes without a password prompt,
+  from your own local, active session. SSH and other inactive sessions still get the prompt. It takes effect at
+  once, with no need to log in again.
+* **The installers ask once.** `install.sh` and the one-line installer ask "Don't ask for your password for
+  InterMux? [y/N]". The default is no. `--passwordless` and `--no-passwordless` answer it in advance.
+* **A reminder in the window.** The window header shows "No password prompts" while the mode is on for you.
+
+The trade-off: a program running as you can then make InterMux changes without asking, such as binding an app
+or changing DNS. It does not get root, and it cannot change this setting, which needs sudo.
+
+### Security
+
+* **Released apps stay under your limits.** Releasing an already running app returns its processes to their own
+  place in the system's process tree, not the top level, so the limits set for your user keep applying.
+* **Users cannot touch each other's apps.** On a shared computer, one user can no longer stop, restart, move or
+  replace another user's apps, or change the DNS or speed limit of an interface that another user's apps use.
+* **Safer helper files.** The helper sets its own file permissions, and its lock file and runtime folder are only
+  accessible to root.
+* **Browser profile folders.** InterMux no longer takes over a folder owned by someone else, and Firefox profile
+  lookup no longer checks paths outside your home.
+* **Adoption limit.** At most 20 already-running apps can be shifted per user at a time.
+
+### Turn it on or off
+
+```bash
+sudo intermux passwordless on               # for the user who ran sudo
+sudo intermux passwordless on --user NAME   # for another user
+sudo intermux passwordless off              # for the user who ran sudo
+sudo intermux passwordless off --all        # for everyone, and removes the rule
+intermux passwordless status                # shows whether it is on for you
+```
+
+### Install or update
+
+Run the one-line installer shown in the [README](README.md#quick-install) to install or update:
+`curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh`
+
+To turn passwordless mode on during the install, or to keep it off without the question, add `--passwordless` or
+`--no-passwordless`:
+`curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh -s -- --passwordless`
+
+---
+
 ## v2.1.1 — Fixes
 
 InterMux 2.1.1 is a small bugfix release for the Linux edition.

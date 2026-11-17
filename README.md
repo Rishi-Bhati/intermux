@@ -19,7 +19,7 @@
 
 InterMux lets you choose which network connection each application uses. For example, you can keep a torrent client on Ethernet while your browser uses Wi-Fi or a phone hotspot. It runs each bound application inside its own network namespace and routes that namespace through the interface you pick. A small root helper, gated by polkit, sets up the networking. Your applications always run as your own user, so your profiles and settings are kept.
 
-InterMux has a graphical interface and a command line. Version 2.1.1 is the Linux edition. A separate Windows edition lives in [`windows/`](windows/README.md).
+InterMux has a graphical interface and a command line. Version 2.2.0 is the Linux edition. A separate Windows edition lives in [`windows/`](windows/README.md).
 
 ## Supported platforms
 
@@ -99,9 +99,12 @@ curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/insta
 Run it as your normal user; it asks for your password through `sudo`. It installs any missing system tools with your package manager, downloads the newest release, checks its SHA-256 and installs it. On systems the pre-built bundle does not support (aarch64, glibc older than 2.35, musl) it builds from the tagged source instead. Run the same command again to update. Options go after `sh -s --`:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh -s -- --passwordless
 curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh -s -- --uninstall
 curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh -s -- --version 2.0.1
 ```
+
+`--passwordless` turns on the opt-in mode that skips the password prompt; see [The password prompt](#the-password-prompt).
 
 `--from-source` forces a source build and `--no-deps` skips installing system packages. Without curl, use `wget -qO- <same URL> | sh`. See [`get/README.md`](get/README.md) for details, including the Windows installer.
 
@@ -202,12 +205,30 @@ Run `intermux --help` or `intermux <command> --help` for details. The CLI refuse
 | `reset [--kill-apps] [--yes]` | Remove everything InterMux created. | `intermux reset --kill-apps --yes` |
 | `check` | Report missing dependencies. | `intermux check` |
 | `report [--web] [--out DIR]` | Save a bug report zip (default folder `~/intermux-reports`), or open the reporting portal with `--web`. | `intermux report` |
+| `passwordless on [--user NAME]` | Turn on the opt-in mode that skips the password prompt for members of the `intermux` group (needs sudo). | `sudo intermux passwordless on` |
+| `passwordless off [--user NAME \| --all]` | Turn that mode off for one user, or for everyone (needs sudo). | `sudo intermux passwordless off --all` |
+| `passwordless status [--json]` | Show whether the password prompt is off for you. | `intermux passwordless status` |
 
 `helper` and `watch` also exist, but they are internal commands used by the installed services and are not meant for direct use.
 
 ### The password prompt
 
-Network changes need root. InterMux asks polkit (`pkexec`) to run its helper, and polkit shows a password dialog. The prompt appears once per **Start all** batch, not once per application. The policy requires administrator authentication each time; the authorization is not cached.
+Network changes need root. InterMux asks polkit (`pkexec`) to run its helper, and polkit shows a password dialog. The prompt appears once per **Start all** batch, not once per application. By default the policy requires administrator authentication each time; the authorization is not cached.
+
+#### Don't ask for my password (opt-in)
+
+You can turn the prompt off for your own user. Passwordless mode adds you to a group called `intermux` and installs a polkit rule that lets members of that group run the InterMux helper without a password. It works only from a local, active session: over SSH, or from another session that is not active, you still get the prompt. The change takes effect at once, with no need to log in again, and the window header shows "No password prompts" while it is on for you.
+
+```bash
+sudo intermux passwordless on                # for the user who ran sudo
+sudo intermux passwordless on --user NAME    # for another user
+sudo intermux passwordless off               # turn it off again (add --all for everyone)
+intermux passwordless status                 # shows whether it is on for you
+```
+
+The trade-off: any program running as you can then make InterMux changes without asking, such as binding an app or changing its DNS. It does not get root, and it cannot change this setting, which needs sudo.
+
+The installers ask once after installing: "Don't ask for your password for InterMux? [y/N]". The default is no. To answer in advance, pass `--passwordless` or `--no-passwordless` to `install.sh` (for example `sudo ./install.sh --passwordless`) or to the one-line installer. Uninstalling InterMux, or removing its package, turns the mode off and removes the rule and the group (the group only if InterMux created it).
 
 ## How it works
 
@@ -228,12 +249,14 @@ State is kept in `/var/lib/intermux/state.json`.
 The full policy, including how to report a vulnerability, is in [SECURITY.md](SECURITY.md). In summary:
 
 - The GUI and CLI run as your user and never run root commands themselves.
-- Network changes are made by a helper started with `pkexec`. Polkit action `org.intermux.run` requires administrator authentication for every use.
+- Network changes are made by a helper started with `pkexec`. Polkit action `org.intermux.run` requires administrator authentication for every use, unless you turn on passwordless mode (see [The password prompt](#the-password-prompt)).
 - As root, the binary refuses every command except `helper` and `watch`, and refuses `watch` when started through `pkexec`.
 - The helper checks each request: JSON of at most 1 MiB, known keys and actions only, a strict interface-name pattern, absolute application paths, and an allowlist of environment variables.
 - No shell is used. Every external command is an argument list.
 - Applications run as the invoking user (`runuser -u <you>` with a clean environment), never as root.
 - A namespace isolates routing, not the application. A bound app can still read your files, so do not bind software you do not trust.
+
+Passwordless mode is off by default. When it is on, any program running as you can make InterMux changes without a password, so it is a real trade-off. [SECURITY.md](SECURITY.md) lists what it allows, what it does not allow, the files it installs and how to turn it off.
 
 ## Limitations
 

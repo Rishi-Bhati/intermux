@@ -13,7 +13,7 @@
 # bundled-runtime packages.
 
 Name:           intermux
-Version:        2.1.1
+Version:        2.2.0
 Release:        1%{?dist}
 Summary:        Bind individual applications to specific network interfaces
 License:        MIT
@@ -112,6 +112,8 @@ fi
 %{_presetdir}/90-intermux.preset
 
 %changelog
+* Wed Nov 18 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.2.0-1
+- 2.2.0: opt-in "Don't ask for my password" (sudo intermux passwordless on|off, polkit rule for the intermux group, local active sessions only); installers ask once; security hardening of the root helper
 * Tue Nov 17 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.1.1-1
 - 2.1.1: resize arrows only over the gaps; WireGuard VPNs connect on NetworkManager older than 1.42; DNS check runs in new namespaces with the pre-built bundle
 * Tue Nov 03 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.1.0-1

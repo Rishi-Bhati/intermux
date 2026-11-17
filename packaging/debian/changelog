@@ -1,3 +1,16 @@
+intermux (2.2.0) unstable; urgency=medium
+
+  * 2.2.0: opt-in "Don't ask for my password" through the intermux group and
+    a polkit rule, for local active sessions only; sudo intermux passwordless
+    on|off turns it on or off.
+  * The installers ask once whether to turn it on; --passwordless and
+    --no-passwordless answer the question in advance.
+  * Security hardening of the root helper: released apps return to their own
+    cgroup, users cannot change each other's apps, and helper files get safe
+    modes.
+
+ -- Rishi-Bhati <bhatirishi5@gmail.com>  Wed, 18 Nov 2026 12:00:00 +0530
+
 intermux (2.1.1) unstable; urgency=medium
 
   * 2.1.1: resize arrows only over the gaps between sections.

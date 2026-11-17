@@ -7,6 +7,22 @@ Earlier releases are described in [release_notes.md](release_notes.md).
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-11-18
+
+### Added
+
+- **Don't ask for my password (opt-in).** `sudo intermux passwordless on [--user NAME]` adds your user to a new `intermux` group and installs a polkit rule, so the InterMux helper runs without a password for members of that group. The rule only applies from a local, active session; SSH and other inactive sessions still get the password prompt. `sudo intermux passwordless off [--user NAME | --all]` turns it off, and `intermux passwordless status [--json]` shows whether it is on. The change takes effect at once, without logging in again. Only sudo can change the setting; pkexec cannot. On polkit 0.105 (Ubuntu 22.04) the rule is a `.pkla` file, and on newer polkit it is a JavaScript rule.
+- **Installer question.** `install.sh` and the one-line installer ask "Don't ask for your password for InterMux? [y/N]" once. The default is no. `--passwordless` and `--no-passwordless` answer the question in advance. Uninstalling InterMux or removing its package turns the mode off and removes the rule, the marker and the group, the group only if InterMux created it.
+- **Status in the window.** The window header shows "No password prompts" while the mode is on for your user.
+
+### Security
+
+- **Released apps stay under your limits.** Releasing an already running app ("Shift current session" → Release, Reset, or when it exits) returns its processes to their own place in the system's process tree instead of the top level, so the limits set for your user keep applying.
+- **Other users' apps are protected.** On a computer with several users, one user can no longer stop, restart, move or replace another user's routed apps, or change the DNS or speed limit of an interface that another user's apps use. Reset by a user only removes that user's things and keeps interfaces that other users still use.
+- **Safer helper files.** The helper sets its own file permissions and writes namespace DNS files without following symlinks. Its lock file and runtime folder are only accessible to root.
+- **Browser profile folders.** InterMux no longer takes over a folder owned by someone else, and Firefox profile lookup no longer checks paths outside your home.
+- **Adoption limit.** At most 20 already-running apps can be shifted per user at a time.
+
 ## [2.1.1] — 2026-11-17
 
 ### Fixed
