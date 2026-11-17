@@ -1,0 +1,302 @@
+[
+  {
+    "ifname": "lo",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "eth0",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "wlan0",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "wifi2",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "enusb0",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "wwan0",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "bnep0",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "wg0",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UNKNOWN",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "tun0",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UNKNOWN",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "tap0",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UNKNOWN",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "ppp0",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UNKNOWN",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "customtun",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UNKNOWN",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "nordlynx",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UNKNOWN",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "customppp",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UNKNOWN",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "tailscale0",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "veth0_abcd1234",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "br-test",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "docker0",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "virbr0",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "vmnet1",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "vboxnet0",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "eth1",
+    "flags": [
+      "BROADCAST"
+    ],
+    "operstate": "DOWN",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "eth2",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "LOWERLAYERDOWN",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "wg1",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UNKNOWN",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "eno3",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": 1500,
+    "address": "02:00:00:00:00:01"
+  },
+  {
+    "ifname": "odd0",
+    "flags": [
+      "BROADCAST",
+      "UP",
+      42
+    ],
+    "operstate": "UP",
+    "mtu": "1500",
+    "address": "02:00:00:00:00:01"
+  },
+  null,
+  17,
+  {},
+  {
+    "ifname": ""
+  },
+  {
+    "ifname": 42
+  },
+  {
+    "ifname": "ethplain",
+    "flags": [
+      "UP"
+    ],
+    "operstate": "UP"
+  }
+]

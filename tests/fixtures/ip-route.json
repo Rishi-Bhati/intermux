@@ -1,0 +1,82 @@
+[
+  {
+    "dst": "default",
+    "dev": "lo",
+    "gateway": "192.0.2.254"
+  },
+  {
+    "dst": "default",
+    "dev": "eth0",
+    "gateway": "192.0.2.254"
+  },
+  {
+    "dst": "default",
+    "dev": "wlan0",
+    "gateway": "192.0.2.254"
+  },
+  {
+    "dst": "0.0.0.0/0",
+    "dev": "enusb0",
+    "gateway": "192.0.2.254"
+  },
+  {
+    "dst": "default",
+    "dev": "wwan0",
+    "gateway": "192.0.2.254"
+  },
+  {
+    "dst": "default",
+    "dev": "bnep0",
+    "gateway": "192.0.2.254"
+  },
+  {
+    "dst": "default",
+    "dev": "veth0_abcd1234",
+    "gateway": "192.0.2.254"
+  },
+  {
+    "dst": "default",
+    "dev": "br-test",
+    "gateway": "192.0.2.254"
+  },
+  {
+    "dst": "default",
+    "dev": "docker0",
+    "gateway": "192.0.2.254"
+  },
+  {
+    "dst": "default",
+    "dev": "virbr0",
+    "gateway": "192.0.2.254"
+  },
+  {
+    "dst": "default",
+    "dev": "vmnet1",
+    "gateway": "192.0.2.254"
+  },
+  {
+    "dst": "default",
+    "dev": "vboxnet0",
+    "gateway": "192.0.2.254"
+  },
+  null,
+  {
+    "dst": "default",
+    "dev": "eth0",
+    "gateway": "192.0.2.254"
+  },
+  {
+    "dst": "default",
+    "dev": "wg0",
+    "gateway": "2001:db8::1"
+  },
+  {
+    "dst": "10.0.0.0/8",
+    "dev": "eno3",
+    "gateway": "192.0.2.254"
+  },
+  {
+    "dst": "default",
+    "gateway": "192.0.2.254"
+  }
+]

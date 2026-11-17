@@ -28,3 +28,6 @@ dist/intermux/
 # OS
 .DS_Store
 Thumbs.db
+
+# Rust build artifacts
+rust/target/
