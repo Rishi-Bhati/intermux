@@ -100,8 +100,14 @@ def default_profile_dir(home: str) -> Optional[Path]:
             log.warning("not reading %s: %s", ini, exc)
             return None
         profile = parse_default_profile(raw.decode("utf-8", errors="replace"), root)
-        if profile is None or not profile.is_dir():
+        if profile is None:
             return None
+        try:
+            # The INI is user-controlled: check containment before probing a profile as root.
+            fd = safefs.open_dir_nofollow(str(profile), home)
+        except (OSError, ValidationError):
+            return None
+        os.close(fd)
         return profile
     return None
 
