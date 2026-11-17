@@ -48,6 +48,26 @@ jobs:
       - name: Run namespace integration tests as root
         run: sudo -E env INTERMUX_INTEGRATION=1 python3 -m unittest tests.test_netns_integration -v
 
+  rust:
+    name: Rust (daemon and tray)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4  # TODO: pin to a commit SHA
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable  # TODO: pin to a commit SHA
+        with:
+          components: clippy
+
+      - name: Run Cargo test
+        working-directory: rust
+        run: cargo test --locked
+
+      - name: Run Clippy
+        working-directory: rust
+        run: cargo clippy --locked --all-targets -- -D warnings
+
   packaging-lint:
     name: Packaging lint
     runs-on: ubuntu-22.04
@@ -70,4 +90,4 @@ jobs:
           shellcheck -s sh get/install.sh
 
       - name: Desktop entry
-        run: desktop-file-validate packaging/linux/intermux.desktop
+        run: desktop-file-validate packaging/linux/intermux.desktop packaging/linux/intermux-tray.desktop
