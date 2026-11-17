@@ -41,6 +41,7 @@ UNPACKED=""
 ARCHIVE=""
 TAG=""
 APT_UPDATED=0
+PASSWORDLESS=""
 
 # ---------------------------------------------------------------- output
 
@@ -71,6 +72,8 @@ Options:
   --version X.Y.Z   Install this release instead of the newest one
   --from-source     Build from the tagged source instead of using the prebuilt bundle
   --no-deps         Do not install missing system packages
+  --passwordless    Opt in to passwordless mode without prompting
+  --no-passwordless Keep password prompts on without prompting
   --uninstall       Remove InterMux (resets bindings and stops routed apps first)
   -h, --help        Show this help
 EOF
@@ -456,7 +459,18 @@ do_install() {
     else
         say "Installing"
     fi
-    as_root bash "$_dir/install.sh" || die "install.sh failed (see the messages above)."
+    _pw_flag=""
+    if [ "$PASSWORDLESS" = "yes" ]; then
+        _pw_flag="--passwordless"
+    elif [ "$PASSWORDLESS" = "no" ]; then
+        _pw_flag="--no-passwordless"
+    fi
+
+    if [ -n "$_pw_flag" ]; then
+        as_root bash "$_dir/install.sh" "$_pw_flag" || die "install.sh failed (see the messages above)."
+    else
+        as_root bash "$_dir/install.sh" || die "install.sh failed (see the messages above)."
+    fi
 
     printf '\n'
     ok "${C_BOLD}InterMux $_new is installed.${C_RESET}"
@@ -490,6 +504,8 @@ main() {
             --version=*) VERSION="${1#*=}" ;;
             --from-source) FROM_SOURCE=1 ;;
             --no-deps) INSTALL_DEPS=0 ;;
+            --passwordless) PASSWORDLESS="yes" ;;
+            --no-passwordless) PASSWORDLESS="no" ;;
             --uninstall) UNINSTALL=1 ;;
             -h|--help) usage; exit 0 ;;
             *) usage >&2; die "Unknown option: $1" ;;

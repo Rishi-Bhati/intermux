@@ -34,6 +34,7 @@ STAGE_TMP=""
 ALLOW_LOCAL_BUNDLE=0
 EXPECT_SHA256=""
 WATCHER_OK=0
+PASSWORDLESS=""
 
 info() { printf '[+] %s\n' "$*"; }
 ok()   { printf '[✓] %s\n' "$*"; }
@@ -249,6 +250,67 @@ verify_install_lib() {
     fi
 }
 
+setup_passwordless() {
+    if [ "$PASSWORDLESS" = "no" ]; then
+        return 0
+    fi
+
+    if [ "$PASSWORDLESS" = "yes" ]; then
+        if [ -z "${SUDO_USER:-}" ] || [ "$SUDO_USER" = "root" ]; then
+            warn "skipping passwordless: run with sudo from your user account"
+            return 0
+        fi
+        "$INSTALL_LIB/intermux" passwordless on --user "$SUDO_USER" || warn "could not enable passwordless mode"
+        return 0
+    fi
+
+    # Neither flag: ask the user if SUDO_USER is a normal user, interactive terminal is available,
+    # and passwordless is not already enabled for them.
+    if [ -z "${SUDO_USER:-}" ] || [ "$SUDO_USER" = "root" ]; then
+        return 0
+    fi
+
+    local status_json=""
+    if command -v runuser >/dev/null 2>&1; then
+        status_json="$(runuser -u "$SUDO_USER" -- "$INSTALL_LIB/intermux" passwordless status --json 2>/dev/null || true)"
+    else
+        status_json="$(sudo -u "$SUDO_USER" -- "$INSTALL_LIB/intermux" passwordless status --json 2>/dev/null || true)"
+    fi
+
+    if [ -n "$status_json" ] && echo "$status_json" | grep -q '"enabled": *true'; then
+        return 0
+    fi
+
+    if [ ! -r /dev/tty ]; then
+        info "Password prompts stay on. To turn them off: sudo intermux passwordless on"
+        return 0
+    fi
+
+    cat <<'EOF'
+Don't ask for your password for InterMux? [y/N]
+  If you answer yes, you are added to the "intermux" group and InterMux can bind
+  apps, change DNS and speed limits, and stop apps without asking for your
+  password. Any program running as you could then make those InterMux changes
+  too, but nothing more: it does not get root.
+  Change it later: sudo intermux passwordless on | off
+EOF
+
+    local answer=""
+    if ! read -r answer </dev/tty 2>/dev/null; then
+        info "Password prompts stay on. To turn them off: sudo intermux passwordless on"
+        return 0
+    fi
+
+    case "$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')" in
+        y|yes)
+            "$INSTALL_LIB/intermux" passwordless on --user "$SUDO_USER" || warn "could not enable passwordless mode"
+            ;;
+        *)
+            info "Password prompts stay on. To turn them off: sudo intermux passwordless on"
+            ;;
+    esac
+}
+
 install_files() {
     local src="$1"
 
@@ -313,10 +375,12 @@ install_files() {
     if command -v gtk-update-icon-cache >/dev/null 2>&1; then
         gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || warn "gtk-update-icon-cache failed"
     fi
+
+    setup_passwordless
 }
 
 usage() {
-    echo "Usage: sudo ./install.sh [--allow-local-bundle] [--bundle-sha256 HEX]"
+    echo "Usage: sudo ./install.sh [--allow-local-bundle] [--bundle-sha256 HEX] [--passwordless] [--no-passwordless]"
 }
 
 main() {
@@ -326,6 +390,8 @@ main() {
             --bundle-sha256)
                 [ "$#" -ge 2 ] || die "--bundle-sha256 needs a value"
                 EXPECT_SHA256="$2"; shift ;;
+            --passwordless) PASSWORDLESS="yes" ;;
+            --no-passwordless) PASSWORDLESS="no" ;;
             -h|--help) usage; exit 0 ;;
             *) usage >&2; die "Unknown option: $1" ;;
         esac

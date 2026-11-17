@@ -12,6 +12,9 @@ readonly ICON_FILE="/usr/share/icons/hicolor/scalable/apps/intermux.svg"
 readonly METAINFO_FILE="/usr/share/metainfo/org.intermux.InterMux.metainfo.xml"
 readonly STATE_DIR="/var/lib/intermux"
 readonly RUN_DIR="/run/intermux"
+readonly POLKIT_RULE="/etc/polkit-1/rules.d/49-intermux-passwordless.rules"
+readonly POLKIT_PKLA="/etc/polkit-1/localauthority/50-local.d/49-intermux-passwordless.pkla"
+readonly PASSWORDLESS_MARKER="/var/lib/intermux/passwordless.json"
 
 info() { printf '[+] %s\n' "$*"; }
 ok()   { printf '[✓] %s\n' "$*"; }
@@ -48,6 +51,20 @@ main() {
         fi
     else
         warn "$INSTALL_LIB/intermux not found; skipping 'intermux reset'"
+    fi
+
+    local group_created=0
+    if [ -f "$PASSWORDLESS_MARKER" ] && grep -q '"group_created": *true' "$PASSWORDLESS_MARKER" 2>/dev/null; then
+        group_created=1
+    fi
+
+    if [ -x "$INSTALL_LIB/intermux" ]; then
+        "$INSTALL_LIB/intermux" passwordless off --all || warn "could not disable passwordless mode"
+    fi
+
+    rm -f -- "$POLKIT_RULE" "$POLKIT_PKLA" "$PASSWORDLESS_MARKER"
+    if [ "$group_created" -eq 1 ] && getent group intermux >/dev/null 2>&1; then
+        groupdel intermux || warn "could not remove intermux group"
     fi
 
     info "Removing installed files"

@@ -1,0 +1,13 @@
+#!/bin/sh
+# Tear down passwordless polkit rules and group membership before files are removed.
+set -e
+
+case "$1" in
+    remove|purge)
+        [ -x /usr/lib/intermux/intermux ] && /usr/lib/intermux/intermux passwordless off --all || true
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

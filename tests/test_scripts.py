@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import unittest
 from pathlib import Path
@@ -25,6 +26,52 @@ class UninstallScriptTests(unittest.TestCase):
         # intermux/__main__.py refuses CLI commands as root, so `intermux reset` would always fail here.
         text = (ROOT / "uninstall.sh").read_text()
         self.assertNotRegex(text, r'"\$INSTALL_BIN" reset')
+
+    def test_uninstall_calls_passwordless_off_before_removing_bundle(self) -> None:
+        text = (ROOT / "uninstall.sh").read_text()
+        self.assertIn("passwordless off --all", text)
+        self.assertIn('rm -rf -- "$INSTALL_LIB"', text)
+        idx_pw = text.index("passwordless off --all")
+        idx_rm = text.index('rm -rf -- "$INSTALL_LIB"')
+        self.assertLess(idx_pw, idx_rm, "uninstall.sh must call passwordless off --all before removing $INSTALL_LIB")
+
+    def test_uninstall_removes_both_rule_paths_and_marker(self) -> None:
+        text = (ROOT / "uninstall.sh").read_text()
+        js_rule = "/etc/polkit-1/rules.d/49-intermux-passwordless.rules"
+        pkla = "/etc/polkit-1/localauthority/50-local.d/49-intermux-passwordless.pkla"
+        marker = "/var/lib/intermux/passwordless.json"
+        self.assertIn(js_rule, text)
+        self.assertIn(pkla, text)
+        self.assertIn(marker, text)
+        self.assertIn('rm -f -- "$POLKIT_RULE" "$POLKIT_PKLA" "$PASSWORDLESS_MARKER"', text)
+
+
+class InstallScriptTests(unittest.TestCase):
+    def test_install_script_flags_and_passwordless_command(self) -> None:
+        text = (ROOT / "install.sh").read_text()
+        self.assertIn("--passwordless", text)
+        self.assertIn("--no-passwordless", text)
+        self.assertIn('passwordless on --user "$SUDO_USER"', text)
+
+    def test_install_script_question_reads_from_tty(self) -> None:
+        text = (ROOT / "install.sh").read_text()
+        self.assertIn("read -r answer </dev/tty", text)
+        self.assertIn("Don't ask for your password for InterMux? [y/N]", text)
+        self.assertIn("/dev/tty", text)
+
+
+class GetInstallScriptTests(unittest.TestCase):
+    def test_get_install_accepts_and_forwards_both_flags(self) -> None:
+        text = (ROOT / "get/install.sh").read_text()
+        self.assertIn("--passwordless", text)
+        self.assertIn("--no-passwordless", text)
+        self.assertIn('as_root bash "$_dir/install.sh" "$_pw_flag"', text)
+
+    def test_get_install_has_no_bashisms(self) -> None:
+        text = (ROOT / "get/install.sh").read_text()
+        self.assertNotIn("[[", text)
+        self.assertNotIn("function ", text)
+        self.assertNotIn("local ", text)
 
 
 class PackagingTests(unittest.TestCase):
@@ -68,6 +115,24 @@ class PackagingTests(unittest.TestCase):
         text = (ROOT / ".github/workflows/build_linux.yml").read_text()
         for needle in ("install.sh", "uninstall.sh", "README.md", "packaging/linux", "README-install.txt"):
             self.assertIn(needle, text)
+
+    def test_debian_prerm_exists_executable_and_calls_passwordless_off(self) -> None:
+        prerm = ROOT / "packaging/debian/prerm"
+        self.assertTrue(prerm.is_file(), "packaging/debian/prerm must exist")
+        self.assertTrue(os.access(prerm, os.X_OK), "packaging/debian/prerm must be executable")
+        text = prerm.read_text()
+        self.assertIn("passwordless off --all", text)
+        self.assertIn("/usr/lib/intermux/intermux", text)
+
+    def test_arch_and_fedora_hooks_call_passwordless_off(self) -> None:
+        arch = (ROOT / "packaging/arch/intermux.install").read_text()
+        self.assertIn("passwordless off --all", arch)
+        self.assertIn("/usr/lib/intermux/intermux", arch)
+
+        fedora = (ROOT / "packaging/fedora/intermux.spec").read_text()
+        self.assertIn("passwordless off --all", fedora)
+        self.assertIn("if [ $1 -eq 0 ]", fedora)
+        self.assertIn("/usr/lib/intermux/intermux", fedora)
 
 
 if __name__ == "__main__":

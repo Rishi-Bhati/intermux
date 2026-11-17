@@ -90,6 +90,9 @@ appstreamcli validate --no-net \
 /usr/bin/gtk-update-icon-cache -q -t -f %{_datadir}/icons/hicolor >/dev/null 2>&1 || :
 
 %preun
+if [ $1 -eq 0 ]; then
+    [ -x /usr/lib/intermux/intermux ] && /usr/lib/intermux/intermux passwordless off --all >/dev/null 2>&1 || true
+fi
 %systemd_preun intermux-watch.service
 
 %postun

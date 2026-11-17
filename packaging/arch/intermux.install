@@ -10,6 +10,7 @@ post_upgrade() {
 }
 
 pre_remove() {
+    [ -x /usr/lib/intermux/intermux ] && /usr/lib/intermux/intermux passwordless off --all >/dev/null 2>&1 || true
     systemctl disable --now intermux-watch.service >/dev/null 2>&1 || true
 }
 
