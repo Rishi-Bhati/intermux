@@ -248,10 +248,12 @@ resolve_tag() {
     case "$TAG" in
         linux-v*) return 0 ;;
     esac
-    # Fallback (wget, or a non-Linux release marked latest): newest linux-v* tag from the API.
+    # Fallback (wget, or a non-Linux release marked latest): newest linux-v* tag from the API, skipping
+    # pre-releases such as linux-v3.0.0-beta.1 (they are only installed with --version).
     TAG="$(fetch "$API_URL/releases?per_page=30" 2>/dev/null \
         | tr ',' '\n' \
         | sed -n 's/.*"tag_name": *"\(linux-v[^"]*\)".*/\1/p' \
+        | grep -v -e '^linux-v[0-9.]*-' \
         | head -n1)" || TAG=""
     [ -n "$TAG" ] || die "Could not find the newest InterMux release. Try again, or pass --version X.Y.Z."
 }
