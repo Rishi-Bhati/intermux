@@ -64,7 +64,7 @@ def parse_pkaction_version(text: str) -> Optional[Tuple[int, ...]]:
 
 def detect_backend() -> str:
     """Detect whether to use polkit JavaScript rules or pkla files."""
-    res = commands.run(["pkaction", "--version"])
+    res = commands.run(["pkaction", "--version"], tolerate=("command not found",))
     if res.ok:
         ver = parse_pkaction_version(res.stdout or res.stderr)
         if ver is not None:
@@ -288,7 +288,8 @@ def disable(user: Optional[str] = None, all_users: bool = False) -> List[str]:
 
         if group_exists:
             if shutil.which("gpasswd"):
-                commands.run_checked(["gpasswd", "-d", user, GROUP])
+                # Not being a member is fine: "off" is idempotent.
+                commands.run_checked(["gpasswd", "-d", user, GROUP], tolerate=("is not a member",))
             elif shutil.which("usermod"):
                 commands.run_checked(["usermod", "-rG", GROUP, user])
             else:
