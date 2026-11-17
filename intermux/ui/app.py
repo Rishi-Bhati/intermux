@@ -603,6 +603,7 @@ class InterMuxApp:
         self.limit_down_var = tk.StringVar(root, value="")
         self.limit_up_var = tk.StringVar(root, value="")
         self.session_var = tk.StringVar(root, value="Detecting session")
+        self.passwordless_var = tk.StringVar(root, value="")
         self.status_var = tk.StringVar(root, value="")
         self.hint_var = tk.StringVar(root, value="")
         self.app_hint_var = tk.StringVar(root, value="")
@@ -621,6 +622,7 @@ class InterMuxApp:
         root.bind("<F5>", lambda _e: self.refresh_all())
         root.bind("<Delete>", lambda _e: self._on_delete_key())
 
+        self._update_passwordless()
         self.refresh_all()
         self.worker.submit(_icon_scan_task, on_done=self._on_icon_scan)
         self._schedule_auto_refresh()
@@ -638,6 +640,9 @@ class InterMuxApp:
         header.grid(row=0, column=0, sticky="ew", padx=pad, pady=(18, 14))
         ttk.Label(header, text="InterMux", style="Title.TLabel").pack(side="left")
         ttk.Label(header, text=config.VERSION, style="Muted.TLabel").pack(side="left", padx=(8, 0))
+        pw_label = ttk.Label(header, textvariable=self.passwordless_var, style="Muted.TLabel")
+        pw_label.pack(side="left", padx=(8, 0))
+        Tooltip(pw_label, "You are in the intermux group, so InterMux changes run without a password. Turn off: sudo intermux passwordless off")
         ttk.Label(header, textvariable=self.session_var, style="Muted.TLabel").pack(
             side="left", padx=(theme.SPACE_CARD_GAP, 0))
         ttk.Button(header, text="Refresh", style="Small.Secondary.TButton", command=self.refresh_all).pack(
@@ -1066,8 +1071,17 @@ class InterMuxApp:
 
     # -- refresh --------------------------------------------------------
 
+    def _update_passwordless(self) -> None:
+        try:
+            from intermux.system import passwordless
+
+            self.passwordless_var.set("No password prompts" if passwordless.status().get("enabled") else "")
+        except Exception:
+            self.passwordless_var.set("")
+
     def refresh_all(self) -> None:
         """Re-detect the session and tools, then re-read interfaces and bindings."""
+        self._update_passwordless()
         self.worker.submit(_environment_task, on_done=self._on_environment)
         self.refresh_snapshot()
 
