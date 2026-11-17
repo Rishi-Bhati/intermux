@@ -97,3 +97,36 @@ is exercised through a small Python launcher. Runtime dependencies are Tokio,
 Serde/serde_json, nix, inotify, netlink-sys/netlink-packet-route and
 netlink-packet-core, log/env_logger, and md5. MD5 only reproduces Python's
 stable interface-to-veth name mapping.
+
+# intermux-tray
+
+The per-user StatusNotifierItem tray (`ksni` over `zbus`; no GTK). Its menu is
+the compact view: interfaces with state and speed, this user's apps with
+Restart/Stop (adoptions: Release), speed-limit presets, Open InterMux, Start at
+sign-in and Quit. It reads everything from the daemon and sends every change to
+`pkexec /usr/lib/intermux/intermux helper` off the UI thread. It never runs as
+root. `intermux-tray --version` prints the version; logs go to stderr
+(`RUST_LOG`).
+
+One instance per user (`flock` on `$XDG_RUNTIME_DIR/intermux/tray.lock`).
+When no `org.kde.StatusNotifierWatcher` exists (stock GNOME) it sends one
+notification and keeps running for notifications. It registers when a watcher
+appears later. Idle uses SNI status `Active` rather than `Passive`, because some
+hosts hide `Passive` items completely. Attention (a link with this user's apps
+is not `connected`) uses `NeedsAttention` and an amber overlay dot.
+
+Development overrides:
+
+| Variable | Default |
+|---|---|
+| `INTERMUX_DAEMON_SOCKET` | `$XDG_RUNTIME_DIR/intermux/daemon.sock` |
+| `INTERMUX_DAEMON` | `/usr/lib/intermux/intermuxd` (started if the socket does not answer) |
+| `INTERMUX_HELPER` | `/usr/lib/intermux/intermux` (run through pkexec) |
+
+Smoke test against a private daemon, without the real helper:
+
+```sh
+XDG_RUNTIME_DIR=/tmp/t target/release/intermuxd --socket /tmp/t/d.sock &
+XDG_RUNTIME_DIR=/tmp/t INTERMUX_DAEMON_SOCKET=/tmp/t/d.sock INTERMUX_HELPER=/bin/false \
+  target/release/intermux-tray
+```
