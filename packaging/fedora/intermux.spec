@@ -13,7 +13,7 @@
 # bundled-runtime packages.
 
 Name:           intermux
-Version:        2.1.0
+Version:        2.1.1
 Release:        1%{?dist}
 Summary:        Bind individual applications to specific network interfaces
 License:        MIT
@@ -109,6 +109,8 @@ appstreamcli validate --no-net \
 %{_presetdir}/90-intermux.preset
 
 %changelog
+* Tue Nov 17 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.1.1-1
+- 2.1.1: resize arrows only over the gaps; WireGuard VPNs connect on NetworkManager older than 1.42; DNS check runs in new namespaces with the pre-built bundle
 * Tue Nov 03 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.1.0-1
 - 2.1.0: new main window with tables and inline speed graphs; DNS per interface with custom servers; speed limits; VPN connections from the app; shifted apps keep DNS, reject IPv6 at once and accept replies under strict rp_filter; firewalld trusts each namespace link
 * Tue Oct 13 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.0.1-1

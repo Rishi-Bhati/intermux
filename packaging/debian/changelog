@@ -1,3 +1,11 @@
+intermux (2.1.1) unstable; urgency=medium
+
+  * 2.1.1: resize arrows only over the gaps between sections.
+  * WireGuard VPNs connect on NetworkManager older than 1.42.
+  * The DNS check runs in new namespaces with the pre-built bundle.
+
+ -- Rishi-Bhati <bhatirishi5@gmail.com>  Tue, 17 Nov 2026 12:00:00 +0530
+
 intermux (2.1.0) unstable; urgency=medium
 
   * 2.1.0: new main window with tables and inline speed graphs.

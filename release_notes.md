@@ -1,5 +1,30 @@
 # InterMux Release Notes
 
+## v2.1.1 — Fixes
+
+InterMux 2.1.1 is a small bugfix release for the Linux edition.
+
+### Fixes
+
+* **Resize arrows only over the gaps.** The up/down and left/right resize arrows no longer appear over the
+  New binding, Queue and Bindings boxes. They show only over the gaps you can drag.
+* **WireGuard VPNs on older NetworkManager.** Connecting a WireGuard VPN with "Only for apps I route through
+  it" ticked failed on NetworkManager older than 1.42, such as the 1.36 in Ubuntu 22.04. It connects now, and
+  the VPN still never becomes the system's default route.
+* **DNS check in new namespaces.** The pre-built bundle skipped the check of which DNS servers answer from
+  inside a new namespace, so the servers were used unchecked. The check now runs there too.
+
+Speed limits and VPN tunnel routing were re-tested end to end for this release: speed caps measured accurate from
+0.5 to 1000 Mbit/s in both directions, and an app bound to a WireGuard tunnel used the tunnel, its DNS worked, and
+nothing leaked onto the normal route while the tunnel was down.
+
+### Install or update
+
+Run the one-line installer shown in the [README](README.md#quick-install) to install or update:
+`curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh`
+
+---
+
 ## v2.1.0 — New window, DNS and speed limits
 
 InterMux 2.1 has a new main window. It lists every interface and the apps routed through it in one table,

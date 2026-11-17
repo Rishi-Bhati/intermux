@@ -7,6 +7,14 @@ Earlier releases are described in [release_notes.md](release_notes.md).
 
 ## [Unreleased]
 
+## [2.1.1] — 2026-11-17
+
+### Fixed
+
+- **Resize cursor.** The up/down and left/right resize cursor no longer stays on the New binding, Queue and Bindings boxes after the pointer has passed over a gap. It shows only over the gaps you can drag.
+- **WireGuard on older NetworkManager.** Connecting a WireGuard VPN with "Only for apps I route through it" ticked failed on NetworkManager older than 1.42, such as the 1.36 in Ubuntu 22.04. On those versions InterMux now sets only `ipv4.never-default` and `ipv6.never-default`, so the VPN still never becomes the system's default route.
+- **DNS check in new namespaces.** The pre-built bundle skipped the check of which DNS servers answer from inside a new namespace, so the servers were used unchecked. The check now runs there too, through the C library's `setns` on older Pythons.
+
 ## [2.1.0] — 2026-11-03
 
 ### Added
