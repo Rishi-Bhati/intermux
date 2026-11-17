@@ -465,6 +465,11 @@ do_install() {
     elif [ "$PASSWORDLESS" = "no" ]; then
         _pw_flag="--no-passwordless"
     fi
+    # Releases before 2.2.0 have no passwordless mode, and their install.sh rejects unknown options.
+    if [ -n "$_pw_flag" ] && version_lt "$_new" "2.2.0"; then
+        warn "InterMux $_new has no passwordless mode; ignoring $_pw_flag"
+        _pw_flag=""
+    fi
 
     if [ -n "$_pw_flag" ]; then
         as_root bash "$_dir/install.sh" "$_pw_flag" || die "install.sh failed (see the messages above)."
