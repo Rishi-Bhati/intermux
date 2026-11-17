@@ -112,6 +112,20 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("report", help="save a bug report zip, or open the reporting portal")
     p.add_argument("--web", action="store_true", help="open the reporting portal instead of saving a file")
     p.add_argument("--out", metavar="DIR", help="folder for the saved zip (default: ~/intermux-reports)")
+
+    p = sub.add_parser("passwordless", help="turn password prompts for InterMux on or off (opt-in, needs sudo)")
+    p_sub = p.add_subparsers(dest="passwordless_action", metavar="ACTION")
+
+    p_status = p_sub.add_parser("status", help="show whether password prompts are on")
+    p_status.add_argument("--json", action="store_true", help="output status in JSON format")
+
+    p_on = p_sub.add_parser("on", help="turn passwordless helper execution on")
+    p_on.add_argument("--user", metavar="NAME", help="target user (default: SUDO_USER)")
+
+    p_off = p_sub.add_parser("off", help="turn passwordless helper execution off")
+    p_off_group = p_off.add_mutually_exclusive_group()
+    p_off_group.add_argument("--user", metavar="NAME", help="remove a specific user")
+    p_off_group.add_argument("--all", action="store_true", help="remove all users, rule files and the group")
     return parser
 
 
@@ -683,6 +697,53 @@ def _cmd_report(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_passwordless(args: argparse.Namespace) -> int:
+    import json
+    from intermux.system import passwordless
+
+    action = getattr(args, "passwordless_action", None)
+    if not action:
+        _error("sub-command required: status, on, off")
+        return 2
+
+    if action == "status":
+        data = passwordless.status()
+        if getattr(args, "json", False):
+            print(json.dumps(data))
+        else:
+            if data["enabled"]:
+                backend_label = "JS rules" if data.get("backend") == "rules" else "pkla"
+                print(f"Passwordless: on for {data['user']} (member of the intermux group)")
+                print(f"polkit rule:  {data.get('rule_path')} ({backend_label})")
+                members_str = ", ".join(data.get("members") or []) or "none"
+                print(f"Members:      {members_str}")
+                print("Turn off:     sudo intermux passwordless off")
+            else:
+                print("Passwordless: off. Turn on: sudo intermux passwordless on")
+        return 0
+
+    if action == "on":
+        passwordless.require_sudo_root()
+        target_user = passwordless.resolve_target_user(getattr(args, "user", None))
+        lines = passwordless.enable(target_user)
+        for line in lines:
+            print(line)
+        return 0
+
+    if action == "off":
+        passwordless.require_sudo_root()
+        if getattr(args, "all", False):
+            lines = passwordless.disable(all_users=True)
+        else:
+            target_user = passwordless.resolve_target_user(getattr(args, "user", None))
+            lines = passwordless.disable(user=target_user)
+        for line in lines:
+            print(line)
+        return 0
+
+    return 2
+
+
 _HANDLERS: Dict[str, Handler] = {
     "interfaces": _cmd_interfaces,
     "apps": _cmd_apps,
@@ -703,4 +764,5 @@ _HANDLERS: Dict[str, Handler] = {
     "remove": _cmd_remove,
     "reconnect": _cmd_reconnect,
     "move": _cmd_move,
+    "passwordless": _cmd_passwordless,
 }
