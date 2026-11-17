@@ -691,5 +691,21 @@
       "198.51.100.9/32"
     ],
     "bindable": false
+  },
+  {
+    "name": "ethplain",
+    "kind": "ethernet",
+    "up": true,
+    "operstate": "UP",
+    "flags": [
+      "UP"
+    ],
+    "mac": null,
+    "mtu": null,
+    "addresses": [],
+    "default_route": false,
+    "gateways": [],
+    "ipv4": [],
+    "bindable": false
   }
 ]

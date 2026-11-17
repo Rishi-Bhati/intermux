@@ -291,5 +291,12 @@
   },
   {
     "ifname": 42
+  },
+  {
+    "ifname": "ethplain",
+    "flags": [
+      "UP"
+    ],
+    "operstate": "UP"
   }
 ]
