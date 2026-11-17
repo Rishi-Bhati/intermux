@@ -104,7 +104,8 @@ class PackagingTests(unittest.TestCase):
     def test_debian_native_version_has_no_revision(self) -> None:
         self.assertIn("native", (ROOT / "packaging/debian/source/format").read_text())
         first = (ROOT / "packaging/debian/changelog").read_text().splitlines()[0]
-        self.assertRegex(first, r"^intermux \(\d+(\.\d+)*\) ")
+        # A native package has no "-revision"; a pre-release uses Debian's "~" so it sorts before the final.
+        self.assertRegex(first, r"^intermux \(\d+(\.\d+)*(~[a-z]+\d+)?\) ")
 
     def test_pyinstaller_pins_match(self) -> None:
         install = re.search(r'PYINSTALLER_VERSION="([\d.]+)"', (ROOT / "install.sh").read_text())
