@@ -233,7 +233,15 @@ rules. Tag the release `linux-v3.0.0-beta.1` in all cases.
 - `feat/v3-release` is `feat/v3-beta` plus the installer rule that skips pre-releases unless `--version` names one,
   and the release commit that sets the 3.0.0-beta.1 versions, notes and checklist. It is the branch the release
   steps above use, as `feat/2.2` was for 2.2.0.
-- The beta is not released until the Beta release item in `docs/v3-plan.md` is ticked.
+- 3.0.0-beta.1 is published as a GitHub pre-release: https://github.com/Rishi-Bhati/intermux/releases/tag/linux-v3.0.0-beta.1
+  The post-release checks passed: the tarball checksum, the install test on Ubuntu 22.04 and Debian 12, the systemd
+  daemon and tray test, the one-line installer (default 2.2.0, `--version` the beta), and the Arch package built from
+  the tag tarball in a clean container.
+- Next is 3.0.0 (`docs/v3-plan.md`, Releases): saved setups (an app, an interface, DNS and a speed limit, started at
+  sign-in), the queue preview (namespace, subnet, new or reused), speed limits kept after "Remove stopped",
+  `intermux status --watch`, and a CI lane on the oldest supported Python (3.9).
+- Before 3.0.0, the state loader range checks in `docs/state-format.md` are open: the loader does not range-check
+  `mark`, `table`, `priority` or `uid`, and does not check `app` as an absolute path. Consumers must check again.
 
 ## Where specs live
 

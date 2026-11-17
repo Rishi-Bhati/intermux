@@ -58,7 +58,9 @@ Checklist for 3.0.0-beta.1. Update it as work lands.
 - [x] Tray: `intermux-tray` with the menu, notifications and the start-at-sign-in toggle.
 - [x] Packaging and CI: user units, Rust binaries built in ubuntu:22.04, shared fixtures in both test suites.
 - [x] Docs: `docs/daemon-protocol.md`, `docs/state-format.md`, `docs/HANDOFF.md`, and this plan.
-- [ ] Beta release: 3.0.0-beta.1 published as a GitHub pre-release.
+- [x] Beta release: 3.0.0-beta.1 published as a GitHub pre-release.
+
+Release: https://github.com/Rishi-Bhati/intermux/releases/tag/linux-v3.0.0-beta.1
 
 ## Risks
 
