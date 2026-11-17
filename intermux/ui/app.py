@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
 import sys
+import threading
 import time
 from functools import partial
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -628,6 +630,15 @@ class InterMuxApp:
         self._schedule_auto_refresh()
         self.root.after(TRAFFIC_MS, self._traffic_tick)
 
+        self._daemon_client: Optional[Any] = None
+        self._daemon_events: queue.Queue = queue.Queue()
+        self._debounce_after_id: Optional[str] = None
+        self._poll_after_id: Optional[str] = None
+        self._last_event_refresh: float = 0.0
+
+        self._schedule_poll_daemon()
+        self._start_daemon_thread()
+
     # -- layout ---------------------------------------------------------
 
     def _build(self, root: Any) -> None:
@@ -1117,8 +1128,104 @@ class InterMuxApp:
         self.root.after(AUTO_REFRESH_MS, self._auto_refresh_tick)
 
     def _auto_refresh_tick(self) -> None:
-        self.refresh_snapshot()
-        self._schedule_auto_refresh()
+        try:
+            is_connected = bool(self._daemon_client and getattr(self._daemon_client, "is_connected", False))
+            if is_connected:
+                if time.monotonic() - self._last_event_refresh >= 30.0:
+                    self.refresh_snapshot()
+            else:
+                self.refresh_snapshot()
+        except Exception as exc:
+            log.debug("Error in auto refresh tick: %s", exc)
+            self.refresh_snapshot()
+        finally:
+            self._schedule_auto_refresh()
+
+    def _start_daemon_thread(self) -> None:
+        def worker() -> None:
+            try:
+                from intermux import daemon_client
+
+                if not daemon_client.ensure_daemon():
+                    return
+
+                def on_event(name: str, data: dict) -> None:
+                    self._daemon_events.put((name, data))
+
+                client = daemon_client.DaemonClient("gui", on_event=on_event)
+                client.connect()
+                client.subscribe(["interfaces", "bindings", "gui"])
+                client.start_reconnecting(["interfaces", "bindings", "gui"])
+                self._daemon_client = client
+            except Exception as exc:
+                log.debug("Daemon client connection failed: %s", exc)
+
+        t = threading.Thread(target=worker, name="intermux-gui-daemon-init", daemon=True)
+        t.start()
+
+    def _schedule_poll_daemon(self) -> None:
+        try:
+            if hasattr(self.root, "winfo_exists") and not self.root.winfo_exists():
+                return
+            self._poll_after_id = self.root.after(100, self._poll_daemon_tick)
+        except Exception:
+            self._poll_after_id = None
+
+    def _poll_daemon_tick(self) -> None:
+        try:
+            self._drain_daemon_events()
+        finally:
+            self._schedule_poll_daemon()
+
+    def _drain_daemon_events(self) -> None:
+        """Drain queued daemon events on the Tk thread and dispatch them."""
+        while True:
+            try:
+                item = self._daemon_events.get_nowait()
+            except (queue.Empty, AttributeError):
+                break
+            except Exception:
+                break
+            try:
+                event, data = item
+                self._handle_daemon_event(event, data)
+            except Exception as exc:
+                log.debug("Error processing daemon event: %s", exc)
+
+    # Alias as specified by tests ("call the drain method directly with a fake root/after")
+    _drain_events = _drain_daemon_events
+
+    def _handle_daemon_event(self, event: str, data: dict) -> None:
+        if (event.startswith(("interface.", "route.", "binding.", "adoption."))
+                or event in ("app.exited", "client.reconnected")):
+            self._schedule_debounced_refresh()
+
+        if event == "gui.raise":
+            try:
+                self.root.deiconify()
+                self.root.lift()
+                self.root.focus_force()
+            except Exception as exc:
+                log.debug("Error raising GUI window: %s", exc)
+
+        if event == "app.exited":
+            app_name = data.get("app_name", "app")
+            iface = data.get("iface", "interface")
+            self._set_status(f"{app_name} on {iface} has exited")
+
+    def _schedule_debounced_refresh(self) -> None:
+        if self._debounce_after_id is not None:
+            return
+
+        def debounced_run() -> None:
+            self._debounce_after_id = None
+            self._last_event_refresh = time.monotonic()
+            self.refresh_snapshot()
+
+        try:
+            self._debounce_after_id = self.root.after(150, debounced_run)
+        except Exception:
+            self._debounce_after_id = None
 
     def _apply_banner(self, missing: Sequence[deps.Dependency]) -> None:
         for child in self.banner.winfo_children():
@@ -1843,6 +1950,24 @@ class InterMuxApp:
         ReportDialog(self.root, self.worker)
 
     def _on_close(self) -> None:
+        if self._poll_after_id:
+            try:
+                self.root.after_cancel(self._poll_after_id)
+            except Exception:
+                pass
+            self._poll_after_id = None
+        if self._debounce_after_id:
+            try:
+                self.root.after_cancel(self._debounce_after_id)
+            except Exception:
+                pass
+            self._debounce_after_id = None
+        if self._daemon_client is not None:
+            try:
+                self._daemon_client.close()
+            except Exception as exc:
+                log.debug("Error closing daemon client: %s", exc)
+            self._daemon_client = None
         self.worker.shutdown()
         self.root.destroy()
 
@@ -1853,6 +1978,25 @@ def main() -> int:
         print("InterMux GUI must not run as root. The root helper is started through pkexec; "
               "run 'intermux' as your normal user.", file=sys.stderr)
         return 1
+
+    try:
+        from intermux import daemon_client
+
+        sock_p = daemon_client.socket_path()
+        if sock_p and os.path.exists(sock_p):
+            client = daemon_client.DaemonClient("gui", path=sock_p)
+            try:
+                client.connect(timeout=0.5)
+                res = client.request("gui.raise", timeout=0.5)
+                if isinstance(res, dict) and res.get("raised") is True:
+                    print("InterMux is already open; bringing it to the front.")
+                    client.close()
+                    return 0
+            finally:
+                client.close()
+    except Exception as exc:
+        log.debug("gui.raise check failed: %s", exc)
+
     if tk is None:
         print("InterMux GUI needs tkinter (install the python3-tk package).", file=sys.stderr)
         return 1
