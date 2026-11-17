@@ -166,6 +166,7 @@ def run(interval: float = DEFAULT_INTERVAL, *, iterations: Optional[int] = None,
 
 
 def main() -> int:
+    os.umask(0o022)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     return run()
 

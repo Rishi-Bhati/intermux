@@ -164,6 +164,14 @@ def list_namespaces_matching(pattern: str = config.NS_NAME_RE) -> List[str]:
     return _filter(parse_netns_list(result.stdout), pattern)
 
 
+def _write_root_text(path: Path, body: str) -> None:
+    """Write in place for existing bind mounts, without following a swapped-in symlink."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        os.fchmod(fh.fileno(), 0o644)
+        fh.write(body)
+
+
 def write_resolv_conf(namespace: str, servers: Sequence[str]) -> None:
     """Write /etc/netns/<namespace>/resolv.conf with the given nameserver addresses."""
     _check_namespace(namespace)
@@ -185,8 +193,7 @@ def write_resolv_conf(namespace: str, servers: Sequence[str]) -> None:
             + "options %s\n" % RESOLV_OPTIONS)
     # Written in place (not renamed) so an existing bind mount inside the namespace keeps seeing the file.
     path = directory / "resolv.conf"
-    path.write_text(body)
-    os.chmod(path, 0o644)
+    _write_root_text(path, body)
 
 
 HOST_NSSWITCH = Path("/etc/nsswitch.conf")
@@ -246,8 +253,7 @@ def write_nsswitch_conf(namespace: str) -> None:
     target.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
     if target.is_symlink():
         target.unlink()
-    target.write_text(body)
-    os.chmod(target, 0o644)
+    _write_root_text(target, body)
 
 
 # ---------------------------------------------------------------------------

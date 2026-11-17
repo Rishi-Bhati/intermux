@@ -208,8 +208,8 @@ def ensure_group(group_rel: str) -> None:
     """Create the parent and group cgroup directories if missing; cgroup v2 is required."""
     if not (Path(CGROUP_ROOT) / "cgroup.controllers").exists():
         raise InterMuxError("cgroup v2 is required to route a running app", code="cgroup_v1")
-    (Path(CGROUP_ROOT) / GROUP_PARENT).mkdir(exist_ok=True)
-    _group_dir(group_rel).mkdir(exist_ok=True)
+    (Path(CGROUP_ROOT) / GROUP_PARENT).mkdir(mode=0o755, exist_ok=True)
+    _group_dir(group_rel).mkdir(mode=0o755, exist_ok=True)
 
 
 def _write_pid(procs_file: Path, pid: int) -> bool:

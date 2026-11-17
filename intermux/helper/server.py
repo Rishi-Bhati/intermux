@@ -197,6 +197,7 @@ def handle(raw: str, *, euid: Optional[int] = None, environ: Optional[Mapping[st
 
 def main() -> int:
     """Read one request from stdin, write the JSON response to stdout, return the exit status."""
+    os.umask(0o022)
     logging.basicConfig(
         level=logging.INFO,
         stream=sys.stderr,
