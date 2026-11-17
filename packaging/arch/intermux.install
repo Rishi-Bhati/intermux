@@ -2,6 +2,8 @@ post_install() {
     systemctl daemon-reload >/dev/null 2>&1 || true
     echo ">>> Enable the routing watcher so routing resets when a routed app exits:"
     echo ">>>   sudo systemctl enable --now intermux-watch.service"
+    echo ">>> Enable the daemon socket for all users:"
+    echo ">>>   sudo systemctl --global enable intermuxd.socket"
 }
 
 post_upgrade() {

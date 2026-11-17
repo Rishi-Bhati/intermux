@@ -13,7 +13,7 @@ license=('MIT')
 depends=('iproute2' 'iptables' 'polkit' 'util-linux' 'procps-ng' 'xdg-utils' 'glibc' 'tk' 'mpdecimal'
          'hicolor-icon-theme')
 # pyinstaller is in the AUR, not the official repositories
-makedepends=('pyinstaller')
+makedepends=('pyinstaller' 'cargo')
 optdepends=('nftables: route already-running apps'
             'curl: public IP check')
 install=intermux.install
@@ -29,6 +29,14 @@ build() {
     export PYINSTALLER_CONFIG_DIR="$srcdir/pyi-config"
     pyinstaller intermux_linux.spec --noconfirm \
         --distpath "$srcdir/dist" --workpath "$srcdir/build"
+
+    export CARGO_TARGET_DIR="$srcdir/cargo-target"
+    cargo build --release --locked --manifest-path rust/Cargo.toml
+    for bin in intermuxd intermux-tray; do
+        if [ -f "$CARGO_TARGET_DIR/release/$bin" ]; then
+            install -m 0755 "$CARGO_TARGET_DIR/release/$bin" "$srcdir/dist/intermux/$bin"
+        fi
+    done
 }
 
 package() {
@@ -47,6 +55,8 @@ package() {
         "$pkgdir/usr/share/polkit-1/actions/org.intermux.policy"
     install -Dm644 "$src/packaging/linux/intermux.desktop" \
         "$pkgdir/usr/share/applications/intermux.desktop"
+    install -Dm644 "$src/packaging/linux/intermux-tray.desktop" \
+        "$pkgdir/usr/share/applications/intermux-tray.desktop"
     install -Dm644 "$src/packaging/linux/intermux.svg" \
         "$pkgdir/usr/share/icons/hicolor/scalable/apps/intermux.svg"
     install -Dm644 "$src/packaging/linux/intermux.metainfo.xml" \
@@ -56,5 +66,10 @@ package() {
         "$pkgdir/usr/lib/systemd/system/intermux-watch.service"
     install -Dm644 "$src/packaging/linux/intermux-watch.preset" \
         "$pkgdir/usr/lib/systemd/system-preset/90-intermux.preset"
+    # User units for daemon socket activation
+    install -Dm644 "$src/packaging/linux/intermuxd.socket" \
+        "$pkgdir/usr/lib/systemd/user/intermuxd.socket"
+    install -Dm644 "$src/packaging/linux/intermuxd.service" \
+        "$pkgdir/usr/lib/systemd/user/intermuxd.service"
     install -Dm644 "$src/license" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

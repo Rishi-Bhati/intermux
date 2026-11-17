@@ -1,0 +1,12 @@
+[Unit]
+Description=InterMux daemon (watches interfaces and routed apps for the tray and window)
+Requires=intermuxd.socket
+After=intermuxd.socket
+
+[Service]
+ExecStart=/usr/lib/intermux/intermuxd
+Restart=on-failure
+RestartSec=2
+
+[Install]
+Also=intermuxd.socket

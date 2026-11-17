@@ -1,0 +1,11 @@
+[Unit]
+Description=InterMux daemon socket
+Documentation=https://github.com/Rishi-Bhati/intermux
+
+[Socket]
+ListenStream=%t/intermux/daemon.sock
+SocketMode=0600
+DirectoryMode=0700
+
+[Install]
+WantedBy=sockets.target

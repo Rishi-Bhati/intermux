@@ -6,6 +6,10 @@ set -euo pipefail
 readonly INSTALL_LIB="/usr/lib/intermux"
 readonly INSTALL_BIN="/usr/bin/intermux"
 readonly LEGACY_BIN="/usr/local/bin/intermux"
+readonly WATCH_UNIT="/usr/lib/systemd/system/intermux-watch.service"
+readonly DAEMON_SOCKET_UNIT="/usr/lib/systemd/user/intermuxd.socket"
+readonly DAEMON_SERVICE_UNIT="/usr/lib/systemd/user/intermuxd.service"
+readonly TRAY_DESKTOP="/usr/share/applications/intermux-tray.desktop"
 readonly POLKIT_POLICY="/usr/share/polkit-1/actions/org.intermux.policy"
 readonly DESKTOP_FILE="/usr/share/applications/intermux.desktop"
 readonly ICON_FILE="/usr/share/icons/hicolor/scalable/apps/intermux.svg"
@@ -37,6 +41,7 @@ main() {
     if [ -d /run/systemd/system ]; then
         systemctl disable --now intermux-watch.service >/dev/null 2>&1 || true
     fi
+    systemctl --global disable intermuxd.socket >/dev/null 2>&1 || true
 
     if [ -x "$INSTALL_LIB/intermux" ]; then
         info "Removing InterMux bindings, namespaces and running apps"
@@ -69,6 +74,9 @@ main() {
 
     info "Removing installed files"
     rm -f -- /usr/lib/systemd/system/intermux-watch.service
+    rm -f -- "$DAEMON_SOCKET_UNIT" "$DAEMON_SERVICE_UNIT"
+    # Do not touch users' ~/.config/autostart files (the tray removes its own).
+    rm -f -- "$TRAY_DESKTOP"
     [ -d /run/systemd/system ] && systemctl daemon-reload >/dev/null 2>&1 || true
     rm -rf -- "$INSTALL_LIB"
     rm -f -- "$INSTALL_BIN" "$LEGACY_BIN"

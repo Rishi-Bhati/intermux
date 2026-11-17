@@ -23,7 +23,11 @@ readonly INSTALL_BIN="/usr/bin/intermux"
 readonly LEGACY_BIN="/usr/local/bin/intermux"
 readonly POLKIT_DIR="/usr/share/polkit-1/actions"
 readonly WATCH_UNIT="/usr/lib/systemd/system/intermux-watch.service"
+readonly USER_UNIT_DIR="/usr/lib/systemd/user"
+readonly DAEMON_SOCKET_UNIT="/usr/lib/systemd/user/intermuxd.socket"
+readonly DAEMON_SERVICE_UNIT="/usr/lib/systemd/user/intermuxd.service"
 readonly APPS_DIR="/usr/share/applications"
+readonly TRAY_DESKTOP="$APPS_DIR/intermux-tray.desktop"
 readonly ICON_DIR="/usr/share/icons/hicolor/scalable/apps"
 readonly META_DIR="/usr/share/metainfo"
 
@@ -180,6 +184,26 @@ build_onedir() {
     [ -x "$BUILD_DIST/intermux" ] || die "PyInstaller did not produce $BUILD_DIST/intermux"
     ok "Built $BUILD_DIST"
 
+    if sudo -u "$user" -- sh -c 'command -v cargo || [ -x "$HOME/.cargo/bin/cargo" ]' >/dev/null 2>&1; then
+        info "Building Rust daemon and tray as user '$user'"
+        (
+            cd -- "$SCRIPT_DIR/rust"
+            sudo -u "$user" -- sh -c '
+                export PATH="$HOME/.cargo/bin:$PATH"
+                export CARGO_TARGET_DIR="'"$BUILD_TMP"'/cargo-target"
+                cargo build --release --locked
+            '
+        ) || warn "cargo build failed: the daemon and tray are not installed (InterMux works without them)"
+        for bin in intermuxd intermux-tray; do
+            if [ -f "$BUILD_TMP/cargo-target/release/$bin" ]; then
+                cp "$BUILD_TMP/cargo-target/release/$bin" "$BUILD_DIST/$bin"
+                chmod 0755 "$BUILD_DIST/$bin"
+            fi
+        done
+    else
+        warn "cargo not found: the daemon and tray are not built (install Rust to get them)"
+    fi
+
     # Freeze a root-owned copy so the user cannot swap files between build and install.
     STAGE_TMP="$(mktemp -d)"
     cp -r --no-preserve=ownership -- "$BUILD_DIST/." "$STAGE_TMP/"
@@ -327,6 +351,8 @@ install_files() {
     chmod -R a+rX,go-w -- "$INSTALL_LIB"
     find "$INSTALL_LIB" -type d -exec chmod 0755 -- {} +
     chmod 0755 "$INSTALL_LIB/intermux"
+    [ -f "$INSTALL_LIB/intermuxd" ] && chmod 0755 "$INSTALL_LIB/intermuxd"
+    [ -f "$INSTALL_LIB/intermux-tray" ] && chmod 0755 "$INSTALL_LIB/intermux-tray"
     verify_install_lib
     ok "Bundle owned by root and not writable by other users"
 
@@ -367,6 +393,16 @@ install_files() {
     else
         warn "systemd is not running (no /run/systemd/system): the routing watcher was NOT started."
         warn "Routing will not reset automatically; run 'intermux watch' as root from your init system instead."
+    fi
+
+    if [ -f "$INSTALL_LIB/intermuxd" ]; then
+        install -Dm644 "$SCRIPT_DIR/packaging/linux/intermuxd.socket" "$DAEMON_SOCKET_UNIT"
+        install -Dm644 "$SCRIPT_DIR/packaging/linux/intermuxd.service" "$DAEMON_SERVICE_UNIT"
+        install -Dm644 "$SCRIPT_DIR/packaging/linux/intermux-tray.desktop" "$TRAY_DESKTOP"
+        if have_systemd; then
+            systemctl --global enable intermuxd.socket || warn "could not enable intermuxd.socket globally"
+        fi
+        info "The InterMux daemon starts at the next login; the tray is available in the application menu as \"InterMux tray\" (and can be set to start at sign-in from its menu)."
     fi
 
     if command -v update-desktop-database >/dev/null 2>&1; then

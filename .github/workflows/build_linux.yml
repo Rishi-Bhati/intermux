@@ -49,6 +49,20 @@ jobs:
           PYINSTALLER_CONFIG_DIR: ${{ runner.temp }}/pyi-config
         run: pyinstaller intermux_linux.spec --noconfirm
 
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable  # TODO: pin to a commit SHA
+
+      - name: Build and test Rust binaries
+        run: |
+          cargo build --release --locked
+          cargo test --locked
+        working-directory: rust
+
+      - name: Copy Rust binaries to bundle
+        run: |
+          install -m 0755 rust/target/release/intermuxd dist/intermux/
+          install -m 0755 rust/target/release/intermux-tray dist/intermux/
+
       - name: Package and checksum
         run: |
           test -x dist/intermux/intermux
