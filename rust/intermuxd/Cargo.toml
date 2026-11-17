@@ -7,13 +7,13 @@ license.workspace = true
 [dependencies]
 intermux-common = { path = "../intermux-common" }
 tokio.workspace = true
-serde.workspace = true
 serde_json.workspace = true
 log.workspace = true
 env_logger = { version = "0.11", default-features = false }
-libc = "0.2"
+nix = { version = "0.30", features = ["user", "signal", "fs"] }
 inotify = { version = "0.11", default-features = false }
 netlink-sys = "0.8"
 netlink-packet-route = "0.30"
+netlink-packet-core = "0.8"
 md5 = "0.8"
 

@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::{
     collections::{BTreeMap, BTreeSet},
     net::Ipv4Addr,
-    path::Path,
+    path::{Component, Path, PathBuf},
 };
 
 const VIRTUAL_PREFIXES: [&str; 7] = ["lo", "veth", "br-", "docker", "virbr", "vmnet", "vboxnet"];
@@ -48,15 +48,37 @@ fn real_device_path(path: &Path) -> String {
     if let Ok(real) = path.canonicalize() {
         return real.to_string_lossy().into_owned();
     }
-    if let Ok(target) = std::fs::read_link(path) {
-        return path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join(target)
-            .to_string_lossy()
-            .into_owned();
+    fn resolve(path: &Path, depth: usize) -> PathBuf {
+        let path = if path.is_absolute() {
+            path.to_owned()
+        } else {
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("/"))
+                .join(path)
+        };
+        let mut resolved = PathBuf::new();
+        for component in path.components() {
+            match component {
+                Component::CurDir => (),
+                Component::ParentDir => {
+                    resolved.pop();
+                }
+                _ => {
+                    resolved.push(component);
+                    if depth < 40 {
+                        if let Ok(target) = std::fs::read_link(&resolved) {
+                            resolved = resolve(
+                                &resolved.parent().unwrap_or(Path::new("/")).join(target),
+                                depth + 1,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        resolved
     }
-    path.to_string_lossy().into_owned()
+    resolve(path, 0).to_string_lossy().into_owned()
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -214,13 +214,12 @@ fn dns_servers(v: &Value) -> Option<Vec<String>> {
     let mut servers = vec![];
     for v in array {
         let ip = v.as_str()?.parse::<Ipv4Addr>().ok()?;
-        let [a, b, _, _] = ip.octets();
+        let [a, _, _, _] = ip.octets();
         if ip.is_loopback()
             || ip.is_link_local()
             || ip.is_multicast()
             || ip.is_unspecified()
             || a >= 240
-            || (a == 0 && b == 0 && ip == Ipv4Addr::UNSPECIFIED)
         {
             return None;
         }
