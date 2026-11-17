@@ -17,6 +17,12 @@ override_dh_auto_build:
 	mkdir -p $(PYINSTALLER_CONFIG_DIR)
 	pyinstaller intermux_linux.spec --noconfirm \
 		--distpath $(BUNDLE_DIST) --workpath $(BUNDLE_WORK)
+	CARGO_TARGET_DIR=$(CURDIR)/cargo-target cargo build --release --locked --manifest-path rust/Cargo.toml
+	for bin in intermuxd intermux-tray; do \
+		if [ -f "$(CURDIR)/cargo-target/release/$$bin" ]; then \
+			install -m 0755 "$(CURDIR)/cargo-target/release/$$bin" "$(BUNDLE_DIST)/intermux/$$bin"; \
+		fi; \
+	done
 
 override_dh_auto_install:
 	install -d debian/intermux/usr/lib/intermux
@@ -29,6 +35,8 @@ override_dh_auto_install:
 		debian/intermux/usr/share/polkit-1/actions/org.intermux.policy
 	install -Dm644 packaging/linux/intermux.desktop \
 		debian/intermux/usr/share/applications/intermux.desktop
+	install -Dm644 packaging/linux/intermux-tray.desktop \
+		debian/intermux/usr/share/applications/intermux-tray.desktop
 	install -Dm644 packaging/linux/intermux.svg \
 		debian/intermux/usr/share/icons/hicolor/scalable/apps/intermux.svg
 	install -Dm644 packaging/linux/intermux.metainfo.xml \
@@ -36,6 +44,10 @@ override_dh_auto_install:
 	# Watcher that resets routing when routed apps exit; dh_installsystemd enables it.
 	install -Dm644 packaging/linux/intermux-watch.service \
 		debian/intermux/usr/lib/systemd/system/intermux-watch.service
+	install -Dm644 packaging/linux/intermuxd.socket \
+		debian/intermux/usr/lib/systemd/user/intermuxd.socket
+	install -Dm644 packaging/linux/intermuxd.service \
+		debian/intermux/usr/lib/systemd/user/intermuxd.service
 
 # Enable and start the routing watcher on install (adds the enable/start
 # snippets to the maintainer scripts) and restart it on upgrade.
@@ -52,5 +64,5 @@ override_dh_makeshlibs:
 override_dh_dwz:
 
 override_dh_auto_clean:
-	rm -rf $(BUNDLE_DIST) $(BUNDLE_WORK)
+	rm -rf $(BUNDLE_DIST) $(BUNDLE_WORK) $(CURDIR)/cargo-target
 	dh_auto_clean

@@ -27,6 +27,8 @@ BuildRequires:  systemd-rpm-macros
 BuildRequires:  binutils
 BuildRequires:  desktop-file-utils
 BuildRequires:  appstream
+BuildRequires:  cargo
+BuildRequires:  rust
 Requires:       iproute
 Requires:       iptables-nft
 Requires:       polkit
@@ -54,6 +56,14 @@ export PYINSTALLER_CONFIG_DIR="$PWD/pyi-config"
 pyinstaller intermux_linux.spec --noconfirm \
     --distpath dist --workpath build
 
+export CARGO_TARGET_DIR="$PWD/cargo-target"
+cargo build --release --locked --manifest-path rust/Cargo.toml
+for bin in intermuxd intermux-tray; do
+    if [ -f "$CARGO_TARGET_DIR/release/$bin" ]; then
+        install -m 0755 "$CARGO_TARGET_DIR/release/$bin" "dist/intermux/$bin"
+    fi
+done
+
 %install
 install -d %{buildroot}/usr/lib/intermux
 cp -a dist/intermux/. %{buildroot}/usr/lib/intermux/
@@ -67,6 +77,8 @@ install -Dm644 packaging/linux/org.intermux.policy \
     %{buildroot}%{_datadir}/polkit-1/actions/org.intermux.policy
 install -Dm644 packaging/linux/intermux.desktop \
     %{buildroot}%{_datadir}/applications/intermux.desktop
+install -Dm644 packaging/linux/intermux-tray.desktop \
+    %{buildroot}%{_datadir}/applications/intermux-tray.desktop
 install -Dm644 packaging/linux/intermux.svg \
     %{buildroot}%{_datadir}/icons/hicolor/scalable/apps/intermux.svg
 install -Dm644 packaging/linux/intermux.metainfo.xml \
@@ -76,9 +88,14 @@ install -Dm644 packaging/linux/intermux-watch.service \
 # Preset so %systemd_post enables the watcher on install
 install -Dm644 packaging/linux/intermux-watch.preset \
     %{buildroot}%{_presetdir}/90-intermux.preset
+install -Dm644 packaging/linux/intermuxd.socket \
+    %{buildroot}%{_userunitdir}/intermuxd.socket
+install -Dm644 packaging/linux/intermuxd.service \
+    %{buildroot}%{_userunitdir}/intermuxd.service
 
 %check
 desktop-file-validate %{buildroot}%{_datadir}/applications/intermux.desktop
+desktop-file-validate %{buildroot}%{_datadir}/applications/intermux-tray.desktop
 # appstream-util (appstream-glib) rejects the stock icon name even when the icon is installed; appstreamcli
 # is the current validator and accepts it.
 appstreamcli validate --no-net \
@@ -86,6 +103,7 @@ appstreamcli validate --no-net \
 
 %post
 %systemd_post intermux-watch.service
+%systemd_user_post intermuxd.socket
 /usr/bin/update-desktop-database -q %{_datadir}/applications >/dev/null 2>&1 || :
 /usr/bin/gtk-update-icon-cache -q -t -f %{_datadir}/icons/hicolor >/dev/null 2>&1 || :
 
@@ -93,6 +111,7 @@ appstreamcli validate --no-net \
 if [ $1 -eq 0 ]; then
     [ -x /usr/lib/intermux/intermux ] && /usr/lib/intermux/intermux passwordless off --all >/dev/null 2>&1 || true
 fi
+%systemd_user_preun intermuxd.socket
 %systemd_preun intermux-watch.service
 
 %postun
@@ -106,9 +125,12 @@ fi
 %{_bindir}/intermux
 %{_datadir}/polkit-1/actions/org.intermux.policy
 %{_datadir}/applications/intermux.desktop
+%{_datadir}/applications/intermux-tray.desktop
 %{_datadir}/icons/hicolor/scalable/apps/intermux.svg
 %{_datadir}/metainfo/org.intermux.InterMux.metainfo.xml
 %{_unitdir}/intermux-watch.service
+%{_userunitdir}/intermuxd.socket
+%{_userunitdir}/intermuxd.service
 %{_presetdir}/90-intermux.preset
 
 %changelog
