@@ -48,6 +48,7 @@ class Binding:
     log_path: str = ""
     created_at: str = ""             # ISO 8601 UTC
     pid: Optional[int] = None        # pid of the launched process (session leader); None in old state
+    uid: Optional[int] = None        # requesting user; old bindings fall back to their live pid
 
 
 @dataclass
@@ -226,6 +227,8 @@ def _binding_from_dict(item: Any) -> Optional[Binding]:
         if pid is not None and pid <= 1:
             pid = None
     app = str(item["app"])
+    raw_uid = item.get("uid")
+    uid = raw_uid if type(raw_uid) is int and raw_uid >= 0 else None
     return Binding(
         iface=str(item["iface"]),
         app=app,
@@ -238,6 +241,7 @@ def _binding_from_dict(item: Any) -> Optional[Binding]:
         log_path=str(item.get("log_path") or ""),
         created_at=str(item.get("created_at") or ""),
         pid=pid,
+        uid=uid,
     )
 
 

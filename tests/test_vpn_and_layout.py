@@ -183,7 +183,7 @@ class BatchLimitTests(unittest.TestCase):
         user = mock.Mock(uid=1000)
         with mock.patch.object(server.engine, "set_limit", return_value={"down": 5.0}) as limit:
             results = server._run_batch(params["ops"], user)
-        limit.assert_called_once_with("wlan0", 5.0, None)
+        limit.assert_called_once_with("wlan0", 5.0, None, uid=user.uid)
         self.assertTrue(results[0]["ok"])
         with self.assertRaises(protocol.ValidationError):
             protocol.validate_request({"v": 1, "action": "batch", "params": {"ops": [
