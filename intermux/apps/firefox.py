@@ -84,16 +84,19 @@ PROFILES_INI_MAX = 256 * 1024
 def default_profile_dir(home: str) -> Optional[Path]:
     """Return the default profile directory, or None if none exists on disk.
 
-    profiles.ini is read without following symlinks and with a size cap.
+    Profile roots and directories may be symlinks resolving inside home. profiles.ini itself
+    is read without following symlinks and with a size cap.
     """
+    home = os.path.realpath(home)
     for root in profile_roots(home):
+        root = Path(os.path.realpath(root))
         ini = root / "profiles.ini"
         try:
             raw = safefs.read_file_nofollow(os.fspath(ini), home, PROFILES_INI_MAX)
         except (FileNotFoundError, NotADirectoryError):
             continue
         except ValidationError as exc:
-            # A symlinked root (for example a dotfile manager) is skipped; the other roots still count.
+            # An unsafe root is skipped; another install may still have a usable profile.
             log.warning("not reading %s: %s", ini, exc)
             continue
         except OSError as exc:
@@ -102,8 +105,10 @@ def default_profile_dir(home: str) -> Optional[Path]:
         profile = parse_default_profile(raw.decode("utf-8", errors="replace"), root)
         if profile is None:
             return None
+        profile = Path(os.path.realpath(profile))
         try:
-            # The INI is user-controlled: check containment before probing a profile as root.
+            # Resolve dotfile-manager links, then enforce containment before opening a directory as root.
+            # The no-follow walk also rejects links swapped in after resolution.
             fd = safefs.open_dir_nofollow(str(profile), home)
         except (OSError, ValidationError):
             return None
