@@ -193,7 +193,7 @@ build_onedir() {
                 export CARGO_TARGET_DIR="'"$BUILD_TMP"'/cargo-target"
                 cargo build --release --locked
             '
-        ) || die "Cargo build failed"
+        ) || warn "cargo build failed: the daemon and tray are not installed (InterMux works without them)"
         for bin in intermuxd intermux-tray; do
             if [ -f "$BUILD_TMP/cargo-target/release/$bin" ]; then
                 cp "$BUILD_TMP/cargo-target/release/$bin" "$BUILD_DIST/$bin"
