@@ -1,3 +1,13 @@
+intermux (2.2.1) unstable; urgency=medium
+
+  * 2.2.1: a "No password prompts" switch in the window header turns
+    passwordless mode on or off; changing it always asks for an
+    administrator password (polkit action org.intermux.passwordless).
+  * The hint under the Queue no longer says Start all asks for a password
+    while passwordless mode is on.
+
+ -- Rishi-Bhati <bhatirishi5@gmail.com>  Wed, 18 Nov 2026 16:00:00 +0530
+
 intermux (2.2.0) unstable; urgency=medium
 
   * 2.2.0: opt-in "Don't ask for my password" through the intermux group and

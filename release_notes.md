@@ -1,5 +1,27 @@
 # InterMux Release Notes
 
+## v2.2.1 — Password switch in the window
+
+InterMux 2.2.1 is a small update to the Linux edition.
+
+### What's new
+
+* **Turn password prompts on or off from the window.** "No password prompts" in the window header is now a
+  checkbox. Tick it to stop InterMux asking for your password; untick it to be asked again. Changing it always
+  asks for an administrator password, even while the mode is on, so a program running as you cannot change it.
+  It only changes the setting for your own user. `sudo intermux passwordless on|off` still works.
+
+### Fixes
+
+* **No more contradictory hint.** With passwordless mode on, the line under the Queue still said Start all asks
+  for your password. It now matches the setting.
+
+### Install or update
+
+`curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh`
+
+---
+
 ## v2.2.0 — No more password prompts (opt-in)
 
 InterMux 2.2 can make its network changes without asking for your password, if you turn that on. It is off by default, and the root helper is tightened so that users on a shared computer cannot change each other's apps.

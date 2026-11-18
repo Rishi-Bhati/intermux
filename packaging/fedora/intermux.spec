@@ -13,7 +13,7 @@
 # bundled-runtime packages.
 
 Name:           intermux
-Version:        2.2.0
+Version:        2.2.1
 Release:        1%{?dist}
 Summary:        Bind individual applications to specific network interfaces
 License:        MIT
@@ -59,6 +59,7 @@ install -d %{buildroot}/usr/lib/intermux
 cp -a dist/intermux/. %{buildroot}/usr/lib/intermux/
 chmod -R a+rX %{buildroot}/usr/lib/intermux
 chmod 755 %{buildroot}/usr/lib/intermux/intermux
+install -Dm755 packaging/linux/intermux-passwordless %{buildroot}/usr/lib/intermux/intermux-passwordless
 
 install -d %{buildroot}%{_bindir}
 ln -s /usr/lib/intermux/intermux %{buildroot}%{_bindir}/intermux
@@ -112,6 +113,8 @@ fi
 %{_presetdir}/90-intermux.preset
 
 %changelog
+* Wed Nov 18 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.2.1-1
+- 2.2.1: "No password prompts" switch in the window header (changing it always asks for an administrator password); the Queue hint no longer says Start all asks for a password when it does not
 * Wed Nov 18 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.2.0-1
 - 2.2.0: opt-in "Don't ask for my password" (sudo intermux passwordless on|off, polkit rule for the intermux group, local active sessions only); installers ask once; security hardening of the root helper
 * Tue Nov 17 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.1.1-1

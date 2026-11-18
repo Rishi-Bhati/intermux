@@ -1,7 +1,7 @@
 # Maintainer: Rishi-Bhati <bhatirishi5@gmail.com>
 # The source is the GitHub tag tarball for linux-v$pkgver.
 pkgname=intermux
-pkgver=2.2.0
+pkgver=2.2.1
 _tag="linux-v$pkgver"
 pkgrel=1
 pkgdesc="Bind individual applications to specific network interfaces"
@@ -39,6 +39,7 @@ package() {
     cp -a "$srcdir/dist/intermux/." "$pkgdir/usr/lib/intermux/"
     chmod -R a+rX "$pkgdir/usr/lib/intermux"
     chmod 755 "$pkgdir/usr/lib/intermux/intermux"
+    install -Dm755 "$src/packaging/linux/intermux-passwordless" "$pkgdir/usr/lib/intermux/intermux-passwordless"
 
     install -dm755 "$pkgdir/usr/bin"
     ln -s /usr/lib/intermux/intermux "$pkgdir/usr/bin/intermux"

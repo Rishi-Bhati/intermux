@@ -23,6 +23,7 @@ override_dh_auto_install:
 	cp -a $(BUNDLE_DIST)/intermux/. debian/intermux/usr/lib/intermux/
 	chmod -R a+rX debian/intermux/usr/lib/intermux
 	chmod 755 debian/intermux/usr/lib/intermux/intermux
+	install -Dm755 packaging/linux/intermux-passwordless debian/intermux/usr/lib/intermux/intermux-passwordless
 	install -d debian/intermux/usr/bin
 	ln -s /usr/lib/intermux/intermux debian/intermux/usr/bin/intermux
 	install -Dm644 packaging/linux/org.intermux.policy \
