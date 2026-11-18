@@ -22,9 +22,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if argv[:1] == ["watch"] and "PKEXEC_UID" in os.environ:
         sys.stderr.write("[X] the watcher runs as a system service (intermux-watch.service), not through pkexec\n")
         return 1
-    # With passwordless on, any program can run pkexec without a password,
-    # so pkexec must never reach the passwordless command.
-    if argv[:1] == ["passwordless"] and "PKEXEC_UID" in os.environ:
+    # With passwordless on, any program can run pkexec without a password, so the helper's pkexec action must
+    # never reach the passwordless command. Only the intermux-passwordless script may: its own polkit action
+    # always asks for an administrator password, and pkexec's cleared environment lets only it set the marker.
+    if (argv[:1] == ["passwordless"] and "PKEXEC_UID" in os.environ
+            and os.environ.get("INTERMUX_PASSWORDLESS_ACTION") != "1"):
         sys.stderr.write("[X] passwordless can only be changed with sudo, not through pkexec\n")
         return 1
     # Imports are lazy so that `intermux helper` never imports tkinter.

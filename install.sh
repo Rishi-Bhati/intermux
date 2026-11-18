@@ -130,6 +130,7 @@ require_sources() {
     local f
     for f in \
         packaging/linux/org.intermux.policy \
+        packaging/linux/intermux-passwordless \
         packaging/linux/intermux.desktop \
         packaging/linux/intermux-watch.service \
         packaging/linux/intermux.svg \
@@ -367,6 +368,9 @@ install_files() {
     ln -sfn -- "$INSTALL_LIB/intermux" "$INSTALL_BIN"
     ok "Command: $INSTALL_BIN"
 
+    # The window's "No password prompts" switch runs this through pkexec (always asks for a password).
+    install -m 0755 -o root -g root "$SCRIPT_DIR/packaging/linux/intermux-passwordless" \
+        "$INSTALL_LIB/intermux-passwordless"
     install -Dm644 "$SCRIPT_DIR/packaging/linux/org.intermux.policy" \
         "$POLKIT_DIR/org.intermux.policy"
     install -Dm644 "$SCRIPT_DIR/packaging/linux/intermux.desktop" \

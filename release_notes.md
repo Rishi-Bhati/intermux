@@ -2,7 +2,7 @@
 
 ## v3.0.0-beta.1 — Background daemon and tray (beta)
 
-This is a beta for testing. Version 2.2.0 remains the stable release, so install this beta only if you want to help test it.
+This is a beta for testing. Version 2.2.1 remains the stable release, so install this beta only if you want to help test it.
 
 ### What's new
 
@@ -20,7 +20,7 @@ Install it with the one-line installer, using the beta's version number:
 curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh -s -- --version 3.0.0-beta.1
 ```
 
-The installer never picks a pre-release unless `--version` names it. To go back to 2.2.0, run the same command with `--version 2.2.0`.
+The installer never picks a pre-release unless `--version` names it. To go back to 2.2.1, run the same command with `--version 2.2.1`.
 
 ### Known limitations
 
@@ -32,6 +32,28 @@ The installer never picks a pre-release unless `--version` names it. To go back 
 ### Feedback
 
 Use the **Report issue** button in the window, or run `intermux report` in a terminal. Either one writes a bug report zip. Nothing is uploaded, so attach the zip to your report yourself.
+
+---
+
+## v2.2.1 — Password switch in the window
+
+InterMux 2.2.1 is a small update to the Linux edition.
+
+### What's new
+
+* **Turn password prompts on or off from the window.** "No password prompts" in the window header is now a
+  checkbox. Tick it to stop InterMux asking for your password; untick it to be asked again. Changing it always
+  asks for an administrator password, even while the mode is on, so a program running as you cannot change it.
+  It only changes the setting for your own user. `sudo intermux passwordless on|off` still works.
+
+### Fixes
+
+* **No more contradictory hint.** With passwordless mode on, the line under the Queue still said Start all asks
+  for your password. It now matches the setting.
+
+### Install or update
+
+`curl -fsSL https://raw.githubusercontent.com/Rishi-Bhati/intermux/main/get/install.sh | sh`
 
 ---
 

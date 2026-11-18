@@ -13,4 +13,16 @@
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/intermux/intermux</annotate>
   </action>
+  <!-- The window's "No password prompts" switch. Never covered by the intermux-group rule, which only names
+       org.intermux.run, so changing the setting always needs an administrator password. -->
+  <action id="org.intermux.passwordless">
+    <description>Turn InterMux password prompts on or off</description>
+    <message>Authentication is required to change whether InterMux asks for your password</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/intermux/intermux-passwordless</annotate>
+  </action>
 </policyconfig>

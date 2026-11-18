@@ -9,7 +9,7 @@ Earlier releases are described in [release_notes.md](release_notes.md).
 
 ## [3.0.0-beta.1] — 2026-11-18
 
-This is a pre-release for testing. 2.2.0 remains the stable release.
+This is a pre-release for testing. 2.2.1 remains the stable release.
 
 ### Added
 
@@ -29,6 +29,16 @@ This is a pre-release for testing. 2.2.0 remains the stable release.
 - The traffic graphs in the window still sample on their own.
 - The daemon starts at the next login after install, or when the tray or the window first needs it.
 - The window's daemon features need the daemon binary that the pre-built bundle includes.
+
+## [2.2.1] — 2026-11-18
+
+### Added
+
+- **Password switch in the window.** The header's "No password prompts" is now a checkbox. Tick it to stop InterMux asking for your password, or untick it to be asked again. Changing it always asks for an administrator password, even while the mode is on: the window runs `/usr/lib/intermux/intermux-passwordless` through pkexec, under a new polkit action, `org.intermux.passwordless`, which the `intermux` group rule never covers. It changes the setting only for your own user; `--user` and `--all` still need sudo.
+
+### Fixed
+
+- **Contradictory password hint.** With passwordless mode on, the line under the Queue still said "Start all asks for your password once for the whole queue". It now follows the setting and says Start all runs without a password prompt.
 
 ## [2.2.0] — 2026-11-18
 

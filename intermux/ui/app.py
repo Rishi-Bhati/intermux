@@ -259,6 +259,28 @@ def queue_add(items: List[Dict[str, Any]], item: Dict[str, Any]) -> bool:
     return True
 
 
+PASSWORDLESS_ON_TEXT = (
+    "InterMux will bind apps, change DNS and speed limits, and stop apps without asking for your password.\n\n"
+    "Any program running as you could then make those InterMux changes too, but nothing more: it does not "
+    "get root. Changing this setting always asks for an administrator password."
+)
+
+
+def queue_password_hint(passwordless: bool) -> str:
+    """The line under the Queue buttons; it must match whether a password prompt will appear."""
+    if passwordless:
+        return "Start all starts the whole queue without a password prompt."
+    return "Start all asks for your password once for the whole queue."
+
+
+def passwordless_tooltip(passwordless: bool) -> str:
+    if passwordless:
+        return ("On: you are in the intermux group, so InterMux changes run without a password. "
+                "Untick to be asked again (needs an administrator password).")
+    return ("Off: InterMux asks for your password before it changes routing. "
+            "Tick to stop asking (needs an administrator password).")
+
+
 def already_running_choices() -> List[Tuple[str, Optional[str]]]:
     """Buttons of the already-running prompt; the shift option exists only here."""
     return [("Close and reopen", "close"), ("Open separate profile", "separate"),
@@ -605,7 +627,8 @@ class InterMuxApp:
         self.limit_down_var = tk.StringVar(root, value="")
         self.limit_up_var = tk.StringVar(root, value="")
         self.session_var = tk.StringVar(root, value="Detecting session")
-        self.passwordless_var = tk.StringVar(root, value="")
+        self.passwordless_on = tk.BooleanVar(root, value=False)
+        self.queue_hint_var = tk.StringVar(root, value=queue_password_hint(False))
         self.status_var = tk.StringVar(root, value="")
         self.hint_var = tk.StringVar(root, value="")
         self.app_hint_var = tk.StringVar(root, value="")
@@ -651,9 +674,11 @@ class InterMuxApp:
         header.grid(row=0, column=0, sticky="ew", padx=pad, pady=(18, 14))
         ttk.Label(header, text="InterMux", style="Title.TLabel").pack(side="left")
         ttk.Label(header, text=config.VERSION, style="Muted.TLabel").pack(side="left", padx=(8, 0))
-        pw_label = ttk.Label(header, textvariable=self.passwordless_var, style="Muted.TLabel")
-        pw_label.pack(side="left", padx=(8, 0))
-        Tooltip(pw_label, "You are in the intermux group, so InterMux changes run without a password. Turn off: sudo intermux passwordless off")
+        self.passwordless_check = ttk.Checkbutton(
+            header, text="No password prompts", variable=self.passwordless_on, style="Dialog.TCheckbutton",
+            command=self._on_passwordless_toggle)
+        self.passwordless_check.pack(side="left", padx=(theme.SPACE_CARD_GAP, 0))
+        self.passwordless_tip = Tooltip(self.passwordless_check, passwordless_tooltip(False))
         ttk.Label(header, textvariable=self.session_var, style="Muted.TLabel").pack(
             side="left", padx=(theme.SPACE_CARD_GAP, 0))
         ttk.Button(header, text="Refresh", style="Small.Secondary.TButton", command=self.refresh_all).pack(
@@ -851,8 +876,7 @@ class InterMuxApp:
         self.remove_btn.pack(side="left", padx=(8, 0))
         self.clear_btn = ttk.Button(row, text="Clear", style="Small.Secondary.TButton", command=self._on_clear)
         self.clear_btn.pack(side="left", padx=(8, 0))
-        ttk.Label(box, text="Start all asks for your password once for the whole queue.",
-                  style="Small.TLabel").grid(row=2, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(box, textvariable=self.queue_hint_var, style="Small.TLabel").grid(row=2, column=0, sticky="w", pady=(8, 0))
 
     def _build_bindings(self, box: Any) -> None:
         box.rowconfigure(0, weight=1)
@@ -1086,9 +1110,39 @@ class InterMuxApp:
         try:
             from intermux.system import passwordless
 
-            self.passwordless_var.set("No password prompts" if passwordless.status().get("enabled") else "")
+            enabled = bool(passwordless.status().get("enabled"))
         except Exception:
-            self.passwordless_var.set("")
+            enabled = False
+        self.passwordless_on.set(enabled)
+        self.queue_hint_var.set(queue_password_hint(enabled))
+        self.passwordless_tip.text = passwordless_tooltip(enabled)
+
+    def _on_passwordless_toggle(self) -> None:
+        """The header switch: ask for confirmation, then change the setting through pkexec (always a password)."""
+        want = bool(self.passwordless_on.get())
+        # Show the real state until the change has gone through.
+        self.passwordless_on.set(not want)
+        if self._busy:
+            return
+        if want:
+            choice, _ = _ask_choice(self.root, "Stop asking for your password?", PASSWORDLESS_ON_TEXT,
+                                    [("Stop asking", "on"), ("Cancel", None)])
+            if choice != "on":
+                return
+        from intermux.system import passwordless
+
+        def done(result: Any, error: Optional[BaseException]) -> None:
+            self._update_passwordless()
+            if error is not None:
+                if getattr(error, "code", "") == "permission_denied":
+                    self._set_status(f"Password setting unchanged: {error}.", "warning")
+                else:
+                    self._fail("Could not change the password setting", error)
+                return
+            self._set_status("InterMux no longer asks for your password." if want
+                             else "InterMux asks for your password again.", "success")
+
+        self._run_mutation("Changing the password setting", passwordless.set_from_gui, want, on_done=done)
 
     def refresh_all(self) -> None:
         """Re-detect the session and tools, then re-read interfaces and bindings."""

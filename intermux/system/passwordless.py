@@ -9,6 +9,7 @@ import os
 import pwd
 import re
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -23,6 +24,14 @@ GROUP = "intermux"
 RULES_PATH = Path("/etc/polkit-1/rules.d/49-intermux-passwordless.rules")
 PKLA_PATH = Path("/etc/polkit-1/localauthority/50-local.d/49-intermux-passwordless.pkla")
 MARKER_PATH = config.STATE_DIR / "passwordless.json"
+
+# The window turns the mode on or off by running this root-owned script through pkexec. Its polkit action,
+# org.intermux.passwordless, always asks for an administrator password: the intermux-group rule below only
+# covers org.intermux.run. pkexec clears the environment, so only the script can set POLKIT_ENV.
+TOGGLE_PATH = config.INSTALL_BIN.parent / "intermux-passwordless"
+POLKIT_ACTION = "org.intermux.passwordless"
+POLKIT_ENV = "INTERMUX_PASSWORDLESS_ACTION"
+_PKEXEC_DENIED_CODES = (126, 127)
 
 RULES_TEXT = (
     '// Installed by "intermux passwordless on". Remove with: sudo intermux passwordless off --all\n'
@@ -163,9 +172,17 @@ def status(user: Optional[str] = None) -> Dict[str, Any]:
         }
 
 
+def via_toggle_action() -> bool:
+    """True when pkexec started us through the org.intermux.passwordless script, which always asks for a password."""
+    return "PKEXEC_UID" in os.environ and os.environ.get(POLKIT_ENV) == "1"
+
+
 def require_sudo_root() -> None:
-    """Raise PermissionDeniedError if not running as root or running under pkexec."""
-    if "PKEXEC_UID" in os.environ:
+    """Raise PermissionDeniedError unless running as root through sudo or the password-checked pkexec action.
+
+    Plain pkexec is refused: with passwordless on, any program can run the helper's pkexec action without a password.
+    """
+    if "PKEXEC_UID" in os.environ and not via_toggle_action():
         raise PermissionDeniedError("passwordless can only be changed with sudo, not through pkexec")
     if os.geteuid() != 0:
         raise PermissionDeniedError("run: sudo intermux passwordless on")
@@ -173,7 +190,15 @@ def require_sudo_root() -> None:
 
 def resolve_target_user(explicit: Optional[str]) -> str:
     """Resolve and validate the target user. Raises ValidationError if invalid."""
-    if explicit is not None:
+    if via_toggle_action():
+        # Through the window's toggle, only the user who asked can be changed.
+        try:
+            username = pwd.getpwuid(int(os.environ["PKEXEC_UID"])).pw_name
+        except (KeyError, ValueError):
+            raise ValidationError("could not tell which user asked for the change") from None
+        if explicit is not None and explicit.strip() != username:
+            raise ValidationError("the window can only change passwordless for your own user")
+    elif explicit is not None:
         username = explicit.strip()
         if not username:
             raise ValidationError("specify a user with --user")
@@ -352,3 +377,33 @@ def _disable_all() -> List[str]:
     if group_created:
         lines.append(f"Deleted group {GROUP}.")
     return lines
+
+
+def toggle_command(on: bool) -> List[str]:
+    """argv that turns the mode on or off for the calling user, asking for an administrator password."""
+    pkexec = shutil.which("pkexec")
+    if pkexec is None:
+        raise MissingToolError("pkexec not found; install polkit")
+    if not TOGGLE_PATH.is_file():
+        raise MissingToolError(f"{TOGGLE_PATH} is missing; run: sudo intermux passwordless {'on' if on else 'off'}")
+    return [pkexec, str(TOGGLE_PATH), "on" if on else "off"]
+
+
+def set_from_gui(on: bool, *, timeout: float = 300.0) -> List[str]:
+    """Turn the mode on or off for the calling user via pkexec. Returns the output lines; raises on failure."""
+    argv = toggle_command(on)
+    try:
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        raise PermissionDeniedError("the password prompt was not answered in time") from None
+    except OSError as exc:
+        raise MissingToolError(f"could not run pkexec: {exc}") from exc
+    if proc.returncode in _PKEXEC_DENIED_CODES:
+        raise PermissionDeniedError("authorization was cancelled or denied")
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        message = detail[-1].strip() if detail else f"exit status {proc.returncode}"
+        if message.startswith("[X]"):
+            message = message[3:].strip()
+        raise ValidationError(message)
+    return [line for line in proc.stdout.splitlines() if line.strip()]

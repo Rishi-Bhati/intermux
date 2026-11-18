@@ -19,7 +19,7 @@
 
 InterMux lets you choose which network connection each application uses. For example, you can keep a torrent client on Ethernet while your browser uses Wi-Fi or a phone hotspot. It runs each bound application inside its own network namespace and routes that namespace through the interface you pick. A small root helper, gated by polkit, sets up the networking. Your applications always run as your own user, so your profiles and settings are kept.
 
-InterMux has a graphical interface and a command line. Version 2.2.0 is the Linux edition. A separate Windows edition lives in [`windows/`](windows/README.md).
+InterMux has a graphical interface and a command line. Version 2.2.1 is the Linux edition. A separate Windows edition lives in [`windows/`](windows/README.md).
 
 ## Supported platforms
 
@@ -159,7 +159,7 @@ The script stops the watcher, resets all bindings and stops the running bound ap
 
 ### Trying the 3.0 beta
 
-Version 3.0.0-beta.1 is a pre-release for testing. It adds a background daemon, `intermuxd`, which runs as your user, keeps a live view of your interfaces, routed apps and traffic, and is started by systemd when the tray or the window needs it. It also adds a tray icon, shown as "InterMux tray" in the application menu, with your routed apps, live speeds and quick actions, and a new `intermux events` command. Version 2.2.0 remains the stable release.
+Version 3.0.0-beta.1 is a pre-release for testing. It adds a background daemon, `intermuxd`, which runs as your user, keeps a live view of your interfaces, routed apps and traffic, and is started by systemd when the tray or the window needs it. It also adds a tray icon, shown as "InterMux tray" in the application menu, with your routed apps, live speeds and quick actions, and a new `intermux events` command. Version 2.2.1 remains the stable release.
 
 Install the beta with:
 
@@ -229,7 +229,7 @@ Network changes need root. InterMux asks polkit (`pkexec`) to run its helper, an
 
 #### Don't ask for my password (opt-in)
 
-You can turn the prompt off for your own user. Passwordless mode adds you to a group called `intermux` and installs a polkit rule that lets members of that group run the InterMux helper without a password. It works only from a local, active session: over SSH, or from another session that is not active, you still get the prompt. The change takes effect at once, with no need to log in again, and the window header shows "No password prompts" while it is on for you.
+You can turn the prompt off for your own user. Passwordless mode adds you to a group called `intermux` and installs a polkit rule that lets members of that group run the InterMux helper without a password. It works only from a local, active session: over SSH, or from another session that is not active, you still get the prompt. The change takes effect at once, with no need to log in again, and the "No password prompts" checkbox in the window header is ticked while it is on for you.
 
 ```bash
 sudo intermux passwordless on                # for the user who ran sudo
@@ -238,7 +238,9 @@ sudo intermux passwordless off               # turn it off again (add --all for 
 intermux passwordless status                 # shows whether it is on for you
 ```
 
-The trade-off: any program running as you can then make InterMux changes without asking, such as binding an app or changing its DNS. It does not get root, and it cannot change this setting, which needs sudo.
+You can also tick or untick **No password prompts** in the window header. Changing it always asks for an administrator password, even while the mode is on, and it changes the setting only for your own user.
+
+The trade-off: any program running as you can then make InterMux changes without asking, such as binding an app or changing its DNS. It does not get root, and it cannot change this setting: that needs sudo or the administrator password.
 
 The installers ask once after installing: "Don't ask for your password for InterMux? [y/N]". The default is no. To answer in advance, pass `--passwordless` or `--no-passwordless` to `install.sh` (for example `sudo ./install.sh --passwordless`) or to the one-line installer. Uninstalling InterMux, or removing its package, turns the mode off and removes the rule and the group (the group only if InterMux created it).
 
@@ -262,7 +264,7 @@ The full policy, including how to report a vulnerability, is in [SECURITY.md](SE
 
 - The GUI and CLI run as your user and never run root commands themselves.
 - Network changes are made by a helper started with `pkexec`. Polkit action `org.intermux.run` requires administrator authentication for every use, unless you turn on passwordless mode (see [The password prompt](#the-password-prompt)).
-- As root, the binary refuses every command except `helper` and `watch`, and refuses `watch` when started through `pkexec`.
+- As root, the binary refuses every command except `helper`, `watch` and `passwordless`. It refuses `watch` when started through `pkexec`, and refuses `passwordless` through `pkexec` unless it came through the `org.intermux.passwordless` action (`/usr/lib/intermux/intermux-passwordless`), which always requires administrator authentication.
 - The helper checks each request: JSON of at most 1 MiB, known keys and actions only, a strict interface-name pattern, absolute application paths, and an allowlist of environment variables.
 - No shell is used. Every external command is an argument list.
 - Applications run as the invoking user (`runuser -u <you>` with a clean environment), never as root.

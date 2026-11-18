@@ -49,6 +49,7 @@ package() {
     cp -a "$srcdir/dist/intermux/." "$pkgdir/usr/lib/intermux/"
     chmod -R a+rX "$pkgdir/usr/lib/intermux"
     chmod 755 "$pkgdir/usr/lib/intermux/intermux"
+    install -Dm755 "$src/packaging/linux/intermux-passwordless" "$pkgdir/usr/lib/intermux/intermux-passwordless"
 
     install -dm755 "$pkgdir/usr/bin"
     ln -s /usr/lib/intermux/intermux "$pkgdir/usr/bin/intermux"

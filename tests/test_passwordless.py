@@ -715,7 +715,8 @@ class GuiIndicatorTests(unittest.TestCase):
         with mock.patch("intermux.system.passwordless.status", return_value={"enabled": True}), \
              mock.patch.object(app_mod.InterMuxApp, "refresh_all", lambda self: None):
             window = app_mod.InterMuxApp(root)
-            self.assertEqual(window.passwordless_var.get(), "No password prompts")
+            self.assertTrue(window.passwordless_on.get())
+            self.assertIn("without a password", window.queue_hint_var.get())
             window._on_close()
 
     def test_gui_indicator_empty_when_passwordless_disabled(self):
@@ -734,7 +735,8 @@ class GuiIndicatorTests(unittest.TestCase):
         with mock.patch("intermux.system.passwordless.status", return_value={"enabled": False}), \
              mock.patch.object(app_mod.InterMuxApp, "refresh_all", lambda self: None):
             window = app_mod.InterMuxApp(root)
-            self.assertEqual(window.passwordless_var.get(), "")
+            self.assertFalse(window.passwordless_on.get())
+            self.assertIn("asks for your password", window.queue_hint_var.get())
             window._on_close()
 
 

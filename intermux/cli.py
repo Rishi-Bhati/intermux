@@ -737,6 +737,9 @@ def _cmd_passwordless(args: argparse.Namespace) -> int:
 
     if action == "off":
         passwordless.require_sudo_root()
+        if getattr(args, "all", False) and passwordless.via_toggle_action():
+            _error("off --all needs sudo: sudo intermux passwordless off --all")
+            return 1
         if getattr(args, "all", False):
             lines = passwordless.disable(all_users=True)
         else:
