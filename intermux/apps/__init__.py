@@ -5,12 +5,17 @@ import logging
 import os
 import re
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from intermux.errors import ConflictError, NotFoundError
-from intermux.system.session import UserInfo
+
+if sys.platform != "win32":
+    from intermux.system.session import UserInfo
+else:
+    UserInfo = Any  # type: ignore[misc,assignment]
 
 log = logging.getLogger("intermux.apps")
 

@@ -22,6 +22,59 @@ from intermux.platform import get_paths
 log = logging.getLogger("intermux.platform.win_pipe")
 
 _MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+_WIN32_APIS: Optional[tuple[Any, Any, Any]] = None
+
+
+def _win32_apis() -> tuple[Any, Any, Any]:
+    """Return (kernel32, advapi32, shell32) with explicit 64-bit-safe argtypes/restype."""
+    global _WIN32_APIS
+    if _WIN32_APIS is not None:
+        return _WIN32_APIS
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)  # type: ignore[attr-defined]
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)  # type: ignore[attr-defined]
+
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = wt.HANDLE
+
+    kernel32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+    kernel32.OpenProcess.restype = wt.HANDLE
+
+    kernel32.CloseHandle.argtypes = [wt.HANDLE]
+    kernel32.CloseHandle.restype = wt.BOOL
+
+    kernel32.LocalFree.argtypes = [wt.LPVOID]
+    kernel32.LocalFree.restype = wt.LPVOID
+
+    kernel32.QueryFullProcessImageNameW.argtypes = [wt.HANDLE, wt.DWORD, wt.LPWSTR, ctypes.POINTER(wt.DWORD)]
+    kernel32.QueryFullProcessImageNameW.restype = wt.BOOL
+
+    kernel32.CreateFileW.argtypes = [wt.LPCWSTR, wt.DWORD, wt.DWORD, wt.LPVOID, wt.DWORD, wt.DWORD, wt.HANDLE]
+    kernel32.CreateFileW.restype = wt.HANDLE
+
+    kernel32.GetNamedPipeServerProcessId.argtypes = [wt.HANDLE, ctypes.POINTER(wt.DWORD)]
+    kernel32.GetNamedPipeServerProcessId.restype = wt.BOOL
+
+    kernel32.WriteFile.argtypes = [wt.HANDLE, wt.LPCVOID, wt.DWORD, ctypes.POINTER(wt.DWORD), wt.LPVOID]
+    kernel32.WriteFile.restype = wt.BOOL
+
+    kernel32.ReadFile.argtypes = [wt.HANDLE, wt.LPVOID, wt.DWORD, ctypes.POINTER(wt.DWORD), wt.LPVOID]
+    kernel32.ReadFile.restype = wt.BOOL
+
+    advapi32.OpenProcessToken.argtypes = [wt.HANDLE, wt.DWORD, ctypes.POINTER(wt.HANDLE)]
+    advapi32.OpenProcessToken.restype = wt.BOOL
+
+    advapi32.GetTokenInformation.argtypes = [wt.HANDLE, wt.DWORD, wt.LPVOID, wt.DWORD, ctypes.POINTER(wt.DWORD)]
+    advapi32.GetTokenInformation.restype = wt.BOOL
+
+    advapi32.ConvertSidToStringSidW.argtypes = [wt.LPVOID, ctypes.POINTER(wt.LPVOID)]
+    advapi32.ConvertSidToStringSidW.restype = wt.BOOL
+
+    shell32.ShellExecuteW.argtypes = [wt.HWND, wt.LPCWSTR, wt.LPCWSTR, wt.LPCWSTR, wt.LPCWSTR, wt.INT]
+    shell32.ShellExecuteW.restype = wt.HINSTANCE
+
+    _WIN32_APIS = (kernel32, advapi32, shell32)
+    return _WIN32_APIS
 
 
 def short_sid(sid: str) -> str:
@@ -63,14 +116,14 @@ def current_user_sid() -> str:
     """Return the current Windows process user SID string (S-1-5-...)."""
     if sys.platform != "win32":
         return "S-1-5-21-0-0-0-1000"
-    advapi32 = ctypes.windll.advapi32  # type: ignore[attr-defined]
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32, advapi32, _ = _win32_apis()
     TOKEN_QUERY = 0x0008
     TokenUser = 1
 
     tok = wt.HANDLE()
     if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(tok)):
-        raise PermissionDeniedError("cannot open current process token")
+        err = ctypes.get_last_error()
+        raise PermissionDeniedError(f"cannot open current process token (winerr={err})")
     try:
         needed = wt.DWORD(0)
         advapi32.GetTokenInformation(tok, TokenUser, None, 0, ctypes.byref(needed))
@@ -78,11 +131,11 @@ def current_user_sid() -> str:
         if not advapi32.GetTokenInformation(tok, TokenUser, buf, needed, ctypes.byref(needed)):
             raise PermissionDeniedError("cannot query TokenUser")
         sid_ptr = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p))[0]
-        str_ptr = wt.LPWSTR()
-        if not advapi32.ConvertSidToStringSidW(sid_ptr, ctypes.byref(str_ptr)):
+        str_ptr = wt.LPVOID()
+        if not advapi32.ConvertSidToStringSidW(ctypes.c_void_p(sid_ptr), ctypes.byref(str_ptr)):
             raise PermissionDeniedError("cannot format user SID")
         try:
-            return str(str_ptr.value)
+            return ctypes.wstring_at(str_ptr.value)
         finally:
             kernel32.LocalFree(str_ptr)
     finally:
@@ -117,8 +170,7 @@ def verify_pipe_server_identity(
 
 
 def _inspect_pid_identity(pid: int) -> tuple[str, bool]:
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
-    advapi32 = ctypes.windll.advapi32  # type: ignore[attr-defined]
+    kernel32, advapi32, _ = _win32_apis()
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     TOKEN_QUERY = 0x0008
     TokenElevation = 20
@@ -153,7 +205,7 @@ def _inspect_pid_identity(pid: int) -> tuple[str, bool]:
 def _connect_and_verify_pipe(pipe_path: str, expected_exe: Path) -> Any:
     if sys.platform != "win32":
         raise PermissionDeniedError("Windows Named Pipe client requires win32")
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32, _, _ = _win32_apis()
     GENERIC_READ = 0x80000000
     GENERIC_WRITE = 0x40000000
     OPEN_EXISTING = 3
@@ -168,7 +220,7 @@ def _connect_and_verify_pipe(pipe_path: str, expected_exe: Path) -> Any:
         0,
         None,
     )
-    if h == INVALID_HANDLE_VALUE or h == 0:
+    if h is None or h == INVALID_HANDLE_VALUE or h == 0:
         raise FileNotFoundError(f"pipe not ready: {pipe_path}")
     try:
         server_pid = wt.DWORD(0)
@@ -183,7 +235,7 @@ def _connect_and_verify_pipe(pipe_path: str, expected_exe: Path) -> Any:
 
 
 def _pipe_exchange(handle: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32, _, _ = _win32_apis()
     try:
         raw = (json.dumps(payload) + "\n").encode("utf-8")
         written = wt.DWORD(0)
@@ -236,9 +288,9 @@ def passwordless_status() -> Dict[str, Any]:
 def _launch_elevated_engine(exe: Path, args_str: str) -> None:
     if sys.platform != "win32":
         raise PermissionDeniedError("UAC elevation is only supported on Windows")
-    shell32 = ctypes.windll.shell32  # type: ignore[attr-defined]
+    _, _, shell32 = _win32_apis()
     ret = shell32.ShellExecuteW(None, "runas", str(exe), args_str, str(exe.parent), 0)
-    if int(ret) <= 32:
+    if int(ret or 0) <= 32:
         raise PermissionDeniedError("UAC elevation was cancelled or failed", code="permission_denied")
 
 
@@ -250,11 +302,12 @@ def ensure_daemon(timeout: float = 12.0) -> tuple[str, Path]:
             f"Privileged engine not installed at {expected_exe}. Install InterMux to Program Files first.",
             code="missing_tool",
         )
+    kernel32, _, _ = _win32_apis()
     sid = current_user_sid()
     pipe_path = pipe_name_for_sid(sid)
     try:
         h = _connect_and_verify_pipe(pipe_path, expected_exe)
-        ctypes.windll.kernel32.CloseHandle(h)  # type: ignore[attr-defined]
+        kernel32.CloseHandle(h)
         return pipe_path, expected_exe
     except FileNotFoundError:
         pass
@@ -276,7 +329,7 @@ def ensure_daemon(timeout: float = 12.0) -> tuple[str, Path]:
     while time.monotonic() < deadline:
         try:
             h = _connect_and_verify_pipe(pipe_path, expected_exe)
-            ctypes.windll.kernel32.CloseHandle(h)  # type: ignore[attr-defined]
+            kernel32.CloseHandle(h)
             return pipe_path, expected_exe
         except FileNotFoundError:
             time.sleep(0.15)

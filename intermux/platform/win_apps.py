@@ -135,13 +135,42 @@ class WinFirefoxHandler(WinAppHandler):
                     return p if p.is_dir() else None
         return None
 
+    def _profile_in_use(self, pdir: Path, app_path: str) -> bool:
+        if not find_running_pids(app_path, self.comm_names(app_path)):
+            return False
+        if sys.platform != "win32":
+            return False
+        try:
+            proc = subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-Command",
+                    "Get-CimInstance Win32_Process -Filter \"Name='firefox.exe'\" "
+                    "| Select-Object -ExpandProperty CommandLine",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=6,
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if proc.returncode != 0:
+                return False
+            needle = ntpath.normcase(str(pdir))
+            return any(needle in ntpath.normcase(line) for line in proc.stdout.splitlines())
+        except Exception:
+            return False
+
     def prepare(self, iface: str, profile_mode: str, app_path: str) -> None:
         if profile_mode == "separate":
             pdir = self.separate_profile_dir(iface)
             pdir.mkdir(parents=True, exist_ok=True)
+            if self._profile_in_use(pdir, app_path):
+                return
             for lock_name in _FIREFOX_LOCKS:
                 lp = pdir / lock_name
-                if lp.exists() and not find_running_pids(app_path, self.comm_names(app_path)):
+                if lp.exists():
                     try:
                         lp.unlink()
                     except OSError:
@@ -372,9 +401,19 @@ def terminate_pids(pids: Sequence[int], *, force: bool = False) -> Tuple[List[in
     """Terminate owned Windows PIDs cleanly, returning (stopped, still_running)."""
     if sys.platform != "win32":
         return [], list(pids)
+    import ctypes.wintypes as wt
+
     stopped: List[int] = []
     still: List[int] = []
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+    kernel32.OpenProcess.restype = wt.HANDLE
+    kernel32.TerminateProcess.argtypes = [wt.HANDLE, wt.UINT]
+    kernel32.TerminateProcess.restype = wt.BOOL
+    kernel32.WaitForSingleObject.argtypes = [wt.HANDLE, wt.DWORD]
+    kernel32.WaitForSingleObject.restype = wt.DWORD
+    kernel32.CloseHandle.argtypes = [wt.HANDLE]
+    kernel32.CloseHandle.restype = wt.BOOL
     PROCESS_TERMINATE = 0x0001
     SYNCHRONIZE = 0x00100000
     for pid in pids:

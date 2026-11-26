@@ -90,9 +90,9 @@ class Win32SecurityAndEngineTests(unittest.TestCase):
         self.assertTrue(chk_data["wintun_ok"], chk_data)
 
         # Start real Wintun daemon briefly, verify pipe server identity + ping/interfaces/set_limit/counters/shutdown.
-        import ctypes
         import time
 
+        kernel32, _, _ = win_pipe._win32_apis()
         sid = win_pipe.current_user_sid()
         daemon_proc = subprocess.Popen(
             [str(expected), "daemon", "--allowed-sid", sid],
@@ -110,7 +110,7 @@ class Win32SecurityAndEngineTests(unittest.TestCase):
                     self.fail(f"daemon exited prematurely ({daemon_proc.returncode}): {out}\n{err}")
                 try:
                     h = win_pipe._connect_and_verify_pipe(pipe_path, expected)
-                    ctypes.windll.kernel32.CloseHandle(h)  # type: ignore[attr-defined]
+                    kernel32.CloseHandle(h)
                     connected = True
                     break
                 except FileNotFoundError:
