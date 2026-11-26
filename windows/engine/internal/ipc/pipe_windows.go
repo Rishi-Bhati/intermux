@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -17,6 +16,42 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+type pipeReadWriter struct {
+	h windows.Handle
+}
+
+func (p *pipeReadWriter) Read(buf []byte) (int, error) {
+	if len(buf) == 0 {
+		return 0, nil
+	}
+	var n uint32
+	if err := windows.ReadFile(p.h, buf, &n, nil); err != nil {
+		if errors.Is(err, windows.ERROR_BROKEN_PIPE) || errors.Is(err, windows.ERROR_PIPE_NOT_CONNECTED) {
+			return int(n), io.EOF
+		}
+		return int(n), err
+	}
+	if n == 0 {
+		return 0, io.EOF
+	}
+	return int(n), nil
+}
+
+func (p *pipeReadWriter) Write(buf []byte) (int, error) {
+	var total int
+	for total < len(buf) {
+		var n uint32
+		if err := windows.WriteFile(p.h, buf[total:], &n, nil); err != nil {
+			return total + int(n), err
+		}
+		if n == 0 {
+			return total, io.ErrShortWrite
+		}
+		total += int(n)
+	}
+	return total, nil
+}
 
 const (
 	PipeOpenModeFlags uint32 = windows.PIPE_ACCESS_DUPLEX | windows.FILE_FLAG_FIRST_PIPE_INSTANCE
@@ -123,7 +158,7 @@ func ServeNamedPipe(ctx context.Context, pipePath string, allowedSID string, han
 		}
 		err := windows.ConnectNamedPipe(h, nil)
 		if err != nil && !errors.Is(err, windows.ERROR_PIPE_CONNECTED) {
-			_ = windows.CloseHandle(h)
+			closeActive()
 			if ctx.Err() != nil {
 				return nil
 			}
@@ -133,32 +168,12 @@ func ServeNamedPipe(ctx context.Context, pipePath string, allowedSID string, han
 		clientSID, sidErr := pipeClientSID(h)
 		if sidErr != nil || !strings.EqualFold(clientSID, allowedSID) {
 			_ = windows.DisconnectNamedPipe(h)
-			_ = windows.CloseHandle(h)
-			h, err = createHardenedPipeInstance(pipePath, sddl)
-			if err != nil {
-				return err
-			}
-			mu.Lock()
-			activeHandle = h
-			mu.Unlock()
 			continue
 		}
 
-		f := os.NewFile(uintptr(h), pipePath)
-		servePipeFile(f, clientSID, handler)
+		servePipeFile(&pipeReadWriter{h: h}, clientSID, handler)
+		_ = windows.FlushFileBuffers(h)
 		_ = windows.DisconnectNamedPipe(h)
-		_ = f.Close() // also closes h
-
-		if ctx.Err() != nil {
-			return nil
-		}
-		h, err = createHardenedPipeInstance(pipePath, sddl)
-		if err != nil {
-			return err
-		}
-		mu.Lock()
-		activeHandle = h
-		mu.Unlock()
 	}
 }
 

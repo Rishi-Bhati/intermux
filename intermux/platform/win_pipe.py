@@ -52,6 +52,9 @@ def _win32_apis() -> tuple[Any, Any, Any]:
     kernel32.CreateFileW.argtypes = [wt.LPCWSTR, wt.DWORD, wt.DWORD, wt.LPVOID, wt.DWORD, wt.DWORD, wt.HANDLE]
     kernel32.CreateFileW.restype = wt.HANDLE
 
+    kernel32.WaitNamedPipeW.argtypes = [wt.LPCWSTR, wt.DWORD]
+    kernel32.WaitNamedPipeW.restype = wt.BOOL
+
     kernel32.GetNamedPipeServerProcessId.argtypes = [wt.HANDLE, ctypes.POINTER(wt.DWORD)]
     kernel32.GetNamedPipeServerProcessId.restype = wt.BOOL
 
@@ -209,19 +212,28 @@ def _connect_and_verify_pipe(pipe_path: str, expected_exe: Path) -> Any:
     GENERIC_READ = 0x80000000
     GENERIC_WRITE = 0x40000000
     OPEN_EXISTING = 3
+    ERROR_PIPE_BUSY = 231
     INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 
-    h = kernel32.CreateFileW(
-        pipe_path,
-        GENERIC_READ | GENERIC_WRITE,
-        0,
-        None,
-        OPEN_EXISTING,
-        0,
-        None,
-    )
-    if h is None or h == INVALID_HANDLE_VALUE or h == 0:
-        raise FileNotFoundError(f"pipe not ready: {pipe_path}")
+    h = None
+    deadline = time.monotonic() + 2.0
+    while True:
+        h = kernel32.CreateFileW(
+            pipe_path,
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            None,
+            OPEN_EXISTING,
+            0,
+            None,
+        )
+        if h is not None and h != INVALID_HANDLE_VALUE and h != 0:
+            break
+        err = ctypes.get_last_error()
+        if err == ERROR_PIPE_BUSY and time.monotonic() < deadline:
+            kernel32.WaitNamedPipeW(pipe_path, 500)
+            continue
+        raise FileNotFoundError(f"pipe not ready: {pipe_path} (winerr={err})")
     try:
         server_pid = wt.DWORD(0)
         if not kernel32.GetNamedPipeServerProcessId(h, ctypes.byref(server_pid)):
