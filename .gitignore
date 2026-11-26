@@ -31,3 +31,7 @@ Thumbs.db
 
 # Rust build artifacts
 rust/target/
+
+# Windows Go engine build/driver binaries
+windows/engine/*.exe
+windows/engine/wintun.dll
