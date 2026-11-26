@@ -17,7 +17,10 @@ from intermux.apps.desktop_entries import AppEntry
 from intermux.errors import InterMuxError
 from intermux.helper import client as helper_client
 from intermux.system import commands, deps, netinfo, netns, procs, shaping, traffic
-from intermux.system import session as session_mod
+if sys.platform != "win32":
+    from intermux.system import session as session_mod
+else:
+    session_mod = None  # type: ignore[assignment]
 from intermux.ui import dialogs, graph, icons, monitor, theme
 from intermux.ui.tooltip import Tooltip, fit_text
 from intermux.ui.history import History, Item as HistoryItem
@@ -84,6 +87,43 @@ def snapshot_rows(st: Any, table: Sequence[Any], ns_inode: Any, group_pids: Any)
 
 def _snapshot_task() -> Dict[str, Any]:
     """Read interfaces and bindings (read-only, unprivileged). Scans /proc once per refresh."""
+    if sys.platform == "win32":
+        from intermux import platform as _platform
+
+        plat = _platform.get_platform("windows")
+        interfaces = plat.network.list_interfaces(include_all=True)
+        st = plat.network.status()
+        rows: List[Dict[str, Any]] = []
+        for b in st.get("bindings") or []:
+            pids = list(b.get("pids") or [])
+            rows.append({
+                "iface": b.get("iface", ""),
+                "app": b.get("app", ""),
+                "app_name": b.get("app_name", ""),
+                "log_path": b.get("log_path", ""),
+                "running": bool(pids),
+                "pid": pids[0] if pids else None,
+                "pids": pids,
+                "profile_mode": b.get("profile_mode", "default"),
+            })
+        adopted: List[Dict[str, Any]] = []
+        for a in st.get("adoptions") or []:
+            pids = list(a.get("pids") or [])
+            adopted.append({
+                "id": a.get("id", ""),
+                "iface": a.get("iface", ""),
+                "app": a.get("app", ""),
+                "app_name": a.get("app_name", ""),
+                "alive": bool(pids),
+                "pids": pids,
+            })
+        ns_map: Dict[str, Dict[str, Any]] = {}
+        limits = st.get("limits") or {}
+        dns_map = st.get("dns") or {}
+        for iface_name in set(limits) | set(dns_map) | {r["iface"] for r in rows if r["iface"]}:
+            ns_map[iface_name] = {"dns": list(dns_map.get(iface_name, [])), "limit": dict(limits.get(iface_name, {}))}
+        return {"interfaces": interfaces, "bindings": rows, "adoptions": adopted, "namespaces": ns_map}
+
     from intermux.system import adopt as adopt_sys
 
     interfaces = netinfo.list_interfaces()
@@ -101,6 +141,8 @@ def namespace_settings(st: Any) -> Dict[str, Dict[str, Any]]:
 
 def _env_task(fn: Any, *args: Any, **kwargs: Any) -> Any:
     """Run a helper call that starts an app, adding the invoking user's allowlisted desktop environment."""
+    if sys.platform == "win32":
+        return fn(*args, env={}, **kwargs)
     session = session_mod.detect_session(probe=True)
     return fn(*args, env=session_mod.build_app_env(session), **kwargs)
 
@@ -115,12 +157,19 @@ def _move_call(iface: str, app: str, to: str, env: Dict[str, str]) -> Any:
 
 def _environment_task() -> Tuple[Any, List[deps.Dependency]]:
     """Detect the desktop session and missing required tools."""
+    if sys.platform == "win32":
+        from intermux import platform as _platform
+
+        diag = _platform.get_platform("windows").diagnostics
+        return diag.os_info(), diag.missing_required()
     session = session_mod.detect_session(probe=True)
     return session, deps.missing_required()
 
 
 def _batch_task(ops: List[Dict[str, Any]]) -> Any:
     """Add the invoking user's allowlisted environment to every bind op and run one helper call."""
+    if sys.platform == "win32":
+        return helper_client.batch([dict(op) for op in ops])
     session = session_mod.detect_session(probe=True)
     env = session_mod.build_app_env(session)
     full = [dict(op, env=dict(env)) if op["op"] == "bind" else dict(op) for op in ops]
@@ -129,7 +178,15 @@ def _batch_task(ops: List[Dict[str, Any]]) -> Any:
 
 def _icon_scan_task() -> Dict[str, AppEntry]:
     """Map resolved binary path -> desktop entry, so bindings can show the app icon and name."""
-    found: Dict[str, AppEntry] = {}
+    if sys.platform == "win32":
+        from intermux.platform import win_apps
+
+        found: Dict[str, AppEntry] = {}
+        for entry in win_apps.scan_apps():
+            if entry.binary and entry.binary not in found:
+                found[entry.binary] = entry  # type: ignore[assignment]
+        return found
+    found = {}
     for entry in desktop_entries.scan_desktop_entries():
         if entry.binary and entry.binary not in found:
             found[entry.binary] = entry
@@ -660,7 +717,8 @@ class InterMuxApp:
         self._last_event_refresh: float = 0.0
 
         self._schedule_poll_daemon()
-        self._start_daemon_thread()
+        if sys.platform != "win32":
+            self._start_daemon_thread()
 
     # -- layout ---------------------------------------------------------
 
@@ -1108,9 +1166,14 @@ class InterMuxApp:
 
     def _update_passwordless(self) -> None:
         try:
-            from intermux.system import passwordless
+            if sys.platform == "win32":
+                from intermux.platform import win_pipe
 
-            enabled = bool(passwordless.status().get("enabled"))
+                enabled = bool(win_pipe.passwordless_status().get("enabled"))
+            else:
+                from intermux.system import passwordless
+
+                enabled = bool(passwordless.status().get("enabled"))
         except Exception:
             enabled = False
         self.passwordless_on.set(enabled)
@@ -1129,7 +1192,6 @@ class InterMuxApp:
                                     [("Stop asking", "on"), ("Cancel", None)])
             if choice != "on":
                 return
-        from intermux.system import passwordless
 
         def done(result: Any, error: Optional[BaseException]) -> None:
             self._update_passwordless()
@@ -1141,6 +1203,14 @@ class InterMuxApp:
                 return
             self._set_status("InterMux no longer asks for your password." if want
                              else "InterMux asks for your password again.", "success")
+
+        if sys.platform == "win32":
+            from intermux.platform import win_pipe
+
+            self._run_mutation("Changing the password setting", win_pipe.set_passwordless, want, on_done=done)
+            return
+
+        from intermux.system import passwordless
 
         self._run_mutation("Changing the password setting", passwordless.set_from_gui, want, on_done=done)
 
@@ -1175,7 +1245,10 @@ class InterMuxApp:
             self._set_status(f"Could not detect session: {_error_text(error)}", "error")
             return
         session, missing = result
-        self.session_var.set(session_label(session))
+        if sys.platform == "win32":
+            self.session_var.set(getattr(session, "name", "Windows"))
+        else:
+            self.session_var.set(session_label(session))
         self._apply_banner(missing)
 
     def _schedule_auto_refresh(self) -> None:
@@ -1346,15 +1419,21 @@ class InterMuxApp:
     def _sample_traffic(self) -> None:
         """Sample the bound interfaces and their namespaces' veths, for the rate columns and inline graphs."""
         lanes = self._bound_ifaces()
-        veths = {iface: netns.veth_names(iface)[0] for iface in {row["iface"] for row in self._bindings}}
-        counters = traffic.read_counters(lanes + list(veths.values()))
-        samples: Dict[str, Tuple[int, int]] = {}
-        for name in lanes:
-            if name in counters:
-                samples[name] = traffic.iface_sample(counters[name])
-        for iface, veth in veths.items():
-            if veth in counters:
-                samples[ns_key(iface)] = traffic.veth_sample(counters[veth])
+        if sys.platform == "win32":
+            from intermux import platform as _platform
+
+            bound = [row["iface"] for row in self._bindings if row.get("iface")]
+            samples = _platform.get_platform("windows").network.read_traffic_counters(lanes, bound)
+        else:
+            veths = {iface: netns.veth_names(iface)[0] for iface in {row["iface"] for row in self._bindings}}
+            counters = traffic.read_counters(lanes + list(veths.values()))
+            samples = {}
+            for name in lanes:
+                if name in counters:
+                    samples[name] = traffic.iface_sample(counters[name])
+            for iface, veth in veths.items():
+                if veth in counters:
+                    samples[ns_key(iface)] = traffic.veth_sample(counters[veth])
         self.tracker.update(samples, time.monotonic())
         try:
             visible = bool(self.root.winfo_viewable())
@@ -1621,6 +1700,10 @@ class InterMuxApp:
         """Count running processes of the app owned by the invoking user, as the engine does."""
         try:
             handler = apps.get_handler(app_path)
+            if sys.platform == "win32":
+                from intermux import platform as _platform
+
+                return _platform.get_platform("windows").local_proc_count(app_path, handler.comm_names(app_path))
             return len(procs.find_app_procs(app_path, handler.comm_names(app_path), uid=os.getuid()))
         except Exception:
             log.exception("could not check running instances of %s", app_path)
@@ -1895,8 +1978,13 @@ class InterMuxApp:
         if not row["log_path"]:
             self._set_status("No log file is recorded for this binding.")
             return
+        opener = (
+            (lambda p, timeout=OPEN_LOG_TIMEOUT: __import__("intermux.platform", fromlist=["get_platform"]).get_platform("windows").diagnostics.open_with_desktop(p, timeout=timeout))
+            if sys.platform == "win32"
+            else commands.open_with_desktop
+        )
         self.worker.submit(
-            commands.open_with_desktop, row["log_path"], timeout=OPEN_LOG_TIMEOUT,
+            opener, row["log_path"], timeout=OPEN_LOG_TIMEOUT,
             on_done=self._on_open_log_done,
         )
 

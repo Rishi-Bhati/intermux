@@ -1,70 +1,104 @@
-name: Build InterMux Windows .exe
+name: Build and Test InterMux Windows
 
-# Triggers:
-#   - Every push to main that touches windows/ code
-#   - Every release published (attaches the .exe to the release)
-#   - Manual run from the Actions tab
 on:
   push:
-    branches: [main]
+    branches: [main, feat/windows-2.2.1]
     paths:
       - "windows/**"
+      - "intermux/**"
+      - "scripts/fetch-wintun.ps1"
+      - "tests/**"
       - ".github/workflows/build_windows.yml"
   release:
     types: [published]
-  workflow_dispatch:   # manual trigger
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  build-windows-exe:
-    name: Build InterMux.exe on Windows
-    runs-on: windows-latest   # ← real Windows VM — produces genuine .exe
+  build-and-test-windows:
+    name: Build & Test InterMux on Windows
+    runs-on: windows-latest
 
     steps:
-      # 1. Check out the repo
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Set up Python (matches our minimum requirement)
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache-dependency-path: windows/engine/go.sum
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
-      # 3. Install dependencies
-      - name: Install Python dependencies
+      - name: Install Python build dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install psutil pyinstaller
-        working-directory: windows
+          pip install -r windows/requirements.txt
 
-      # 4. Build the executable using our spec file
-      - name: Build InterMux.exe with PyInstaller
+      - name: Fetch and verify Wintun 0.14.1 DLL
+        shell: pwsh
+        run: |
+          ./scripts/fetch-wintun.ps1 -Arch amd64 -OutDir windows/engine
+
+      - name: Run Go engine tests (Windows)
+        working-directory: windows/engine
+        run: |
+          go test -v ./...
+
+      - name: Build intermux-net.exe
+        working-directory: windows/engine
+        run: |
+          go build -trimpath -ldflags="-s -w" -o intermux-net.exe ./cmd/intermux-net
+
+      - name: Install engine to admin-only Program Files directory
+        shell: pwsh
+        run: |
+          $pfDir = Join-Path $env:ProgramFiles "InterMux"
+          New-Item -ItemType Directory -Force -Path $pfDir | Out-Null
+          Copy-Item -LiteralPath "windows\engine\intermux-net.exe" -Destination (Join-Path $pfDir "intermux-net.exe") -Force
+          Copy-Item -LiteralPath "windows\engine\wintun.dll" -Destination (Join-Path $pfDir "wintun.dll") -Force
+          & (Join-Path $pfDir "intermux-net.exe") check
+
+      - name: Byte-compile Python sources and tests
+        run: |
+          python -m compileall -q intermux tests
+
+      - name: Run Windows Python unit tests
+        run: |
+          python -m unittest tests.test_platform_base tests.test_windows_backend -v
+
+      - name: Run Windows E2E & security test suite (strict mode)
+        env:
+          INTERMUX_E2E_STRICT: "1"
+        run: |
+          python -m unittest discover -s tests/e2e_win -t . -v
+
+      - name: Build unprivileged InterMux.exe with PyInstaller
         run: |
           pyinstaller windows/intermux_windows.spec
-        working-directory: ${{ github.workspace }}
 
-      # 5. Rename for clarity and verify
-      - name: Verify output
+      - name: Smoke test built executables
+        shell: pwsh
         run: |
-          dir dist\
-          echo "Build complete: dist\InterMux.exe"
-        shell: cmd
+          if (-not (Test-Path "dist\InterMux.exe")) { throw "Missing dist\InterMux.exe" }
+          if (-not (Test-Path "windows\engine\intermux-net.exe")) { throw "Missing intermux-net.exe" }
+          & ".\windows\engine\intermux-net.exe" version
+          & ".\windows\engine\intermux-net.exe" interfaces --all | Out-Null
 
-      # 6. Upload as a workflow artifact (downloadable from the Actions tab)
-      - name: Upload InterMux.exe as artifact
+      - name: Upload Windows build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: InterMux-Windows-exe
-          path: dist/InterMux.exe
-          retention-days: 30
+          name: InterMux-Windows-v2.2.1
+          path: |
+            dist/InterMux.exe
+            windows/engine/intermux-net.exe
+            windows/engine/wintun.dll
+          retention-days: 14
           if-no-files-found: error
-
-      # 7. On tagged releases: attach the .exe directly to the GitHub Release
-      - name: Attach .exe to GitHub Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/InterMux.exe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,84 +1,79 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec for InterMux Windows — standalone .exe
+PyInstaller spec for InterMux Windows — standalone unprivileged InterMux.exe
 
-⚠ IMPORTANT: This spec MUST be run on Windows (or via GitHub Actions windows-latest).
-   Running on Linux produces a Linux ELF binary, not a .exe.
-
-Build (on a Windows machine):
-  pip install pyinstaller psutil
-  pyinstaller windows\\intermux_windows.spec
-
-Or use the GitHub Actions workflow:
-  .github/workflows/build_windows.yml
-  → Push to main, go to Actions tab → download InterMux.exe artifact
-
-Output: dist\\InterMux.exe  (single-file, no installer needed)
+IMPORTANT:
+- InterMux.exe MUST run unprivileged (uac_admin=False).
+- Elevated networking operations live exclusively in intermux-net.exe + wintun.dll
+  installed into the admin-only %ProgramFiles%\InterMux\ directory.
 """
 
-import sys
 import os
+import sys
 
 if sys.platform != "win32":
-    raise SystemExit(
-        "\n"
-        "  ╔══════════════════════════════════════════════════════════════╗\n"
-        "  ║  ERROR: This spec must be run on Windows, not Linux/macOS.  ║\n"
-        "  ║                                                              ║\n"
-        "  ║  PyInstaller cannot cross-compile. A Linux build produces   ║\n"
-        "  ║  a Linux ELF binary — NOT a Windows .exe.                   ║\n"
-        "  ║                                                              ║\n"
-        "  ║  Options:                                                    ║\n"
-        "  ║  1. Push to GitHub → Actions tab → download InterMux.exe    ║\n"
-        "  ║  2. Run this on a Windows machine                           ║\n"
-        "  ╚══════════════════════════════════════════════════════════════╝\n"
-    )
+    raise SystemExit("ERROR: windows/intermux_windows.spec must be run on Windows.")
 
-
-# Path helpers
-_SPEC_DIR  = os.path.dirname(os.path.abspath(SPEC))   # windows/
-_ROOT      = os.path.dirname(_SPEC_DIR)                # repo root
+_SPEC_DIR = os.path.dirname(os.path.abspath(SPEC))
+_ROOT = os.path.dirname(_SPEC_DIR)
 
 block_cipher = None
 
 a = Analysis(
-    # Entry point — use the GUI by default
-    [os.path.join(_SPEC_DIR, 'gui', 'app.py')],
+    [os.path.join(_SPEC_DIR, "gui", "app.py")],
     pathex=[_ROOT, _SPEC_DIR],
     binaries=[],
     datas=[],
     hiddenimports=[
-        # psutil sub-modules needed on Windows
-        'psutil',
-        'psutil._pswindows',
-        'psutil._common',
-        # asyncio internals
-        'asyncio',
-        'asyncio.windows_events',
-        'asyncio.windows_utils',
-        # Tkinter
-        'tkinter',
-        'tkinter.ttk',
-        'tkinter.messagebox',
-        'tkinter.filedialog',
-        # Our own modules
-        'windows.core.interface',
-        'windows.core.proxy_engine',
-        'windows.core.app_launcher',
-        'windows.core.platform_utils',
+        "tkinter",
+        "tkinter.ttk",
+        "tkinter.messagebox",
+        "tkinter.filedialog",
+        "intermux",
+        "intermux.__main__",
+        "intermux.cli",
+        "intermux.config",
+        "intermux.dnsconf",
+        "intermux.errors",
+        "intermux.state",
+        "intermux.bugreport",
+        "intermux.report",
+        "intermux.helper",
+        "intermux.helper.client",
+        "intermux.helper.protocol",
+        "intermux.apps",
+        "intermux.platform",
+        "intermux.platform.base",
+        "intermux.platform.paths",
+        "intermux.platform.windows",
+        "intermux.platform.win_apps",
+        "intermux.platform.win_deps",
+        "intermux.platform.win_netinfo",
+        "intermux.platform.win_pipe",
+        "intermux.platform.win_vpn",
+        "intermux.system",
+        "intermux.system.shaping",
+        "intermux.system.traffic",
+        "intermux.ui",
+        "intermux.ui.app",
+        "intermux.ui.appicon",
+        "intermux.ui.dialogs",
+        "intermux.ui.graph",
+        "intermux.ui.history",
+        "intermux.ui.icons",
+        "intermux.ui.monitor",
+        "intermux.ui.picker",
+        "intermux.ui.report_dialog",
+        "intermux.ui.theme",
+        "intermux.ui.tooltip",
+        "intermux.ui.vpn",
+        "intermux.ui.worker",
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     excludes=[
-        # Exclude Linux-only modules to keep the exe small
-        'core.interface',
-        'core.router',
-        'core.platform_utils',
-        'gui.app',
-        # Large unused packages
-        'numpy', 'pandas', 'matplotlib', 'scipy',
-        'PIL', 'cv2', 'sklearn',
+        "numpy", "pandas", "matplotlib", "scipy", "PIL", "cv2", "sklearn",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -95,21 +90,22 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='InterMux',
+    name="InterMux",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,             # Compress with UPX if available
+    upx=True,
     upx_exclude=[],
     runtime_tmpdir=None,
-    console=False,        # Windowed mode (no console window on launch)
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,            # Add a .ico file path here if you have one
-    # Request UAC elevation on launch (recommended for socket binding)
-    uac_admin=True,
+    icon=None,
+    # CRITICAL SECURITY BOUNDARY: GUI and launched apps MUST run unprivileged.
+    # Only intermux-net.exe elevates from admin-only %ProgramFiles%\InterMux\.
+    uac_admin=False,
     version_file=None,
 )

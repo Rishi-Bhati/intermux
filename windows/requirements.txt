@@ -1,16 +1,6 @@
-# InterMux for Windows — Python dependencies
-#
-# Install with:  pip install -r requirements.txt
-# (inside a venv is recommended)
+# InterMux Windows Edition v2.2.1 Runtime & Build Dependencies
+# InterMux Python code uses Python 3.9+ standard library only (zero third-party runtime packages).
+# The Go networking engine (windows/engine/) compiles to intermux-net.exe with Wintun 0.14.1.
 
-# Network interface detection
-psutil>=5.9.0
-
-# SOCKS5 proxy (built with asyncio — no extra dep needed for the engine)
-# PySocks is only needed if you want to use Python as a SOCKS client
-# PySocks==1.7.1   # Optional — only for testing the proxy from Python
-
-# GUI (Tkinter is bundled with standard CPython — no extra dep)
-
-# PyInstaller for .exe packaging (dev dependency, not needed at runtime)
-# pyinstaller>=6.0   # Run: pip install pyinstaller  then  pyinstaller intermux_windows.spec
+# Build dependency (Windows packaging only)
+pyinstaller>=6.0

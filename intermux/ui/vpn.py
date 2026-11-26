@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Callable, List, Optional
 
 from intermux.errors import InterMuxError
@@ -77,6 +78,12 @@ class VpnDialog:
     # -- data -----------------------------------------------------------------
 
     def reload(self) -> None:
+        if sys.platform == "win32":
+            from intermux.platform import win_vpn
+
+            self._set_busy(True, None if self.status.get() else READING)
+            self.worker.submit(win_vpn.list_connections, on_done=self._on_list)
+            return
         if not nm.available():
             self._render_message("NetworkManager (nmcli) is not installed. Bring the VPN up with its own tool, "
                                  "for example \"wg-quick up wg0\", and it appears in InterMux by itself.")
@@ -125,7 +132,8 @@ class VpnDialog:
                      anchor="w").grid(row=index * 2, column=1, sticky="sw", pady=(10, 0))
             where = f"Connected as {conn.device}" if conn.active and conn.device else (
                 "Connected" if conn.active else "Not connected")
-            tk.Label(self.rows, text=f"{conn.kind_label}  ·  {where}", background=bg, foreground=colour,
+            kind_lbl = getattr(conn, "kind_label", conn.kind)
+            tk.Label(self.rows, text=f"{kind_lbl}  ·  {where}", background=bg, foreground=colour,
                      font=theme.font("small"), anchor="w").grid(row=index * 2 + 1, column=1, sticky="nw",
                                                                  pady=(0, 10))
             if conn.active:
@@ -138,21 +146,38 @@ class VpnDialog:
 
     # -- actions ----------------------------------------------------------------
 
-    def _connect(self, conn: nm.VpnConnection) -> None:
+    def _connect(self, conn: Any) -> None:
         if self.busy:
             return
         self._set_busy(True, f"Connecting {conn.name}…")
+        if sys.platform == "win32":
+            from intermux.platform import win_vpn
+
+            self.worker.submit(win_vpn.connect, conn.name, apps_only=self.apps_only.get(),
+                               on_done=lambda r, e: self._done(e, f"Connected {conn.name}."))
+            return
         self.worker.submit(nm.connect, conn, self.apps_only.get(), on_done=lambda r, e: self._done(
             e, f"Connected {conn.name}. It is now listed under Connections; use \"+ Add app\" on it."))
 
-    def _disconnect(self, conn: nm.VpnConnection) -> None:
+    def _disconnect(self, conn: Any) -> None:
         if self.busy:
             return
         self._set_busy(True, f"Disconnecting {conn.name}…")
+        if sys.platform == "win32":
+            from intermux.platform import win_vpn
+
+            self.worker.submit(win_vpn.disconnect, conn.name, on_done=lambda r, e: self._done(
+                e, f"Disconnected {conn.name}."))
+            return
         self.worker.submit(nm.disconnect, conn, on_done=lambda r, e: self._done(e, f"Disconnected {conn.name}."))
 
     def _import(self) -> None:
         if self.busy:
+            return
+        if sys.platform == "win32":
+            from intermux.platform import win_vpn
+
+            self.worker.submit(win_vpn.import_config, "", on_done=lambda r, e: self._done(e, ""))
             return
         path = filedialog.askopenfilename(
             parent=self.top, title="Import a VPN file",

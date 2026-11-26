@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -159,7 +160,12 @@ class ReportDialog(tk.Toplevel):
     def _open_folder(self) -> None:
         if self.saved_path is None:
             return
-        self.worker.submit(commands.open_with_desktop, str(self.saved_path.parent),
+        opener = (
+            (lambda p: __import__("intermux.platform", fromlist=["get_platform"]).get_platform("windows").diagnostics.open_with_desktop(p))
+            if sys.platform == "win32"
+            else commands.open_with_desktop
+        )
+        self.worker.submit(opener, str(self.saved_path.parent),
                            on_done=self._on_folder_opened)
 
     def _on_folder_opened(self, result: Any, error: Optional[BaseException]) -> None:

@@ -5,10 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, List, Optional
+
+from intermux.platform.base import is_abs_app_path
 
 log = logging.getLogger("intermux.ui")
 
@@ -25,11 +28,15 @@ class Item:
 
 
 def default_path() -> Path:
+    if sys.platform == "win32":
+        from intermux.platform import get_paths
+
+        return get_paths("windows").history_path
     return Path(os.path.expanduser("~")) / HISTORY_REL
 
 
 def _item(raw: Any) -> Optional[Item]:
-    if not isinstance(raw, dict) or not isinstance(raw.get("app"), str) or not raw["app"].startswith("/"):
+    if not isinstance(raw, dict) or not isinstance(raw.get("app"), str) or not is_abs_app_path(raw["app"]):
         return None
     return Item(app=raw["app"], name=str(raw.get("name") or os.path.basename(raw["app"])),
                 iface=str(raw.get("iface") or ""), dns=str(raw.get("dns") or ""))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import tkinter as tk
 from tkinter import filedialog, ttk
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -34,7 +35,19 @@ def column_count(width: int, tile_width: int = TILE_W, gap: int = TILE_GAP, mini
 
 def filter_tiles(entries: Sequence[AppEntry], query: str) -> List[AppEntry]:
     """Entries matching query, in the original order. An empty query returns everything."""
+    if sys.platform == "win32":
+        from intermux.platform import win_apps
+
+        return win_apps.search_entries(entries, query)  # type: ignore[arg-type,return-value]
     return desktop_entries.search_entries(entries, query)
+
+
+def _scan_installed_apps() -> List[Any]:
+    if sys.platform == "win32":
+        from intermux.platform import win_apps
+
+        return win_apps.scan_apps()
+    return desktop_entries.scan_desktop_entries()
 
 
 def _safe_focus(widget: Any) -> Any:
@@ -232,7 +245,7 @@ class AppPicker(tk.Toplevel):
 
         self._search.focus_set()
         self.after_idle(self._grab)
-        self._worker.submit(desktop_entries.scan_desktop_entries, on_done=self._on_scanned)
+        self._worker.submit(_scan_installed_apps, on_done=self._on_scanned)
 
     # -- window helpers -----------------------------------------------------
 
