@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -261,6 +262,21 @@ func loadVerifiedWintun() error {
 	return nil
 }
 
+func retryWinIP(fn func() error) error {
+	var err error
+	for i := 0; i < 20; i++ {
+		err = fn()
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, windows.ERROR_NOT_FOUND) {
+			return err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return err
+}
+
 func deterministicGUID(name string) windows.GUID {
 	sum := md5.Sum([]byte("InterMux-Wintun-Adapter-v1:" + name))
 	var g windows.GUID
@@ -364,8 +380,22 @@ func openPlatform(cfg Config) (Device, error) {
 	_, _, _ = syscall.SyscallN(wintunProcs.getAdapterLUID, adapter, uintptr(unsafe.Pointer(&rawLUID)))
 	luid := winipcfg.LUID(rawLUID)
 
-	if err := luid.SetIPAddressesForFamily(windows.AF_INET, []netip.Prefix{v4Prefix}); err != nil {
+	// Start the Wintun session before configuring routes so Windows transitions
+	// the virtual adapter media state to connected and binds Tcpip/NDIS cleanly.
+	session, _, e2 := syscall.SyscallN(wintunProcs.startSession, adapter, uintptr(ringCap))
+	if session == 0 {
 		_, _, _ = syscall.SyscallN(wintunProcs.closeAdapter, adapter)
+		return nil, fmt.Errorf("WintunStartSession failed: %w", e2)
+	}
+	cleanupOnErr := func() {
+		_, _, _ = syscall.SyscallN(wintunProcs.endSession, session)
+		_, _, _ = syscall.SyscallN(wintunProcs.closeAdapter, adapter)
+	}
+
+	if err := retryWinIP(func() error {
+		return luid.SetIPAddressesForFamily(windows.AF_INET, []netip.Prefix{v4Prefix})
+	}); err != nil {
+		cleanupOnErr()
 		return nil, fmt.Errorf("SetIPAddressesForFamily v4 failed: %w", err)
 	}
 	if ipif4, err := luid.IPInterface(windows.AF_INET); err == nil && ipif4 != nil {
@@ -379,9 +409,21 @@ func openPlatform(cfg Config) (Device, error) {
 		{Destination: netip.MustParsePrefix("0.0.0.0/1"), NextHop: netip.IPv4Unspecified(), Metric: 0},
 		{Destination: netip.MustParsePrefix("128.0.0.0/1"), NextHop: netip.IPv4Unspecified(), Metric: 0},
 	}
-	if err := luid.SetRoutesForFamily(windows.AF_INET, routesV4); err != nil {
-		_, _, _ = syscall.SyscallN(wintunProcs.closeAdapter, adapter)
-		return nil, fmt.Errorf("SetRoutesForFamily v4 failed: %w", err)
+	for _, rd := range routesV4 {
+		rd := rd
+		if err := retryWinIP(func() error {
+			aerr := luid.AddRoute(rd.Destination, rd.NextHop, rd.Metric)
+			if errors.Is(aerr, windows.ERROR_OBJECT_ALREADY_EXISTS) {
+				return nil
+			}
+			return aerr
+		}); err != nil {
+			for _, del := range routesV4 {
+				_ = luid.DeleteRoute(del.Destination, del.NextHop)
+			}
+			cleanupOnErr()
+			return nil, fmt.Errorf("AddRoute %s failed: %w", rd.Destination, err)
+		}
 	}
 
 	var routesV6 []*winipcfg.RouteData
@@ -397,7 +439,12 @@ func openPlatform(cfg Config) (Device, error) {
 				{Destination: netip.MustParsePrefix("::/1"), NextHop: netip.IPv6Unspecified(), Metric: 0},
 				{Destination: netip.MustParsePrefix("8000::/1"), NextHop: netip.IPv6Unspecified(), Metric: 0},
 			}
-			_ = luid.SetRoutesForFamily(windows.AF_INET6, routesV6)
+			for _, rd := range routesV6 {
+				aerr := luid.AddRoute(rd.Destination, rd.NextHop, rd.Metric)
+				if errors.Is(aerr, windows.ERROR_OBJECT_ALREADY_EXISTS) {
+					continue
+				}
+			}
 		}
 	}
 
@@ -408,20 +455,13 @@ func openPlatform(cfg Config) (Device, error) {
 		_ = luid.SetDNS(windows.AF_INET, []netip.Addr{netip.AddrFrom4(b)}, nil)
 	}
 
-	session, _, e2 := syscall.SyscallN(wintunProcs.startSession, adapter, uintptr(ringCap))
-	if session == 0 {
-		for _, r := range routesV4 {
-			_ = luid.DeleteRoute(r.Destination, r.NextHop)
-		}
-		_, _, _ = syscall.SyscallN(wintunProcs.closeAdapter, adapter)
-		return nil, fmt.Errorf("WintunStartSession failed: %w", e2)
-	}
-
 	readEvt, _, _ := syscall.SyscallN(wintunProcs.getReadWaitEvent, session)
 	closeEvt, err := windows.CreateEvent(nil, 1, 0, nil)
 	if err != nil {
-		_, _, _ = syscall.SyscallN(wintunProcs.endSession, session)
-		_, _, _ = syscall.SyscallN(wintunProcs.closeAdapter, adapter)
+		for _, del := range routesV4 {
+			_ = luid.DeleteRoute(del.Destination, del.NextHop)
+		}
+		cleanupOnErr()
 		return nil, err
 	}
 
