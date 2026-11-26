@@ -79,5 +79,5 @@ class ContractTests(unittest.TestCase):
         harness.make_isolated_env(self)
         lin = paths.resolve_paths(platform="linux", home="/home/u")
         win = paths.resolve_paths(platform="windows")
-        self.assertEqual(str(lin.state_dir), str(config.STATE_DIR))
+        self.assertEqual(lin.state_dir.as_posix(), config.STATE_DIR.as_posix())
         self.assertIn("InterMux", str(win.program_files_dir))

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from typing import Mapping, Optional
 
 from intermux.platform.base import normalize_platform
@@ -14,16 +14,16 @@ from intermux.platform.base import normalize_platform
 class PlatformPaths:
     """Resolved OS directories and files used by InterMux."""
 
-    state_dir: Path
-    state_file: Path
-    run_dir: Path
-    helper_lock_path: Path
-    app_log_dir: Path
-    history_path: Path
-    report_dir: Path
-    profile_dir: Path
-    program_files_dir: Optional[Path] = None
-    ipc_token_path: Optional[Path] = None
+    state_dir: PurePath
+    state_file: PurePath
+    run_dir: PurePath
+    helper_lock_path: PurePath
+    app_log_dir: PurePath
+    history_path: PurePath
+    report_dir: PurePath
+    profile_dir: PurePath
+    program_files_dir: Optional[PurePath] = None
+    ipc_token_path: Optional[PurePath] = None
 
 
 def resolve_paths(
@@ -69,17 +69,17 @@ def resolve_paths(
 
     user_home = home or os.path.expanduser("~")
     if normalize_platform() == "windows":
-        # Cross-testing Linux paths from a Windows host.
+        # Cross-testing Linux paths from a Windows host: preserve POSIX separators.
         base = PurePosixPath(user_home)
         return PlatformPaths(
-            state_dir=Path("/var/lib/intermux"),
-            state_file=Path("/var/lib/intermux/state.json"),
-            run_dir=Path("/run/intermux"),
-            helper_lock_path=Path("/run/intermux/helper.lock"),
-            app_log_dir=Path(str(base / ".local/state/intermux/logs")),
-            history_path=Path(str(base / ".local/state/intermux/history.json")),
-            report_dir=Path(str(base / "intermux-reports")),
-            profile_dir=Path(str(base / ".local/state/intermux/profiles")),
+            state_dir=PurePosixPath("/var/lib/intermux"),
+            state_file=PurePosixPath("/var/lib/intermux/state.json"),
+            run_dir=PurePosixPath("/run/intermux"),
+            helper_lock_path=PurePosixPath("/run/intermux/helper.lock"),
+            app_log_dir=base / ".local/state/intermux/logs",
+            history_path=base / ".local/state/intermux/history.json",
+            report_dir=base / "intermux-reports",
+            profile_dir=base / ".local/state/intermux/profiles",
         )
 
     home_path = Path(user_home)
