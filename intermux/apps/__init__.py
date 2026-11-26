@@ -110,6 +110,10 @@ class ChromiumHandler(AppHandler):
 def resolve_app_path(app: str) -> str:
     """Return the absolute path of an application given as a command name, a path, or the name an
     installed application shows in menus (for example "Firefox"). Raises NotFoundError."""
+    if os.name == "nt":
+        from intermux.platform import win_apps
+
+        return win_apps.resolve_app_path(app)
     path = os.path.expanduser(app)
     if os.path.isabs(path) or "/" in path:
         if not os.path.exists(path):
@@ -144,6 +148,10 @@ def _desktop_entry_named(name: str) -> Optional[str]:
 
 def get_handler(app_path: str) -> AppHandler:
     """Pick the handler for an application based on its binary name."""
+    if os.name == "nt":
+        from intermux.platform import win_apps
+
+        return win_apps.get_handler(app_path)  # type: ignore[return-value]
     # Imported here: firefox.py imports this module for AppHandler.
     from intermux.apps.firefox import FirefoxHandler
 

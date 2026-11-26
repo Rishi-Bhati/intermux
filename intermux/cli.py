@@ -301,6 +301,21 @@ def _report_stop(data: Dict[str, Any]) -> int:
 
 
 def _cmd_interfaces(args: argparse.Namespace) -> int:
+    if sys.platform == "win32":
+        from intermux import platform as _platform
+
+        ifaces = _platform.get_platform("windows").network.list_interfaces(include_all=args.all)
+        if not ifaces:
+            _warn("no network interfaces found" if args.all else "no bindable network interfaces found")
+            return 0
+        rows = [
+            [i.name, i.kind, "up" if i.up else "down", ", ".join(i.ipv4_cidrs) or "-",
+             ", ".join(i.gateways) or "-", "yes" if i.bindable else "no"]
+            for i in ifaces
+        ]
+        _print_table(["IFACE", "KIND", "STATE", "IPV4", "GATEWAY", "BINDABLE"], rows)
+        return 0
+
     from intermux.system import netinfo
 
     ifaces = netinfo.list_interfaces()
@@ -319,11 +334,24 @@ def _cmd_interfaces(args: argparse.Namespace) -> int:
 
 
 def _cmd_apps(args: argparse.Namespace) -> int:
-    from intermux.apps import desktop_entries
-
     if args.search is not None and not args.search.strip():
         _error("--search needs some text to look for")
         return 2
+    if sys.platform == "win32":
+        from intermux.platform import win_apps
+
+        entries = win_apps.scan_apps()
+        if args.search:
+            entries = win_apps.search_entries(entries, args.search)
+        if not entries:
+            _warn("no applications found" + (f" matching '{args.search}'" if args.search else ""))
+            return 0
+        rows = [[e.name, e.binary or "-", "yes" if e.bindable else f"no ({e.reason})"] for e in entries]
+        _print_table(["NAME", "BINARY", "BINDABLE"], rows)
+        return 0
+
+    from intermux.apps import desktop_entries
+
     entries = desktop_entries.scan_desktop_entries()
     if args.search:
         entries = desktop_entries.search_entries(entries, args.search)
@@ -335,13 +363,20 @@ def _cmd_apps(args: argparse.Namespace) -> int:
     return 0
 
 
+def _detect_app_env() -> Dict[str, str]:
+    if sys.platform == "win32":
+        return {}
+    from intermux.system import session
+
+    return session.build_app_env(session.detect_session())
+
+
 def _cmd_bind(args: argparse.Namespace) -> int:
     from intermux import apps
     from intermux.helper import client as helper_client
-    from intermux.system import session
 
     app_path = apps.resolve_app_path(args.app)
-    env = session.build_app_env(session.detect_session())
+    env = _detect_app_env()
     if args.close_existing:
         policy = "close"
     elif args.separate_profile:
@@ -370,6 +405,54 @@ def _cmd_bind(args: argparse.Namespace) -> int:
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
+    if sys.platform == "win32":
+        from intermux.helper import client as helper_client
+        from intermux.platform import win_pipe
+        from intermux.system import shaping, traffic
+
+        st = helper_client.call("status") or {}
+        bindings = st.get("bindings") or []
+        adoptions = st.get("adoptions") or []
+        if not bindings and not adoptions:
+            _info("no bindings")
+            return 0
+        counters = win_pipe.try_call_engine_if_running("counters") or {}
+        iface_stats = counters.get("interfaces") or {}
+        if bindings:
+            rows = []
+            for b in bindings:
+                pids = b.get("pids") or []
+                rows.append([
+                    b.get("app_name", "-"),
+                    b.get("iface", "-"),
+                    st.get("mode", "wintun"),
+                    b.get("profile_mode", "default"),
+                    f"running ({len(pids)})" if pids else "registered",
+                    "yes" if st.get("tun_up") else "socks",
+                    b.get("log_path", "-"),
+                ])
+            _print_table(["APP", "IFACE", "MODE", "PROFILE", "STATUS", "TUN", "LOG"], rows)
+        limits = st.get("limits") or {}
+        dns_map = st.get("dns") or {}
+        ifaces_seen = sorted({b.get("iface", "") for b in bindings if b.get("iface")} | set(limits) | set(dns_map))
+        if ifaces_seen:
+            print()
+            ns_rows = []
+            for iface in ifaces_seen:
+                c = iface_stats.get(iface) or {}
+                moved = f"↓ {traffic.format_bytes(c.get('rx_bytes', 0))}  ↑ {traffic.format_bytes(c.get('tx_bytes', 0))}"
+                lim = limits.get(iface) or {}
+                lim_text = (f"↓ {shaping.format_mbit(lim.get('down'))}  ↑ {shaping.format_mbit(lim.get('up'))}"
+                            if lim else "none")
+                ns_rows.append([iface, ", ".join(dns_map.get(iface) or []) or "automatic", lim_text, moved])
+            _print_table(["IFACE", "DNS", "LIMIT", "TRAFFIC"], ns_rows)
+        if adoptions:
+            print()
+            arows = [[a.get("id", "-"), a.get("app_name", "-"), a.get("iface", "-"),
+                      f"live ({len(a.get('pids') or [])})"] for a in adoptions]
+            _print_table(["ADOPTION", "APP", "IFACE", "STATUS"], arows)
+        return 0
+
     from intermux import state
     from intermux.system import procs
 
@@ -560,10 +643,9 @@ def _cmd_limit(args: argparse.Namespace) -> int:
 
 def _cmd_restart(args: argparse.Namespace) -> int:
     from intermux.helper import client as helper_client
-    from intermux.system import session
 
     app_path = _resolve_app(args.app, args.iface)
-    env = session.build_app_env(session.detect_session())
+    env = _detect_app_env()
     _info(f"restarting {os.path.basename(app_path)} on {args.iface}")
     data = helper_client.call("restart_app", {"iface": args.iface, "app": app_path, "env": env}) or {}
     _report_bind(data)
@@ -586,10 +668,9 @@ def _cmd_remove(args: argparse.Namespace) -> int:
 
 def _cmd_move(args: argparse.Namespace) -> int:
     from intermux.helper import client as helper_client
-    from intermux.system import session
 
     app_path = _resolve_app(args.app, args.iface)
-    env = session.build_app_env(session.detect_session())
+    env = _detect_app_env()
     _info(f"moving {os.path.basename(app_path)} from {args.iface} to {args.to}")
     data = helper_client.call("move_app", {"iface": args.iface, "app": app_path, "to": args.to, "env": env}) or {}
     _report_bind(data)
@@ -652,11 +733,19 @@ def _cmd_reset(args: argparse.Namespace) -> int:
 
 
 def _cmd_check(args: argparse.Namespace) -> int:
-    from intermux.system import deps
+    if sys.platform == "win32":
+        from intermux import platform as _platform
 
-    distro = deps.distro_info()
-    _info(f"distribution: {distro.name} (package manager: {distro.package_manager})")
-    report = deps.check_dependencies(distro)
+        diag = _platform.get_platform("windows").diagnostics
+        distro = diag.os_info()
+        _info(f"distribution: {distro.name} (package manager: {distro.package_manager})")
+        report = diag.check_dependencies()
+    else:
+        from intermux.system import deps
+
+        distro = deps.distro_info()
+        _info(f"distribution: {distro.name} (package manager: {distro.package_manager})")
+        report = deps.check_dependencies(distro)
     rows = [
         [d.tool, "required" if d.required else "optional", "yes" if d.present else "no", d.purpose]
         for d in report
@@ -704,6 +793,33 @@ def _cmd_report(args: argparse.Namespace) -> int:
 
 def _cmd_passwordless(args: argparse.Namespace) -> int:
     import json
+
+    if sys.platform == "win32":
+        from intermux.platform import win_pipe
+
+        action = getattr(args, "passwordless_action", None)
+        if not action:
+            _error("sub-command required: status, on, off")
+            return 2
+        if action == "status":
+            data = win_pipe.passwordless_status()
+            if getattr(args, "json", False):
+                print(json.dumps(data))
+            elif data.get("enabled"):
+                print(f"Passwordless: on ({data.get('task_name')})")
+            else:
+                print("Passwordless: off. Turn on: intermux passwordless on")
+            return 0
+        if action == "on":
+            data = win_pipe.set_passwordless(True)
+            _ok(f"passwordless enabled ({data.get('task_name')})")
+            return 0
+        if action == "off":
+            data = win_pipe.set_passwordless(False)
+            _ok("passwordless disabled")
+            return 0
+        return 2
+
     from intermux.system import passwordless
 
     action = getattr(args, "passwordless_action", None)

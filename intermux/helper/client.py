@@ -38,6 +38,11 @@ def helper_command() -> List[str]:
 
 def call(action: str, params: Optional[Dict[str, Any]] = None, *, timeout: float = 300.0) -> Any:
     """Send one request to the helper and return its data, or raise HelperError."""
+    if sys.platform == "win32":
+        from intermux import platform as _platform
+
+        return _platform.get_platform("windows").elevation.helper_call(action, params, timeout=timeout)
+
     request = {"v": PROTOCOL_VERSION, "action": action, "params": dict(params or {})}
     argv = helper_command()
     try:
