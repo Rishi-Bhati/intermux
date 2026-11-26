@@ -90,6 +90,9 @@ class Win32SecurityAndEngineTests(unittest.TestCase):
         self.assertTrue(chk_data["wintun_ok"], chk_data)
 
         # Start real Wintun daemon briefly, verify pipe server identity + ping/interfaces/set_limit/counters/shutdown.
+        import ctypes
+        import time
+
         sid = win_pipe.current_user_sid()
         daemon_proc = subprocess.Popen(
             [str(expected), "daemon", "--allowed-sid", sid],
@@ -98,8 +101,21 @@ class Win32SecurityAndEngineTests(unittest.TestCase):
             text=True,
         )
         try:
-            pipe_path, exp = win_pipe.ensure_daemon(timeout=10.0)
-            self.assertEqual(exp, expected)
+            pipe_path = win_pipe.pipe_name_for_sid(sid)
+            deadline = time.monotonic() + 12.0
+            connected = False
+            while time.monotonic() < deadline:
+                if daemon_proc.poll() is not None:
+                    out, err = daemon_proc.communicate()
+                    self.fail(f"daemon exited prematurely ({daemon_proc.returncode}): {out}\n{err}")
+                try:
+                    h = win_pipe._connect_and_verify_pipe(pipe_path, expected)
+                    ctypes.windll.kernel32.CloseHandle(h)  # type: ignore[attr-defined]
+                    connected = True
+                    break
+                except FileNotFoundError:
+                    time.sleep(0.15)
+            self.assertTrue(connected, f"timed out waiting for {pipe_path}")
             pong = win_pipe.call_engine("ping")
             self.assertTrue(pong["pong"])
             self.assertEqual(pong["mode"], "wintun")
@@ -111,5 +127,5 @@ class Win32SecurityAndEngineTests(unittest.TestCase):
             try:
                 win_pipe.call_engine("shutdown")
             except Exception:
-                pass
+                daemon_proc.terminate()
             daemon_proc.wait(timeout=10)
