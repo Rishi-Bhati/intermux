@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import copy
 import re
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 from intermux import config, dnsconf
 from intermux.errors import ValidationError
+from intermux.platform.base import (
+    LINUX_IFACE_RE,
+    has_control_chars as _has_control_chars,
+    normalize_platform,
+    validate_app_path as _platform_validate_app,
+    validate_iface_name as _platform_validate_iface,
+)
 from intermux.system import shaping
 
 PROTOCOL_VERSION = 1
@@ -15,7 +22,7 @@ ACTIONS = ("status", "bind", "stop_app", "kill_app", "teardown_idle", "reset", "
            "adopt", "release_adoption", "batch", "set_dns", "set_limit", "restart_app", "remove_namespace",
            "reconnect", "move_app")
 RUNNING_POLICIES = ("ask", "close", "separate")
-IFACE_RE = r"^[A-Za-z0-9_.:@-]{1,15}$"
+IFACE_RE = LINUX_IFACE_RE
 
 _IFACE_PATTERN = re.compile(IFACE_RE)
 _MAX_PATH = 4096
@@ -28,17 +35,6 @@ MAX_BATCH_OPS = 50
 
 def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
-
-
-def _has_control_chars(value: str) -> bool:
-    """True for strings the OS cannot take: NUL, CR, LF, or text that is not valid UTF-8 (lone surrogates)."""
-    if any(ch in value for ch in _FORBIDDEN_CHARS):
-        return True
-    try:
-        value.encode("utf-8")
-    except UnicodeEncodeError:
-        return True
-    return False
 
 
 def validate_env(env: Any) -> Dict[str, str]:
@@ -55,27 +51,17 @@ def validate_env(env: Any) -> Dict[str, str]:
     return clean
 
 
-def validate_iface_name(value: Any) -> str:
+def validate_iface_name(value: Any, *, platform: Optional[str] = None) -> str:
     """The interface-name rule shared by the helper and the CLI. Raises ValidationError."""
-    return _v_iface("iface", value)
+    return _v_iface("iface", value, platform=platform)
 
 
-def _v_iface(name: str, value: Any) -> str:
-    if not isinstance(value, str) or value in (".", "..") or not _IFACE_PATTERN.fullmatch(value):
-        raise ValidationError(f"invalid interface name for {name} "
-                              "(1 to 15 characters: letters, digits and _ . : @ -)")
-    return value
+def _v_iface(name: str, value: Any, *, platform: Optional[str] = None) -> str:
+    return _platform_validate_iface(value, field=name, platform=platform)
 
 
-def _v_app(name: str, value: Any) -> str:
-    if not isinstance(value, str) or not value.startswith("/") or value.endswith("/"):
-        raise ValidationError(f"{name} must be an absolute path to a file")
-    if _has_control_chars(value) or len(value.encode("utf-8")) > _MAX_PATH:
-        raise ValidationError(f"invalid {name}: too long or contains control characters")
-    if "=" in value:
-        # The app is started through `env -i NAME=VALUE... app`, where env would read it as a variable.
-        raise ValidationError(f"{name} cannot contain '='; rename the file or use a link to it")
-    return value
+def _v_app(name: str, value: Any, *, platform: Optional[str] = None) -> str:
+    return _platform_validate_app(value, field=name, platform=platform)
 
 
 _ADOPT_ID_PATTERN = re.compile(r"^[0-9a-f]{8,32}$")
@@ -196,15 +182,23 @@ _PARAM_SPECS: Dict[str, Dict[str, Tuple[Callable[[str, Any], Any], Any]]] = {
 }
 
 
-def _validate_spec(specs: Dict[str, Tuple[Callable[[str, Any], Any], Any]], label: str,
-                   params: Dict[str, Any]) -> Dict[str, Any]:
+def _call_validator(validator: Callable[..., Any], name: str, value: Any, platform: Optional[str]) -> Any:
+    if validator in (_v_iface, _v_app):
+        return validator(name, value, platform=platform)
+    if validator is _v_ops:
+        return validator(name, value, platform=platform)
+    return validator(name, value)
+
+
+def _validate_spec(specs: Dict[str, Tuple[Callable[..., Any], Any]], label: str,
+                   params: Dict[str, Any], *, platform: Optional[str] = None) -> Dict[str, Any]:
     for key in params:
         if key not in specs:
             raise ValidationError(f"unknown parameter for {label}: {key}")
     clean: Dict[str, Any] = {}
     for name, (validator, default) in specs.items():
         if name in params:
-            clean[name] = validator(name, params[name])
+            clean[name] = _call_validator(validator, name, params[name], platform)
         elif default is _REQUIRED:
             raise ValidationError(f"missing parameter for {label}: {name}")
         else:
@@ -215,7 +209,7 @@ def _validate_spec(specs: Dict[str, Tuple[Callable[[str, Any], Any], Any]], labe
 BATCH_OPS = ("bind", "adopt", "set_limit")
 
 
-def _v_ops(name: str, value: Any) -> list:
+def _v_ops(name: str, value: Any, *, platform: Optional[str] = None) -> list:
     """Validate the ops of a batch: each op is a bind, adopt or set_limit with the single action's rules."""
     if not isinstance(value, list) or not 1 <= len(value) <= MAX_BATCH_OPS:
         raise ValidationError(f"{name} must be a list of 1 to {MAX_BATCH_OPS} operations")
@@ -227,7 +221,7 @@ def _v_ops(name: str, value: Any) -> list:
         if not isinstance(kind, str) or kind not in BATCH_OPS:
             raise ValidationError("unknown operation in batch")
         fields = {k: v for k, v in op.items() if k != "op"}
-        checked = _validate_spec(_PARAM_SPECS[kind], f"batch {kind}", fields)
+        checked = _validate_spec(_PARAM_SPECS[kind], f"batch {kind}", fields, platform=platform)
         checked["op"] = kind
         clean.append(checked)
     return clean
@@ -236,7 +230,7 @@ def _v_ops(name: str, value: Any) -> list:
 _PARAM_SPECS["batch"] = {"ops": (_v_ops, _REQUIRED)}
 
 
-def validate_request(obj: Any) -> Tuple[str, Dict[str, Any]]:
+def validate_request(obj: Any, *, platform: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     """Check a decoded request and return (action, sanitized params). Raises ValidationError."""
     if not isinstance(obj, dict):
         raise ValidationError("request must be a JSON object")
@@ -252,7 +246,8 @@ def validate_request(obj: Any) -> Tuple[str, Dict[str, Any]]:
     if not isinstance(params, dict):
         raise ValidationError("params must be an object")
 
-    clean = _validate_spec(_PARAM_SPECS[action], action, params)
+    plat = normalize_platform(platform)
+    clean = _validate_spec(_PARAM_SPECS[action], action, params, platform=plat)
     return action, clean
 
 

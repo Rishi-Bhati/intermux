@@ -15,6 +15,7 @@ import os
 import platform
 import re
 import stat
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -32,30 +33,55 @@ LOG_TAIL_BYTES = 256 * 1024
 
 def default_report_dir() -> Path:
     """Folder where bundles are saved unless the caller picks another one."""
+    if sys.platform == "win32":
+        from intermux.platform import get_paths
+
+        return get_paths("windows").report_dir
     return Path(os.path.expanduser("~")) / REPORT_DIR_NAME
+
+
+def _effective_log_dir(home: Optional[str]) -> Path:
+    if sys.platform == "win32" and home is None:
+        from intermux.platform import get_paths
+
+        return get_paths("windows").app_log_dir
+    if sys.platform == "win32" and home is not None:
+        return Path(home) / "AppData" / "Local" / "InterMux" / "logs"
+    base = home or os.path.expanduser("~")
+    return Path(base) / LOG_DIR_REL
 
 
 def collect_diagnostics(include_logs: bool = True, home: Optional[str] = None) -> Dict[str, Any]:
     """Gather non-personal diagnostic details. Each section degrades to an error note on failure."""
-    home = home or os.path.expanduser("~")
+    effective_home = home or os.path.expanduser("~")
+    session_name = (
+        f"Windows {platform.release()}"
+        if sys.platform == "win32"
+        else (os.environ.get("XDG_SESSION_TYPE", "unknown") or "unknown")
+    )
     info: Dict[str, Any] = {
         "intermux": VERSION,
         "python": platform.python_version(),
         "kernel": platform.release(),
         "machine": platform.machine(),
         "distribution": _distribution(),
-        "session": os.environ.get("XDG_SESSION_TYPE", "unknown") or "unknown",
+        "session": session_name,
         "interfaces": _interfaces(),
         "bindings": _bindings(),
         "tools": _tools(),
     }
     if include_logs:
-        info["recent_logs"] = _recent_logs(home)
+        info["recent_logs"] = _recent_logs(home, effective_home)
     return info
 
 
 def _distribution() -> str:
     try:
+        if sys.platform == "win32":
+            from intermux.platform import get_platform
+
+            info = get_platform("windows").diagnostics.os_info()
+            return f"{info.name} {info.version_id}".strip()
         from intermux.system.deps import distro_info
 
         info = distro_info()
@@ -67,6 +93,13 @@ def _distribution() -> str:
 
 def _interfaces() -> List[Dict[str, Any]]:
     try:
+        if sys.platform == "win32":
+            from intermux.platform import get_platform
+
+            return [
+                {"name": i.name, "kind": i.kind, "up": i.up, "bindable": i.bindable}
+                for i in get_platform("windows").network.list_interfaces(include_all=True)
+            ]
         from intermux.system import netinfo
 
         # Names and states only: IP and MAC addresses are left out on purpose.
@@ -82,10 +115,12 @@ def _interfaces() -> List[Dict[str, Any]]:
 def _bindings() -> List[Dict[str, Any]]:
     try:
         from intermux import state
+        from intermux.platform import get_paths
 
+        state_path = get_paths("windows").state_file if sys.platform == "win32" else state.STATE_FILE
         return [
             {"iface": b.iface, "app": b.app_name, "profile_mode": b.profile_mode, "namespace": b.namespace}
-            for b in state.load_state().bindings
+            for b in state.load_state(state_path).bindings
         ]
     except Exception as exc:
         log.debug("state unreadable", exc_info=True)
@@ -94,6 +129,13 @@ def _bindings() -> List[Dict[str, Any]]:
 
 def _tools() -> List[Dict[str, Any]]:
     try:
+        if sys.platform == "win32":
+            from intermux.platform import get_platform
+
+            return [
+                {"tool": d.tool, "required": d.required, "present": d.present}
+                for d in get_platform("windows").diagnostics.check_dependencies()
+            ]
         from intermux.system import deps
 
         return [
@@ -126,7 +168,7 @@ def _read_log_tail(path: Path, max_lines: int, max_bytes: int = LOG_TAIL_BYTES) 
 
     Symlinks, FIFOs and other non-regular files are skipped. Only the tail is read.
     """
-    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
     try:
         fd = os.open(path, flags)
     except OSError:
@@ -156,14 +198,15 @@ def _read_log_tail(path: Path, max_lines: int, max_bytes: int = LOG_TAIL_BYTES) 
     return lines[-max_lines:]
 
 
-def _recent_logs(home: str) -> List[Dict[str, Any]]:
-    files = _log_files(Path(home) / LOG_DIR_REL)
+def _recent_logs(home: Optional[str], effective_home: Optional[str] = None) -> List[Dict[str, Any]]:
+    files = _log_files(_effective_log_dir(home))
+    scrub_home = effective_home or home or os.path.expanduser("~")
     excerpts = []
     for path in files[:LOG_FILES_TO_INCLUDE]:
         lines = _read_log_tail(path, LOG_LINES_PER_FILE)
         if lines is None:
             continue
-        text = scrub_text("\n".join(lines), home, _current_user())
+        text = scrub_text("\n".join(lines), scrub_home, _current_user())
         excerpts.append({"file": path.name, "text": text})
     return excerpts
 
@@ -182,6 +225,7 @@ _IPV4_RE = re.compile(
     r"(?:25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(?![0-9])"
 )
 _HOME_RE = re.compile(r"/home/[^/\s]+/")
+_WIN_USERS_RE = re.compile(r"[A-Za-z]:\\Users\\[^\\\s]+\\?", re.IGNORECASE)
 _RUN_USER_RE = re.compile(r"/run/user/[0-9]+")
 _URL_QUERY_RE = re.compile(r"(https?://[^\s?#\"'<>]*)\?[^\s\"'<>]*", re.IGNORECASE)
 _TOKEN_RE = re.compile(r"\br[sp]k_[0-9A-Fa-f]+")
@@ -191,7 +235,10 @@ def scrub_text(text: str, home: Optional[str], username: Optional[str]) -> str:
     """Remove personal data: home path, user name, IP and MAC addresses, URL queries and report tokens."""
     if home:
         text = text.replace(home, "~")
+        if "\\" in home:
+            text = text.replace(home.replace("\\", "/"), "~")
     text = _HOME_RE.sub("/home/USER/", text)
+    text = _WIN_USERS_RE.sub(lambda m: m.group(0)[:3] + "Users\\USER" + ("\\" if m.group(0).endswith("\\") else ""), text)
     text = _RUN_USER_RE.sub("/run/user/UID", text)
     if username and len(username) >= 2:
         text = re.sub(rf"(?<![0-9A-Za-z_]){re.escape(username)}(?![0-9A-Za-z_])", "USER", text)
@@ -204,7 +251,7 @@ def scrub_text(text: str, home: Optional[str], username: Optional[str]) -> str:
 
 
 def _current_user() -> str:
-    name = os.environ.get("USER", "")
+    name = os.environ.get("USER") or os.environ.get("USERNAME") or ""
     if name:
         return name
     try:
@@ -315,7 +362,7 @@ def write_bug_zip(directory: Optional[Path] = None, home: Optional[str] = None) 
     """
     import zipfile
 
-    home = home or os.path.expanduser("~")
+    effective_home = home or os.path.expanduser("~")
     created = time.strftime("%Y-%m-%d %H:%M:%S %Z")
     diagnostics = collect_diagnostics(include_logs=False, home=home)
     summary_payload = {
@@ -324,23 +371,23 @@ def write_bug_zip(directory: Optional[Path] = None, home: Optional[str] = None) 
         "report_type": "bug",
     }
     user = _current_user()
-    summary = scrub_text(build_markdown(summary_payload, diagnostics, created), home, user)
+    summary = scrub_text(build_markdown(summary_payload, diagnostics, created), effective_home, user)
 
     target_dir = directory or default_report_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
 
-    log_files = _log_files(Path(home) / LOG_DIR_REL)
+    log_files = _log_files(_effective_log_dir(home))
 
     # Written with owner-only permissions: the archive contains log lines.
     fd, path = _create_unique(target_dir, f"intermux-bug-report-{stamp}", ".zip")
     with os.fdopen(fd, "wb") as handle, zipfile.ZipFile(handle, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("system-report.md", summary)
         for log_path in log_files:
-            lines = _read_log_tail(log_path, LOG_LINES_IN_ZIP)
+            lines = _read_log_tail(log_path, LOG_LINES_PER_FILE * 0 + LOG_LINES_IN_ZIP)
             if lines is None:
                 continue
-            text = scrub_text("\n".join(lines), home, user)
+            text = scrub_text("\n".join(lines), effective_home, user)
             archive.writestr(f"logs/{log_path.name}", text + "\n")
         if not log_files:
             archive.writestr("logs/README.txt", "No app log files were found.\n")

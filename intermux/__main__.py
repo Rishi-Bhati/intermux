@@ -11,13 +11,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     """Dispatch argv to the GUI, the helper, or the CLI and return the exit code."""
     if argv is None:
         argv = sys.argv[1:]
-    # polkit authorises the whole binary, so root may only ever run the helper, watcher, or passwordless.
-    if os.geteuid() == 0 and argv[:1] not in (["helper"], ["watch"], ["passwordless"]):
-        if argv:
-            sys.stderr.write("[X] run InterMux commands as your own user; root is used only by the helper\n")
-        else:
-            sys.stderr.write("[X] the GUI cannot run as root; run InterMux as your own user\n")
-        return 1
+    if sys.platform != "win32":
+        from intermux import platform as _platform
+
+        # polkit authorises the whole binary, so root may only ever run the helper, watcher, or passwordless.
+        if _platform.is_elevated() and argv[:1] not in (["helper"], ["watch"], ["passwordless"]):
+            if argv:
+                sys.stderr.write("[X] run InterMux commands as your own user; root is used only by the helper\n")
+            else:
+                sys.stderr.write("[X] the GUI cannot run as root; run InterMux as your own user\n")
+            return 1
     # The watcher is a long-running root service for systemd; pkexec must only ever start the helper.
     if argv[:1] == ["watch"] and "PKEXEC_UID" in os.environ:
         sys.stderr.write("[X] the watcher runs as a system service (intermux-watch.service), not through pkexec\n")

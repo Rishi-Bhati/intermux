@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import fcntl
 import ipaddress
 import json
 import logging
 import os
 import re
+import sys
 import tempfile
 import time
 from contextlib import contextmanager
@@ -13,8 +13,15 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
+
 from intermux import config
 from intermux.config import LOCK_FILE, STATE_FILE, SUBNET_BASE_OCTET
+from intermux.errors import ValidationError
+from intermux.platform.base import normalize_platform, validate_iface_name
 
 log = logging.getLogger("intermux.state")
 
@@ -108,16 +115,27 @@ def state_to_dict(state: State) -> Dict[str, Any]:
     return asdict(state)
 
 
-def state_from_dict(data: Dict[str, Any]) -> State:
+def _valid_iface_for_platform(iface: Any, plat: str) -> bool:
+    if plat == "windows":
+        try:
+            validate_iface_name(iface, platform="windows")
+            return True
+        except ValidationError:
+            return False
+    return isinstance(iface, str) and bool(_IFACE_NAME_RE.fullmatch(iface)) and iface not in (".", "..")
+
+
+def state_from_dict(data: Dict[str, Any], *, platform: Optional[str] = None) -> State:
     """Build State from a dict, ignoring unknown keys and defaulting missing ones. Raises ValueError if not a dict."""
     if not isinstance(data, dict):
         raise ValueError("state must be a JSON object")
 
+    plat = normalize_platform(platform)
     subnets: Dict[str, str] = {}
     raw_subnets = data.get("subnets")
     if isinstance(raw_subnets, dict):
         for iface, cidr in raw_subnets.items():
-            if (isinstance(iface, str) and _IFACE_NAME_RE.fullmatch(iface) and iface not in (".", "..")
+            if (_valid_iface_for_platform(iface, plat)
                     and valid_pool_subnet(cidr)):
                 subnets[iface] = cidr
             else:
@@ -127,7 +145,7 @@ def state_from_dict(data: Dict[str, Any]) -> State:
     raw_bindings = data.get("bindings")
     if isinstance(raw_bindings, list):
         for item in raw_bindings:
-            binding = _binding_from_dict(item)
+            binding = _binding_from_dict(item, platform=plat)
             if binding is not None:
                 bindings.append(binding)
 
@@ -135,7 +153,7 @@ def state_from_dict(data: Dict[str, Any]) -> State:
     raw_adoptions = data.get("adoptions")
     if isinstance(raw_adoptions, list):
         for item in raw_adoptions:
-            adoption = _adoption_from_dict(item)
+            adoption = _adoption_from_dict(item, platform=plat)
             if adoption is not None:
                 adoptions.append(adoption)
 
@@ -191,7 +209,11 @@ def _to_int(value: Any, default: int) -> int:
         return default
 
 
-def _binding_from_dict(item: Any) -> Optional[Binding]:
+_WIN_NS_RE = re.compile(r"^(?:ns|win)_[0-9a-f]{8}$")
+
+
+def _binding_from_dict(item: Any, *, platform: Optional[str] = None) -> Optional[Binding]:
+    plat = normalize_platform(platform)
     if not isinstance(item, dict):
         log.warning("ignoring malformed binding entry: %r", item)
         return None
@@ -205,16 +227,17 @@ def _binding_from_dict(item: Any) -> Optional[Binding]:
     except (TypeError, ValueError):
         log.warning("ignoring binding with non-integer table/priority: %r", item)
         return None
-    if not valid_pool_subnet(item["subnet"]):
+    if plat != "windows" and not valid_pool_subnet(item["subnet"]):
         log.warning("ignoring binding with invalid subnet: %r", item)
         return None
     if not 1 <= table <= _MAX_TABLE or not 1 <= priority <= _MAX_PRIORITY:
         log.warning("ignoring binding with out-of-range table/priority: %r", item)
         return None
-    if not _IFACE_NAME_RE.fullmatch(str(item["iface"])) or str(item["iface"]) in (".", ".."):
+    if not _valid_iface_for_platform(item["iface"], plat):
         log.warning("ignoring binding with invalid interface name: %r", item)
         return None
-    if not re.fullmatch(config.NS_NAME_RE, str(item["namespace"])):
+    ns_pattern = _WIN_NS_RE if plat == "windows" else re.compile(config.NS_NAME_RE)
+    if not ns_pattern.fullmatch(str(item["namespace"])):
         log.warning("ignoring binding with invalid namespace name: %r", item)
         return None
     raw_pid = item.get("pid")
@@ -251,7 +274,8 @@ _SLOT_RANGE = (1, 200)   # adopt.SLOT_MIN..SLOT_MAX (not imported: state must no
 _REQUIRED_ADOPTION_KEYS = ("id", "iface", "app", "slot", "group", "mark", "table", "priority", "uid")
 
 
-def _adoption_from_dict(item: Any) -> Optional[Adoption]:
+def _adoption_from_dict(item: Any, *, platform: Optional[str] = None) -> Optional[Adoption]:
+    plat = normalize_platform(platform)
     if not isinstance(item, dict):
         log.warning("ignoring malformed adoption entry: %r", item)
         return None
@@ -281,7 +305,7 @@ def _adoption_from_dict(item: Any) -> Optional[Adoption]:
     # The group path, slot and interface are used for cgroup, sysctl and nft paths by the root helper:
     # they must be exactly what InterMux itself would have written for this id.
     if (str(item["group"]) != f"intermux/adopt-{adopt_id}" or not _SLOT_RANGE[0] <= slot <= _SLOT_RANGE[1]
-            or not _IFACE_NAME_RE.fullmatch(str(item["iface"])) or str(item["iface"]) in (".", "..")):
+            or not _valid_iface_for_platform(item["iface"], plat)):
         log.warning("ignoring adoption with an invalid group, slot or interface: %r", item)
         return None
     app = str(item["app"])
@@ -344,7 +368,8 @@ def save_state(state: State, path: Path = STATE_FILE) -> None:
             fh.write(payload)
             fh.flush()
             os.fsync(fh.fileno())
-        os.chmod(tmp, 0o644)
+        if sys.platform != "win32":
+            os.chmod(tmp, 0o644)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -356,17 +381,35 @@ def save_state(state: State, path: Path = STATE_FILE) -> None:
 
 @contextmanager
 def state_lock(path: Path = LOCK_FILE) -> Iterator[None]:
-    """Exclusive flock on path for the duration of the block. Blocks until acquired."""
+    """Exclusive lock on path for the duration of the block. Blocks until acquired."""
+    if sys.platform == "win32":
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            if os.fstat(fd).st_size == 0:
+                os.write(fd, b"\0")
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)  # type: ignore[name-defined]
+            try:
+                yield
+            finally:
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)  # type: ignore[name-defined]
+        finally:
+            os.close(fd)
+        return
+
     # Only the root helper and watcher use this directory; other users must not hold their lock.
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
     fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
     try:
         os.fchmod(fd, 0o600)   # also tighten a lock created by an older version
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        fcntl.flock(fd, fcntl.LOCK_EX)  # type: ignore[name-defined]
         try:
             yield
         finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            fcntl.flock(fd, fcntl.LOCK_UN)  # type: ignore[name-defined]
     finally:
         os.close(fd)
