@@ -17,7 +17,11 @@ depends=('iproute2' 'iptables' 'polkit' 'util-linux' 'procps-ng' 'xdg-utils' 'gl
 # pyinstaller is in the AUR, not the official repositories
 makedepends=('pyinstaller' 'cargo')
 optdepends=('nftables: route already-running apps'
-            'curl: public IP check')
+            'curl: public IP check'
+            'vulkan-icd-loader: Rune desktop interface'
+            'vulkan-driver: Rune desktop interface'
+            'libxkbcommon: Rune desktop keyboard input'
+            'wayland: Rune desktop interface on Wayland')
 install=intermux.install
 # !strip: stripping breaks the PyInstaller bundle
 options=('!strip' '!debug')
@@ -39,6 +43,9 @@ build() {
             install -m 0755 "$CARGO_TARGET_DIR/release/$bin" "$srcdir/dist/intermux/$bin"
         fi
     done
+    if [[ "${INTERMUX_BUILD_RUNE:-0}" == 1 ]]; then
+        sh packaging/linux/build-ui.sh "$srcdir/dist/intermux" "$srcdir/cargo-ui-target"
+    fi
 }
 
 package() {

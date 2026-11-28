@@ -150,7 +150,8 @@ def pids_in_netns(name: str) -> List[int]:
     return [p.pid for p in list_procs() if p.netns == ino]
 
 
-def find_app_procs(app_path: str, comm_names: Sequence[str] = (), uid: Optional[int] = None) -> List[Proc]:
+def find_app_procs(app_path: str, comm_names: Sequence[str] = (), uid: Optional[int] = None,
+                   *, processes: Optional[Iterable[Proc]] = None) -> List[Proc]:
     """Return processes whose comm is in comm_names or whose exe is app_path.
 
     When uid is given, only processes with that real uid are returned. Never includes this process.
@@ -159,7 +160,7 @@ def find_app_procs(app_path: str, comm_names: Sequence[str] = (), uid: Optional[
     real_app = os.path.realpath(app_path)
     me = os.getpid()
     matches: List[Proc] = []
-    for proc in list_procs():
+    for proc in list_procs() if processes is None else processes:
         if proc.pid == me:
             continue
         if uid is not None and proc.uid != uid:

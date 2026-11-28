@@ -167,9 +167,18 @@ impl Server {
             }
             "traffic.snapshot" => json!(self.last_sample),
             "gui.raise" => {
+                let token = match r.params.get("activation_token") {
+                    Some(Value::String(token)) if !token.is_empty() => Some(token),
+                    None => None,
+                    Some(_) => return error(ErrorCode::BadRequest, "invalid activation token".into()),
+                };
                 let raised = self.clients.values().any(|c| c.subscribed("gui"));
                 if raised {
-                    self.broadcast(Some("gui"), Event::new("gui.raise", json!({})));
+                    let data = match token {
+                        Some(token) => json!({ "activation_token": token }),
+                        None => json!({}),
+                    };
+                    self.broadcast(Some("gui"), Event::new("gui.raise", data));
                 }
                 json!({"raised": raised})
             }

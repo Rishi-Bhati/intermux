@@ -31,3 +31,4 @@ Thumbs.db
 
 # Rust build artifacts
 rust/target/
+rust/intermux-ui/target/

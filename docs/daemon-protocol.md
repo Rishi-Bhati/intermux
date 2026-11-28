@@ -44,7 +44,7 @@ Error codes: `bad_request`, `unknown_method`, `unsupported_version`, `internal`.
 | `interfaces.list` | `{}` | `{"interfaces": [Interface]}` |
 | `bindings.list` | `{}` | `{"bindings": [Binding], "adoptions": [Adoption]}` |
 | `traffic.snapshot` | `{}` | the last `traffic.sample` data, or `{"t": 0, "interfaces": {}, "namespaces": {}}` |
-| `gui.raise` | `{}` | `{"raised": true}` if a client subscribed to `gui` exists (the daemon sends it a `gui.raise` event), else `{"raised": false}` (the caller should start the window itself) |
+| `gui.raise` | `{}` or `{"activation_token": "…"}` | `{"raised": true}` if a client subscribed to `gui` exists (the daemon sends it a `gui.raise` event), else `{"raised": false}` (the caller should start the window itself) |
 | `ping` | `{}` | `{"pong": true}` |
 
 ### Interface
@@ -88,7 +88,7 @@ user are listed (state.json is world-readable anyway); clients show only their o
 | bindings | `adoption.started`, `adoption.stopped` | Adoption |
 | bindings | `app.exited` | `{"iface", "app_name", "uid", "expected": false}` — a bound app's last process ended while its binding is still in state (crash or user closed it) |
 | traffic | `traffic.sample` | once per second: `{"t": 1763452800.5, "interfaces": {"wlan0": {"down": 12345.0, "up": 678.0}}, "namespaces": {"wlan0": {"down": 1000.0, "up": 50.0}}}` — bytes/s; `namespaces` is per bound interface, from the host-side veth (download = veth tx, upload = veth rx, like `traffic.veth_sample`) |
-| gui | `gui.raise` | `{}` |
+| gui | `gui.raise` | `{}` or the supplied `{"activation_token": "…"}`. Desktop launchers may supply a nonempty Wayland activation token or X11 startup ID so the window can request focus. |
 | (all) | `daemon.shutdown` | `{}` — sent to every client before the daemon exits |
 
 ## Sources and timing

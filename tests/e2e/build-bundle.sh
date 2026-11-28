@@ -3,7 +3,7 @@
 set -eu
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq >/dev/null
-apt-get install -y -qq python3 python3-venv python3-tk libpython3.10 binutils xvfb xauth curl build-essential pkg-config >/dev/null
+apt-get install -y -qq python3 python3-venv python3-tk libpython3.10 binutils xvfb xauth curl build-essential pkg-config libwayland-dev libxkbcommon-dev libvulkan1 mesa-vulkan-drivers >/dev/null
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
 . "$HOME/.cargo/env"
 rm -rf /job && mkdir -p /job && cp -a /src/. /job/tree && cd /job/tree
@@ -21,6 +21,10 @@ for bin in intermuxd intermux-tray; do
         chmod 0755 "/job/dist/intermux/$bin"
     fi
 done
+if [ -f rust/intermux-ui/Cargo.toml ]; then
+    rustup toolchain install 1.100.0 --profile minimal
+    sh packaging/linux/build-ui.sh /job/dist/intermux /job/cargo-ui-target
+fi
 STAGE=/job/intermux-linux
 mkdir -p "$STAGE/dist" "$STAGE/packaging"
 cp -a /job/dist/intermux "$STAGE/dist/intermux"

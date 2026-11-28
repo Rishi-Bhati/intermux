@@ -11,15 +11,15 @@
 
 <br>
 
-<a href="docs/media/intermux-demo.mp4"><img src="docs/media/intermux-demo.webp" width="900" alt="InterMux demo: pick wlan0, choose Firefox, add it to the queue, press Start all, and each app runs on its own connection with live speeds and its public IP"></a>
+<a href="website/public/app-preview/dashboard.webp"><img src="website/public/app-preview/dashboard.webp" width="900" alt="InterMux routes dashboard with apps grouped by interface, a download graph, and connection details"></a>
 
-<sub>Click the animation for the full-quality video. The data in it is made up.</sub>
+<sub>InterMux 3.0 preview captured from the Rune desktop app with sample data.</sub>
 
 </div>
 
 InterMux lets you choose which network connection each application uses. For example, you can keep a torrent client on Ethernet while your browser uses Wi-Fi or a phone hotspot. It runs each bound application inside its own network namespace and routes that namespace through the interface you pick. A small root helper, gated by polkit, sets up the networking. Your applications always run as your own user, so your profiles and settings are kept.
 
-InterMux has a graphical interface and a command line. Version 2.2.1 is the Linux edition. A separate Windows edition lives in [`windows/`](windows/README.md).
+InterMux has a graphical interface and a command line. Version 2.2.1 is the stable Linux release. A separate Windows edition lives in [`windows/`](windows/README.md).
 
 ## Supported platforms
 
@@ -48,7 +48,7 @@ InterMux has a graphical interface and a command line. Version 2.2.1 is the Linu
 - Routing of an already running application through a cgroup v2 group and nftables packet marks, without restarting it.
 - Desktop application list read from `.desktop` entries (system, user, Flatpak and Snap export directories), plus free-form names or paths.
 - Special handling for Firefox and for the Chromium family (Chromium, Chrome, Brave, Vivaldi, Edge, Opera) to open a separate profile or close and reopen the browser.
-- GUI with a New binding form, a queue that starts many apps with one password prompt, and a Bindings table that shows each interface with its apps, their traffic and their limits. Its buttons follow the selection. Recently routed apps are remembered with their DNS.
+- Route apps from the dashboard, launch a batch with one password prompt, and inspect traffic, DNS, and speed limits by interface. InterMux remembers recently routed apps and their DNS settings.
 - Full command line for scripting (`bind`, `status`, `stop`, `kill`, `restart`, `move`, `verify`, `dns`, `limit`, `remove`, `reconnect`, `adopt`, `release`, `teardown-idle`, `reset`, `interfaces`, `apps`, `check`, `report`).
 - Dependency check (`intermux check`) with a package-manager-specific install hint for each missing tool.
 - Bug report zip written to your own disk; nothing is uploaded automatically.
@@ -137,6 +137,10 @@ sudo ./install.sh
 
 Without a `dist/` directory, `install.sh` builds the PyInstaller bundle as your own user (`$SUDO_USER`) in a temporary virtualenv, copies the result to a root-owned staging directory, and then installs it. It needs `python3`, the `venv` module and `tkinter`. If it cannot find a needed tool it prints an install command for your distribution. Re-running the script is safe.
 
+The Rune desktop preview builds separately from the daemon and tray. It needs Rust 1.100.0, `pkg-config`, Wayland and XKB development libraries, and access to the locked Cargo dependencies. On Ubuntu 22.04, install `libwayland-dev` and `libxkbcommon-dev`. At runtime, use `libxkbcommon0`, the Vulkan loader (`libvulkan1`), and a Vulkan driver for your GPU or the software driver in `mesa-vulkan-drivers`. Wayland sessions also need the Wayland client library. A source install can still complete with the Tk interface if the Rune build fails.
+
+For a checkout without an installation, build the preview with `cargo +1.100.0 build --locked --manifest-path rust/intermux-ui/Cargo.toml`, then run `python3 -m intermux` from the checkout. The launcher looks for the native binary in the crate's default Cargo target directory. The Python bridge runs as your own user. Installing InterMux is still required for polkit to find its system helper.
+
 ### Distribution packages
 
 Recipes exist in the repository, but they are starting points that have not been published to any repository. Build them on the target distribution.
@@ -146,6 +150,8 @@ Recipes exist in the repository, but they are starting points that have not been
 | Arch | `packaging/arch/PKGBUILD` | Builds with `makepkg`; needs `pyinstaller` from the AUR. Not published to the AUR yet. Update `sha256sums` (`updpkgsums`) for each release. |
 | Debian / Ubuntu | `packaging/debian/` | Standard `debian/` directory (control, rules, postinst). |
 | Fedora | `packaging/fedora/intermux.spec` | Needs `python3-pyinstaller` at build time, so it is only buildable from a COPR or private repository that provides it. |
+
+To include Rune in a custom package, point the recipe at a source snapshot that contains `rust/intermux-ui` and follow the same build requirements as above. The existing Arch and Fedora recipes still reference the tagged beta. Enable Rune with `INTERMUX_BUILD_RUNE=1` for `makepkg` or `dpkg-buildpackage`, or with `rpmbuild --with rune` on Fedora. For an offline build, prepare a local Cargo cache or vendor the locked dependencies before entering the build environment.
 
 ### Uninstall
 
@@ -174,6 +180,10 @@ To go back to 2.2.0, run the same command with `--version 2.2.0`. The one-line i
 ### GUI
 
 Start InterMux from your application menu, or run `intermux` in a terminal (no command opens the GUI). Do not run it as root.
+
+Builds with the Rune preview open the routes dashboard. Pick an interface or app to see its details, choose **Route an app** to add a launch, or use **VPN connections** to manage VPN profiles. Build-only and tagged releases without Rune open the Tk interface. If Rune cannot initialize the display or renderer, the launcher falls back to Tk. To choose Tk explicitly, run `INTERMUX_GUI=tk intermux` after closing any existing InterMux window. Use `INTERMUX_GUI=rune intermux` to surface native startup errors.
+
+### Tk interface in the stable release
 
 The window has three sections: **New binding**, **Queue** and **Bindings**. Drag the gaps between them to resize them.
 
@@ -311,9 +321,11 @@ intermux/
   watch.py, report.py, bugreport.py        watcher, report data, bug report zip
   apps/        desktop entries, Firefox and Chromium handling, app path resolution
   helper/      protocol, root helper server, unprivileged client
+  gui_bridge.py  unprivileged Rune desktop backend over standard input and output
   system/      namespaces, firewall, routing, running-app adoption, deps, safe file operations
   dnsconf.py   DNS presets and validation
   ui/          Tk GUI (main window, dialogs, graphs, picker, history, VPN and report dialogs, theme, worker)
+rust/intermux-ui/  Rune desktop preview
 get/           one-line installers (install.sh for Linux, install.ps1 for Windows)
 packaging/
   linux/       polkit policy, desktop entry, icon, metainfo, systemd unit and preset
