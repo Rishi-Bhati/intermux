@@ -14,14 +14,14 @@ pub struct Request {
     pub args: Value,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Rate {
     pub down: Option<f64>,
     pub up: Option<f64>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Interface {
     pub name: String,
@@ -37,7 +37,7 @@ pub struct Interface {
     pub has_namespace: bool,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Binding {
     pub iface: String,
@@ -56,7 +56,7 @@ impl Binding {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Snapshot {
     pub interfaces: Vec<Interface>,
@@ -519,7 +519,29 @@ impl State {
         self.request("batch", json!({"ops": ops}));
     }
 
-    pub fn receive(&mut self, request: Request, response: Result<Value, String>) {
+    /// Applies a reply and reports whether anything the view reads changed. A periodic
+    /// snapshot that repeats the last one returns false, so Rune skips the rebuild and redraw.
+    pub fn receive(&mut self, request: Request, response: Result<Value, String>) -> bool {
+        if request.op != "snapshot" {
+            self.apply(request, response);
+            return true;
+        }
+        let before = (
+            self.snapshot.clone(),
+            self.snapshot_error.clone(),
+            self.histories.clone(),
+            self.selection.clone(),
+            self.public_ips.clone(),
+        );
+        self.apply(request, response);
+        before.0 != self.snapshot
+            || before.1 != self.snapshot_error
+            || before.2 != self.histories
+            || before.3 != self.selection
+            || before.4 != self.public_ips
+    }
+
+    fn apply(&mut self, request: Request, response: Result<Value, String>) {
         self.pending.remove(&request.id);
         if request.op == "snapshot" && std::mem::take(&mut self.force_snapshot) {
             self.request("snapshot", json!({"force": true}));

@@ -345,6 +345,36 @@ mod tests {
         assert!(requests.try_recv().is_err());
     }
 
+    #[test]
+    fn repeated_snapshot_skips_the_redraw_and_a_new_value_requests_one() {
+        use crate::bridge::Input;
+
+        let mut state = State::default();
+        let (send, requests) = mpsc::channel();
+        state.attach(send);
+        let reply = |state: &mut State, value: serde_json::Value| {
+            state.request("snapshot", json!({}));
+            let Input::Request(request) = requests.try_recv().unwrap() else {
+                panic!("expected snapshot request");
+            };
+            state.receive(request, Ok(value))
+        };
+        let idle = json!({"interfaces": [{"name": "eth0", "state": "up", "rates": {"down": 0.0}}]});
+        assert!(reply(&mut state, idle.clone()));
+        // The chart keeps 42 samples, so an idle link stops changing once its history is full.
+        for _ in 0..41 {
+            reply(&mut state, idle.clone());
+        }
+        assert!(!reply(&mut state, idle.clone()));
+        let busy =
+            json!({"interfaces": [{"name": "eth0", "state": "up", "rates": {"down": 4096.0}}]});
+        assert!(reply(&mut state, busy));
+        assert!(reply(
+            &mut state,
+            json!({"bogus": "not a snapshot", "interfaces": 3})
+        ));
+    }
+
     fn click(runtime: &mut Runtime<State>, key: &str) {
         let (x, y) = runtime
             .find(key)

@@ -196,7 +196,7 @@ fn read_replies(mut reader: impl BufRead, mut send: impl FnMut(Message) -> bool)
 }
 
 fn deliver(handle: &AppHandle<State>, request: Request, result: Result<Value, String>) {
-    handle.update(move |state, _| state.receive(request, result));
+    handle.update_if(move |state, _| state.receive(request, result));
 }
 
 fn refresh(handle: &AppHandle<State>) {

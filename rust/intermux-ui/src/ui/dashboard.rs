@@ -1,5 +1,6 @@
 use super::*;
 use crate::model::{Binding, Interface, Rate, Selection, rate_text};
+use rune::{LineCap, Shape, canvas};
 use std::collections::VecDeque;
 
 pub(super) fn kind(iface: &Interface) -> &'static str {
@@ -193,69 +194,73 @@ fn app_row(state: &State, app: &Binding, color: &str) -> El {
 fn graph(values: Option<&VecDeque<f64>>, color: &str) -> El {
     const WIDTH: f32 = 242.0;
     const HEIGHT: f32 = 88.0;
-    let mut chart = el()
+    // One canvas holds the gridlines, area and line, so a traffic tick rebuilds three
+    // elements instead of one per sample.
+    let mut shape = Shape::new();
+    for i in 1..4 {
+        let y = HEIGHT / 4.0 * i as f32 + 0.5;
+        shape = shape.line([1.0, y], [WIDTH - 1.0, y], 1.0, LineCap::Butt, ink(LINE));
+    }
+    let chart = el()
         .size(WIDTH, HEIGHT)
         .radius(5.0)
         .clip_rounded(5.0)
         .fill(ink(BG))
         .border(1.0, ink(LINE));
-    for i in 1..4 {
-        chart = chart.child(
-            el().size(WIDTH - 2.0, 1.0)
-                .absolute(1.0, HEIGHT / 4.0 * i as f32)
-                .fill(ink(LINE)),
-        );
-    }
     let Some(values) = values.filter(|series| series.len() > 1) else {
-        return chart.child(el().w_full().h_full().center().child(copy(
-            "Waiting for traffic samples",
-            11.0,
-            500.0,
-            FAINT,
-        )));
+        return chart
+            .child(
+                canvas(shape)
+                    .size(WIDTH, HEIGHT)
+                    .absolute(0.0, 0.0)
+                    .a11y_hidden(),
+            )
+            .child(el().w_full().h_full().center().child(copy(
+                "Waiting for traffic samples",
+                11.0,
+                500.0,
+                FAINT,
+            )));
     };
     let peak = values.iter().copied().fold(32_768_f64, f64::max);
     let span = (WIDTH - 14.0) / 41.0;
-    let points = values.iter().enumerate().map(|(i, value)| {
-        let remaining = values.len() - 1 - i;
-        (
-            WIDTH - 7.0 - span * remaining as f32,
-            HEIGHT - 9.0 - (value / peak) as f32 * (HEIGHT - 19.0),
+    let line: Vec<[f32; 2]> = values
+        .iter()
+        .enumerate()
+        .map(|(i, value)| {
+            let remaining = values.len() - 1 - i;
+            [
+                WIDTH - 7.0 - span * remaining as f32,
+                HEIGHT - 9.0 - (value / peak) as f32 * (HEIGHT - 19.0),
+            ]
+        })
+        .collect();
+    let [first_x, _] = line[0];
+    let [x, y] = line[line.len() - 1];
+    let mut area = Vec::with_capacity(line.len() + 2);
+    area.push([first_x, HEIGHT - 1.0]);
+    area.extend_from_slice(&line);
+    area.push([x, HEIGHT - 1.0]);
+    shape = shape
+        .fill(area, ink(color).alpha(0.10))
+        .stroke(line, 1.7, ink(color));
+    chart
+        .child(
+            canvas(shape)
+                .size(WIDTH, HEIGHT)
+                .absolute(0.0, 0.0)
+                .a11y_hidden(),
         )
-    });
-    let mut last: Option<(f32, f32)> = None;
-    for (x, y) in points {
-        if let Some((px, py)) = last {
-            let width = (x - px).hypot(y - py);
-            let angle = (y - py).atan2(x - px);
-            chart = chart
-                .child(
-                    el().size(span + 0.5, HEIGHT - y - 1.0)
-                        .absolute(x - span, y)
-                        .fill(ink(color).alpha(0.10)),
-                )
-                .child(
-                    el().size(width + 1.0, 1.7)
-                        .radius(1.0)
-                        .absolute((x + px - width) / 2.0, (y + py) / 2.0)
-                        .fill(ink(color))
-                        .rotate(angle),
-                );
-        }
-        last = Some((x, y));
-    }
-    if let Some((x, y)) = last {
-        chart = chart.child(
+        .child(
             el().size(5.0, 5.0)
                 .radius(3.0)
                 .absolute(x - 2.0, y - 2.0)
                 .fill(ink(color)),
-        );
-    }
-    chart.label(format!(
-        "Download traffic. Peak scale {}.",
-        rate_text(Some(peak))
-    ))
+        )
+        .label(format!(
+            "Download traffic. Peak scale {}.",
+            rate_text(Some(peak))
+        ))
 }
 
 fn data_row(label: &str, value: impl Into<String>) -> El {
