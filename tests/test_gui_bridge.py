@@ -84,6 +84,14 @@ class BridgeProtocolTests(unittest.TestCase):
         self.assertEqual([(row["running"], row["pids"]) for row in result],
                          [(True, [101, 104]), (False, [])])
 
+    def test_running_apps_counts_matching_processes_from_one_table(self):
+        table = [Proc(201, 1, "firefox", gui_bridge.os.getuid(), "/usr/bin/firefox", None),
+                 Proc(202, 1, "bash", gui_bridge.os.getuid(), "/usr/bin/bash", None)]
+        with patch.object(gui_bridge.procs, "list_procs", return_value=table) as scan:
+            result = gui_bridge._running_apps(["/usr/bin/firefox", "/usr/bin/other"])
+        scan.assert_called_once()
+        self.assertEqual(result, {"/usr/bin/firefox": 1, "/usr/bin/other": 0})
+
     def test_publishes_desktop_entry_icon_from_xdg_export(self):
         entry = gui_bridge.desktop_entries.AppEntry(
             "Example", "Description", "com.example.Client", ["/opt/example"],

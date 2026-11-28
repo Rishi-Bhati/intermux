@@ -434,7 +434,7 @@ class _Service:
 def _running_apps(paths: list[str]) -> dict:
     uid = os.getuid()
     table = procs.list_procs()
-    return {path: len(procs.find_app_procs(path, apps.get_handler(path).comm_names(path), uid=uid, table=table))
+    return {path: len(procs.find_app_procs(path, apps.get_handler(path).comm_names(path), uid=uid, processes=table))
             for path in dict.fromkeys(paths)}
 
 
