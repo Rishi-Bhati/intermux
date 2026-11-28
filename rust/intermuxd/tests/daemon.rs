@@ -325,6 +325,16 @@ fn protocol_state_notifications_and_shutdown() {
         json!({"raised":true})
     );
     assert_eq!(second.event("gui.raise")["data"], json!({}));
+    let activation = json!({"activation_token":"test-window-activation"});
+    assert_eq!(
+        peer.request("gui.raise", activation.clone())["result"],
+        json!({"raised":true})
+    );
+    assert_eq!(second.event("gui.raise")["data"], activation);
+    assert_eq!(
+        peer.request("gui.raise", json!({"activation_token":false}))["error"]["code"],
+        "bad_request"
+    );
     let mut oversized = daemon.connect();
     oversized.hello();
     oversized.raw(&"x".repeat(70 * 1024));

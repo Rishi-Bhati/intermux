@@ -201,6 +201,16 @@ build_onedir() {
                 chmod 0755 "$BUILD_DIST/$bin"
             fi
         done
+        if [ -f "$SCRIPT_DIR/rust/intermux-ui/Cargo.toml" ]; then
+            info "Building the Rune interface as user '$user'"
+            (
+                cd -- "$SCRIPT_DIR"
+                sudo -u "$user" -- sh -c '
+                    export PATH="$HOME/.cargo/bin:$PATH"
+                    sh packaging/linux/build-ui.sh "$1" "$2"
+                ' sh "$BUILD_DIST" "$BUILD_TMP/cargo-ui-target"
+            ) || warn "Rune build failed. Tk will be used. Rune needs Rust 1.100.0, pkg-config, Wayland and XKB development libraries."
+        fi
     else
         warn "cargo not found: the daemon and tray are not built (install Rust to get them)"
     fi
@@ -354,6 +364,7 @@ install_files() {
     chmod 0755 "$INSTALL_LIB/intermux"
     [ -f "$INSTALL_LIB/intermuxd" ] && chmod 0755 "$INSTALL_LIB/intermuxd"
     [ -f "$INSTALL_LIB/intermux-tray" ] && chmod 0755 "$INSTALL_LIB/intermux-tray"
+    [ -f "$INSTALL_LIB/intermux-ui" ] && chmod 0755 "$INSTALL_LIB/intermux-ui"
     verify_install_lib
     ok "Bundle owned by root and not writable by other users"
 

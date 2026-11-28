@@ -2,7 +2,7 @@ InterMux for Linux - release tarball
 ====================================
 
 Contents
-  dist/intermux/                PyInstaller bundle (the program)
+  dist/intermux/                Python CLI and helper, Rune GUI, daemon and tray
   packaging/linux/              polkit policy, desktop entry, icon, metainfo,
                                 systemd watcher unit and preset
   install.sh, uninstall.sh      system-wide installer and remover
@@ -21,6 +21,12 @@ Verify the tarball with the .sha256 file published next to it first.
 Requirements
   iproute2, iptables, procps (sysctl), util-linux (runuser), polkit
   (pkexec), xdg-utils. A systemd host is needed for the routing watcher.
+  The Rune GUI needs XKB, Vulkan, and a GPU or software Vulkan driver.
+  On Ubuntu 22.04: libxkbcommon0, libvulkan1 and mesa-vulkan-drivers.
+  Wayland sessions also need libwayland-client0.
+
+  Run "intermux" as your regular user. To open the Tk interface explicitly,
+  close InterMux and run "INTERMUX_GUI=tk intermux".
 
 glibc floor
   The bundle is built on Ubuntu 22.04 and needs glibc 2.35 or newer

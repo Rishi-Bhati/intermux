@@ -66,7 +66,7 @@
   border: 1px solid var(--line);
 }
 
-/* Copy and the demo video: stacked and centred on narrow screens, side by side on wide ones. */
+/* Copy and the app preview: stacked and centred on narrow screens, side by side on wide ones. */
 .body {
   display: flex;
   flex-direction: column;

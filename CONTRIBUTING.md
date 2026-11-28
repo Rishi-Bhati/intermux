@@ -4,7 +4,7 @@ Thanks for helping out. This guide covers the development setup, the tests and t
 
 ## Development Setup
 
-InterMux has no runtime dependencies beyond Python 3.9+ and the standard library. You need the system tools listed in the README (`iproute2`, `iptables`, `procps`, `util-linux`, `polkit`) to try things end to end.
+The Python CLI and bridge use Python 3.9+ and the standard library. You need the system tools listed in the README (`iproute2`, `iptables`, `procps`, `util-linux`, `polkit`) to try things end to end.
 
 ```bash
 git clone https://github.com/Rishi-Bhati/intermux.git
@@ -18,6 +18,14 @@ pip install -e .
 ```
 
 Run from source at any time with `python3 -m intermux`.
+
+To build the Rune GUI, install Rust 1.100.0 and the desktop libraries listed in [From source](README.md#from-source). The UI has its own Cargo lockfile and target directory. The daemon and tray commands still run against `rust/Cargo.toml`.
+
+```bash
+cargo +1.100.0 build --locked --manifest-path rust/intermux-ui/Cargo.toml
+cargo +1.100.0 test --locked --manifest-path rust/intermux-ui/Cargo.toml
+INTERMUX_GUI=rune python3 -m intermux
+```
 
 ## Running the Tests
 

@@ -35,6 +35,43 @@ def default_icon_dirs() -> List[Path]:
     return unique
 
 
+def resolve_desktop_icon_path(icon_name: str) -> Optional[Path]:
+    """Find a PNG or SVG published by a desktop entry for the native UI."""
+    name = (icon_name or "").strip()
+    if not name:
+        return None
+    path = Path(name)
+    formats = (".png", ".svg")
+    if path.is_absolute():
+        return path if path.suffix.lower() in formats and path.is_file() else None
+    if "/" in name or name in (".", ".."):
+        return None
+    filenames = [name] if path.suffix.lower() in formats else [name + ext for ext in formats]
+
+    data_home = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    data_dirs = [Path(directory) for directory in
+                 (os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share").split(":")
+                 if os.path.isabs(directory)]
+    data_roots = dict.fromkeys([data_home, *data_dirs, data_home / "flatpak/exports/share",
+                               Path("/var/lib/flatpak/exports/share")])
+    icon_roots = [Path.home() / ".icons", *(root / "icons" for root in data_roots)]
+    app_dirs = ("scalable", "128x128", "64x64", "48x48", "96x96", "256x256",
+                "32x32", "24x24", "512x512", "symbolic")
+    for base in icon_roots:
+        for size in app_dirs:
+            directory = base / "hicolor" / size / "apps"
+            for filename in filenames:
+                candidate = directory / filename
+                if candidate.is_file():
+                    return candidate
+    for directory in [*icon_roots, *(root / "pixmaps" for root in data_roots)]:
+        for filename in filenames:
+            candidate = directory / filename
+            if candidate.is_file():
+                return candidate
+    return None
+
+
 def resolve_icon_path(icon_name: str, search_dirs: Optional[Sequence[Path]] = None) -> Optional[Path]:
     """Return an existing PNG for icon_name, or None. Pure filesystem lookup, no Tk."""
     name = (icon_name or "").strip()

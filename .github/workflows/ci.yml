@@ -68,6 +68,30 @@ jobs:
         working-directory: rust
         run: cargo clippy --locked --all-targets -- -D warnings
 
+  rune:
+    name: Rust (Rune desktop)
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4  # TODO: pin to a commit SHA
+
+      - name: Install desktop build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libvulkan1 mesa-vulkan-drivers xvfb xauth
+
+      - name: Set up Rune toolchain
+        run: rustup toolchain install 1.100.0 --profile minimal
+
+      - name: Run Rune tests
+        run: xvfb-run -a cargo +1.100.0 test --locked --manifest-path rust/intermux-ui/Cargo.toml
+
+      - name: Render the desktop dashboard
+        run: |
+          cargo +1.100.0 run --locked --manifest-path rust/intermux-ui/Cargo.toml -- \
+            --scene dashboard --scale 1 --snap "${RUNNER_TEMP}/intermux-dashboard.png"
+          test -s "${RUNNER_TEMP}/intermux-dashboard.png"
+
   packaging-lint:
     name: Packaging lint
     runs-on: ubuntu-22.04
@@ -84,6 +108,7 @@ jobs:
         run: |
           bash -n install.sh
           bash -n uninstall.sh
+          sh -n packaging/linux/build-ui.sh
           sh -n packaging/debian/postinst
           sh -n get/install.sh
           # The one-line installer is piped into sh, so it must stay POSIX (dash on Debian/Ubuntu).

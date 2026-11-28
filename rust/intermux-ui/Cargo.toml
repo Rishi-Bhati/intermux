@@ -1,0 +1,29 @@
+[package]
+name = "intermux-ui"
+version = "3.0.0-beta.1"
+edition = "2024"
+rust-version = "1.100"
+license = "MIT"
+
+[dependencies]
+libc = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rune = { git = "https://github.com/anomalyco/rune.git", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4", default-features = false, features = ["accessibility", "embedded-fonts", "svg", "native-file-dialog"] }
+
+[patch.crates-io]
+wgpu-hal = { git = "https://github.com/anomalyco/rune.git", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4" }
+winit = { git = "https://github.com/anomalyco/rune.git", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4" }
+sctk-adwaita = { git = "https://github.com/anomalyco/rune.git", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4" }
+parley_engine = { git = "https://github.com/anomalyco/rune.git", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune.git", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune.git", rev = "21e5342b9a4cc33eeee88071b4b1f0eafb1247d4" }
+
+[workspace]
+
+[features]
+tooling = ["rune/tooling"]
+
+[profile.dev]
+debug = 0
+incremental = false

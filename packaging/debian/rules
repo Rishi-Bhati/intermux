@@ -23,6 +23,9 @@ override_dh_auto_build:
 			install -m 0755 "$(CURDIR)/cargo-target/release/$$bin" "$(BUNDLE_DIST)/intermux/$$bin"; \
 		fi; \
 	done
+	if [ "${INTERMUX_BUILD_RUNE:-0}" = 1 ]; then \
+		sh packaging/linux/build-ui.sh "$(BUNDLE_DIST)/intermux" "$(CURDIR)/cargo-ui-target"; \
+	fi
 
 override_dh_auto_install:
 	install -d debian/intermux/usr/lib/intermux
@@ -65,5 +68,5 @@ override_dh_makeshlibs:
 override_dh_dwz:
 
 override_dh_auto_clean:
-	rm -rf $(BUNDLE_DIST) $(BUNDLE_WORK) $(CURDIR)/cargo-target
+	rm -rf $(BUNDLE_DIST) $(BUNDLE_WORK) $(CURDIR)/cargo-target $(CURDIR)/cargo-ui-target
 	dh_auto_clean

@@ -6,6 +6,7 @@
 # publish them as Provides or derive Requires from them.
 %global __provides_exclude_from ^%{_prefix}/lib/intermux/.*$
 %global __requires_exclude_from ^%{_prefix}/lib/intermux/.*$
+%bcond_with rune
 
 # NOTE: python3-pyinstaller is NOT in the official Fedora/EPEL repositories;
 # this spec is only buildable from a COPR or private repo that provides it
@@ -32,6 +33,14 @@ BuildRequires:  desktop-file-utils
 BuildRequires:  appstream
 BuildRequires:  cargo
 BuildRequires:  rust
+%if %{with rune}
+BuildRequires:  pkgconfig(wayland-client)
+BuildRequires:  pkgconfig(xkbcommon)
+Recommends:     vulkan-loader
+Recommends:     mesa-vulkan-drivers
+Recommends:     libxkbcommon
+Recommends:     libwayland-client
+%endif
 Requires:       iproute
 Requires:       iptables-nft
 Requires:       polkit
@@ -66,6 +75,9 @@ for bin in intermuxd intermux-tray; do
         install -m 0755 "$CARGO_TARGET_DIR/release/$bin" "dist/intermux/$bin"
     fi
 done
+%if %{with rune}
+sh packaging/linux/build-ui.sh "$PWD/dist/intermux" "$PWD/cargo-ui-target"
+%endif
 
 %install
 install -d %{buildroot}/usr/lib/intermux
